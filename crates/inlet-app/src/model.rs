@@ -111,6 +111,9 @@ pub struct EmbedMedia {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub animated: bool,
+    /// A video (a GIF page's MP4 or WebM, a video file): the proxy gives its first
+    /// frame as an image when asked for an image format, never an animation.
+    pub video: bool,
     /// Marked as explicit by the server's media inspection.
     pub explicit: bool,
 }
@@ -343,6 +346,14 @@ pub fn clean_name(name: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// Like [`clean_name`] for optional text (a custom status, pronouns): `None` when
+/// nothing visible is left, instead of a placeholder.
+pub fn clean_text(text: &str) -> Option<String> {
+    text.chars()
+        .any(|c| !c.is_whitespace() && !is_hidden_or_control(c))
+        .then(|| clean_name(text))
 }
 
 fn is_hidden_or_control(c: char) -> bool {

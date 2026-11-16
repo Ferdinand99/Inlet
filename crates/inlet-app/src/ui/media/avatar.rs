@@ -80,6 +80,29 @@ impl Inlet {
         }
     }
 
+    /// A group DM's icon, `size` logical pixels square, when it has one and it has
+    /// loaded (Fluxer keeps channel icons under the same `icons/` path as guild icons).
+    pub(crate) fn group_dm_icon_image(
+        &self,
+        channel_id: &str,
+        hash: &str,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<Img> {
+        let setup = self.media.setup.as_ref()?;
+        let req = requests::guild_icon(&setup.proxy, channel_id, hash, size, self.media.scale)?;
+        match self.image(&req, cx) {
+            Shown::Ready(image) => Some(
+                img(image)
+                    .size(px(size))
+                    .flex_none()
+                    .rounded_full()
+                    .object_fit(ObjectFit::Cover),
+            ),
+            _ => None,
+        }
+    }
+
     /// The banner of the open guild, `width` logical pixels wide, when it has one.
     pub(crate) fn guild_banner(&self, width: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
         let setup = self.media.setup.as_ref()?;
@@ -101,6 +124,32 @@ impl Inlet {
         Some(super::image::picture_of(
             shown,
             (width, BANNER_HEIGHT),
+            0.,
+            ObjectFit::Cover,
+            &self.media.images.animator(Motion::Gif),
+        ))
+    }
+
+    /// A person's profile banner (`guild`: their profile there), `w` x `h` logical
+    /// pixels, once it has loaded.
+    pub(crate) fn profile_banner(
+        &self,
+        guild: Option<&str>,
+        user_id: &str,
+        hash: &str,
+        (w, h): (f32, f32),
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let setup = self.media.setup.as_ref()?;
+        let req =
+            requests::profile_banner(&setup.proxy, guild, user_id, hash, (w, h), self.media.scale)?;
+        let shown = self.image(&req, cx);
+        if !matches!(shown, Shown::Ready(_)) {
+            return None;
+        }
+        Some(super::image::picture_of(
+            shown,
+            (w, h),
             0.,
             ObjectFit::Cover,
             &self.media.images.animator(Motion::Gif),

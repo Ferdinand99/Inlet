@@ -41,9 +41,23 @@
 //! - `composer-attachments`: for `#general`, three files in the composer's tray (a photo
 //!   with alt text, a spoiler, a document), an upload on its way above the box, and its
 //!   message pending in the list.
+//! - `friends-pending`: the DM list with the friends page on its Pending tab.
+//! - `group-dm-captcha`: the new group DM window with two friends picked and the
+//!   message for a CAPTCHA Inlet could not pass.
+//! - `dm-blocked`: the group DM open, with a blocked account's messages folded.
 //! - `picker-emoji`, `picker-gif`: for `#general`, the composer's picker open on the
 //!   emoji tab (favourites, frequently used, the guild's custom emoji) or the GIF tab
 //!   (the featured search terms; see `pickers.rs`).
+//! - `media-errors`: the DM with Ada holds GIFs that cannot be shown (a proxy that does
+//!   not answer, a file that does not decode, a host Inlet does not load from), each as
+//!   a tile with its reason, and a GIF page that only has a video (see `media.rs`).
+//! - `members`, `profile-popout`: for `#general`, the member list with its groups,
+//!   statuses, custom statuses, the owner's crown and offline members (see
+//!   `members.rs`); or with the profile popout of a moderator open beside it.
+//! - `search-results`: for `#general`, the search panel with the results for `build` in
+//!   the guild (see `search.rs`).
+//! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
+//!   `accounts` (their channels with mentions and unread messages).
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -96,8 +110,16 @@ pub enum Scene {
     MediaChannel,
     StatusPicker,
     ComposerAttachments,
+    FriendsPending,
+    GroupDmCaptcha,
+    DmBlocked,
     PickerEmoji,
     PickerGif,
+    MediaErrors,
+    Members,
+    ProfilePopout,
+    SearchResults,
+    QuickSwitcher,
 }
 
 impl Scene {
@@ -132,8 +154,16 @@ impl Scene {
             "media-channel" => Scene::MediaChannel,
             "status-picker" => Scene::StatusPicker,
             "composer-attachments" => Scene::ComposerAttachments,
+            "friends-pending" => Scene::FriendsPending,
+            "group-dm-captcha" => Scene::GroupDmCaptcha,
+            "dm-blocked" => Scene::DmBlocked,
             "picker-emoji" => Scene::PickerEmoji,
             "picker-gif" => Scene::PickerGif,
+            "media-errors" => Scene::MediaErrors,
+            "members" => Scene::Members,
+            "profile-popout" => Scene::ProfilePopout,
+            "search-results" => Scene::SearchResults,
+            "quick-switcher" => Scene::QuickSwitcher,
             _ => return None,
         })
     }
@@ -305,9 +335,10 @@ fn ready(
                 "properties": {"id": g.id, "name": g.name, "owner_id": user_id(ME), "icon": icon, "banner": banner},
                 "channels": list,
                 "roles": [
-                    {"id": g.id, "name": "@everyone", "permissions": "2251799813685247", "position": 0},
-                    {"id": ROLE_MODERATORS, "name": "Moderators", "color": 0xE6_7E_22, "position": 2},
-                    {"id": ROLE_CONTRIBUTORS, "name": "Contributors", "color": 0x1A_BC_9C, "position": 1}
+                    // Everything below bit 51, and seeing the member list (`VIEW_CHANNEL_MEMBERS`).
+                    {"id": g.id, "name": "@everyone", "permissions": "20266198323167231", "position": 0},
+                    {"id": ROLE_MODERATORS, "name": "Moderators", "color": 0xE6_7E_22, "position": 2, "hoist": true},
+                    {"id": ROLE_CONTRIBUTORS, "name": "Contributors", "color": 0x1A_BC_9C, "position": 1, "hoist": true}
                 ],
                 "members": [{
                     "user": user(ME),
@@ -337,6 +368,8 @@ fn ready(
         "read_states": read_states,
         "user_guild_settings": guild_settings,
         "presences": social::presences(),
+        "relationships": social::relationships(),
+        "pinned_dms": social::pinned_dms(),
         "user_settings": user_settings,
     }))
     .expect("the demo READY is valid")
@@ -371,6 +404,9 @@ pub fn data(scene: Scene) -> Data {
         }
         Scene::Emoji100 => {
             by_name.insert(markdown::SCENE_CHANNEL.into(), emoji::hundred());
+        }
+        Scene::MediaErrors => {
+            by_name.insert("dm-ada".into(), media::dm_errors());
         }
         _ => {}
     }
@@ -409,6 +445,13 @@ pub fn data(scene: Scene) -> Data {
 
     let general = snowflake("c-general");
     let mut read_states = Vec::new();
+    // The DMs added for the DM list are read, so the rail looks the same in every scene.
+    for dm in social::READ_DMS {
+        let id = snowflake(dm);
+        if let Some(last) = newest_id(&messages, &id) {
+            read_states.push(json!({"id": id, "last_message_id": last}));
+        }
+    }
     let mut outgoing = Vec::new();
     if matches!(scene, Scene::ChatCozy | Scene::ChatCompact) {
         // Read up to the fourth-newest message: the last three are new.
@@ -455,7 +498,11 @@ pub fn data(scene: Scene) -> Data {
     let mut guild_settings = Vec::new();
     let unread_demo = matches!(
         scene,
-        Scene::Default | Scene::Accounts | Scene::AccountsAdd | Scene::InboxUnreads
+        Scene::Default
+            | Scene::Accounts
+            | Scene::AccountsAdd
+            | Scene::InboxUnreads
+            | Scene::QuickSwitcher
     );
     if unread_demo {
         // Unread messages, mentions and mutes in the sidebar and the rail.
@@ -519,8 +566,16 @@ mod tests {
             "media-channel",
             "status-picker",
             "composer-attachments",
+            "friends-pending",
+            "group-dm-captcha",
+            "dm-blocked",
             "picker-emoji",
             "picker-gif",
+            "media-errors",
+            "members",
+            "profile-popout",
+            "search-results",
+            "quick-switcher",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);
