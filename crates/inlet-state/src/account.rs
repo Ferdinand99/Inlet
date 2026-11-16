@@ -101,7 +101,7 @@ impl AccountState {
             typing: Typing::default(),
             relationships: Relationships::from_ready(&r.relationships(), &r.pinned_dms()),
             threads: Threads::default(),
-            settings: Settings::default(),
+            settings: Settings::from_ready(r),
             voice: Voice::default(),
             caps: Capabilities::new(),
             now_ms,
@@ -1084,6 +1084,12 @@ impl AccountState {
     /// Notification settings.
     pub fn guild_settings(&self) -> &GuildSettings {
         &self.guild_settings
+    }
+
+    /// The account's user settings as the server last said (theme, message display,
+    /// privacy), without the big parts.
+    pub fn settings(&self) -> &Settings {
+        &self.settings
     }
 
     /// The account's permissions in a guild channel. [`Permissions::NONE`]
