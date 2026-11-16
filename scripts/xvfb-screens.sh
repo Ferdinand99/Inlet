@@ -163,6 +163,10 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# The channel header with the search column open at 1280 px: a long channel name keeps
+# its place, the topic and the status line give way first.
+scene 80-header-search-long-name search-results c-rules
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no
