@@ -862,3 +862,270 @@ async fn a_step_for_a_sign_in_the_backend_no_longer_knows_says_it_is_lost() {
         Ev::Lost
     ));
 }
+
+// ---------- a positive sign-in against the private test instance ----------
+
+/// Throwaway values from the operating system's random seed (no extra dependency).
+fn random_hex(bytes: usize) -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut out = String::new();
+    while out.len() < bytes * 2 {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(out.len() as u64);
+        out.push_str(&format!("{:016x}", h.finish()));
+    }
+    out.truncate(bytes * 2);
+    out
+}
+
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
+    for chunk in msg.chunks(64) {
+        let mut w = [0u32; 80];
+        for (i, b) in chunk.chunks(4).enumerate() {
+            w[i] = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A82_7999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let t = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            (e, d, c, b, a) = (d, c, b.rotate_left(30), a, t);
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    let mut out = [0u8; 20];
+    for (i, x) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&x.to_be_bytes());
+    }
+    out
+}
+
+fn hmac_sha1(key: &[u8], msg: &[u8]) -> [u8; 20] {
+    let mut block = [0u8; 64];
+    block[..key.len()].copy_from_slice(key);
+    let pad = |x: u8| -> Vec<u8> { block.iter().map(|b| b ^ x).collect() };
+    let mut inner = pad(0x36);
+    inner.extend_from_slice(msg);
+    let mut outer = pad(0x5c);
+    outer.extend_from_slice(&sha1(&inner));
+    sha1(&outer)
+}
+
+/// The six-digit TOTP code of `secret` for 30-second step number `step`.
+fn totp(secret: &[u8], step: u64) -> String {
+    let mac = hmac_sha1(secret, &step.to_be_bytes());
+    let o = (mac[19] & 0xf) as usize;
+    let n = u32::from_be_bytes([mac[o] & 0x7f, mac[o + 1], mac[o + 2], mac[o + 3]]);
+    format!("{:06}", n % 1_000_000)
+}
+
+fn base32(data: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let (mut out, mut buf, mut bits) = (String::new(), 0u32, 0);
+    for b in data {
+        buf = (buf << 8) | u32::from(*b);
+        bits += 8;
+        while bits >= 5 {
+            out.push(A[((buf >> (bits - 5)) & 31) as usize] as char);
+            bits -= 5;
+        }
+        buf &= 0xff;
+    }
+    if bits > 0 {
+        out.push(A[((buf << (5 - bits)) & 31) as usize] as char);
+    }
+    out
+}
+
+#[test]
+fn the_totp_helpers_match_the_rfc_test_vectors() {
+    // RFC 6238 appendix B (SHA-1, secret "12345678901234567890"): T = 59 s is step 1.
+    assert_eq!(totp(b"12345678901234567890", 1), "287082");
+    assert_eq!(totp(b"12345678901234567890", 37_037_036), "081804");
+    assert_eq!(base32(b"foobar"), "MZXW6YTBOI");
+}
+
+/// One JSON request to the test instance's API, with the test CA trusted.
+async fn call(
+    http: &reqwest::Client,
+    base: &str,
+    method: reqwest::Method,
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+) -> (u16, Value) {
+    let mut req = http
+        .request(method, format!("{base}{path}"))
+        .header("Content-Type", "application/json")
+        .body(body.to_string());
+    if let Some(token) = token {
+        req = req.header("Authorization", token);
+    }
+    let resp = req.send().await.expect("the test instance answers");
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+fn now_step() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        / 30
+}
+
+/// The throwaway account lives only in this test: a random name and password kept in
+/// memory, a token that goes to a memory store, and a deletion at the end (the account
+/// is left behind if that is refused). Run with `scripts/docker-build.sh fluxer-test -p
+/// inlet --lib -- --ignored a_throwaway_account`.
+#[tokio::test]
+#[ignore = "talks to the private test instance"]
+async fn a_throwaway_account_signs_in_with_its_password_and_then_with_a_totp_code() {
+    let origin = std::env::var("INLET_TEST_ORIGIN").unwrap_or_else(|_| "fluxer.test".into());
+    let instance = p::Instance::discover(&origin).await.expect("discovery");
+    let base = instance.api_base().to_string();
+    let http = p::test_ca::add_to_http(reqwest::Client::builder())
+        .build()
+        .expect("http client");
+    let username = format!("inlet_t34_{}", random_hex(6));
+    let pw = random_hex(16);
+
+    // Register the account (the instance takes a username, no email, no CAPTCHA).
+    let (status, registered) = call(
+        &http,
+        &base,
+        reqwest::Method::POST,
+        "/auth/register",
+        None,
+        json!({"username": username, "password": pw, "global_name": username,
+               "date_of_birth": "1990-01-01", "consent": true}),
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "registration: {} {}",
+        registered["code"], registered["message"]
+    );
+    let first_token = registered["token"].as_str().expect("a token").to_string();
+    let user_id = registered["user_id"]
+        .as_str()
+        .expect("a user id")
+        .to_string();
+    let key = AccountKey::new(instance.origin(), &user_id).unwrap();
+
+    // 1. The password path, through the app's own flow.
+    {
+        let (mut b, mut rx, mut irx, store) = backend();
+        handle(
+            &mut b,
+            Cmd::Start {
+                instance: origin.clone(),
+            },
+        );
+        let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+        password(&mut b, &username, &pw);
+        until_signed_in(&mut b, &mut irx, &mut rx).await;
+        if let Some(tail) = b.store_tail.take() {
+            let _ = tail.await;
+        }
+        let entry = store.entries.lock().unwrap().get(&key.entry()).cloned();
+        let stored: Value = serde_json::from_str(&entry.expect("the keychain entry")).unwrap();
+        let token = stored["token"].as_str().unwrap_or_default();
+        assert!(
+            !token.is_empty() && token != first_token,
+            "a new session token"
+        );
+        assert!(b.store.lock().await.list().iter().any(|a| a.key == key));
+        println!("password path: signed in, token stored under the account's entry");
+    }
+
+    // 2. Turn TOTP on through the API, then sign in with the password and a code.
+    let secret: Vec<u8> = (0..20)
+        .map(|i| u8::from_str_radix(&random_hex(20)[i * 2..i * 2 + 2], 16).unwrap())
+        .collect();
+    let step = now_step();
+    let (status, enabled) = call(
+        &http,
+        &base,
+        reqwest::Method::POST,
+        "/users/@me/mfa/totp/enable",
+        Some(&first_token),
+        json!({"secret": base32(&secret), "code": totp(&secret, step), "password": pw}),
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "enabling TOTP: {} {}",
+        enabled["code"], enabled["message"]
+    );
+    {
+        let (mut b, mut rx, mut irx, store) = backend();
+        handle(
+            &mut b,
+            Cmd::Start {
+                instance: origin.clone(),
+            },
+        );
+        let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+        password(&mut b, &username, &pw);
+        match next_entry(&mut b, &mut irx, &mut rx).await {
+            Ev::Step(EntryStep::Mfa { totp, .. }) => assert!(totp),
+            _ => panic!("no second factor step"),
+        }
+        // The next step is inside the instance's one-step skew, and is not the code
+        // that enabled TOTP.
+        handle(
+            &mut b,
+            Cmd::Mfa {
+                code: p::Secret::new(totp(&secret, step + 1)),
+            },
+        );
+        until_signed_in(&mut b, &mut irx, &mut rx).await;
+        if let Some(tail) = b.store_tail.take() {
+            let _ = tail.await;
+        }
+        assert!(store.entries.lock().unwrap().contains_key(&key.entry()));
+        println!("totp path: signed in with a code, token stored under the account's entry");
+    }
+
+    // 3. Clean up: delete the account now; if the instance refuses, it stays behind.
+    let (status, gone) = call(
+        &http,
+        &base,
+        reqwest::Method::POST,
+        "/users/@me/delete",
+        Some(&first_token),
+        json!({"password": pw, "mfa_method": "totp",
+               "mfa_code": totp(&secret, step.saturating_sub(1)), "immediate": true}),
+    )
+    .await;
+    println!("cleanup: {status} {}", gone["code"]);
+}
