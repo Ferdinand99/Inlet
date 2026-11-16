@@ -257,8 +257,9 @@ impl BackendHandle {
     }
 
     /// A handle with no backend behind it: commands go nowhere. For the layout tests,
-    /// which feed the view its events themselves.
-    #[cfg(feature = "demo")]
+    /// which feed the view its events themselves, and for tests that must not have a
+    /// backend thread running past their end.
+    #[cfg(any(feature = "demo", test))]
     pub fn detached() -> Self {
         let (tx, _rx) = unbounded_channel();
         Self {
