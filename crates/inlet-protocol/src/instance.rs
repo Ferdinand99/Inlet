@@ -157,6 +157,67 @@ impl Discovery {
     }
 }
 
+/// How people identify themselves when they sign in (`features.account_identity`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Identity {
+    /// An email address. A missing value means this.
+    #[default]
+    Email,
+    /// A username; no email is collected.
+    Username,
+}
+
+/// What the discovery document says about signing in: which form to show and which
+/// steps the instance offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignInOptions {
+    /// Email or username.
+    pub identity: Identity,
+    /// `features.identifier_first`: one entry that starts with the identifier, then
+    /// the password or an emailed code. Missing means false.
+    pub identifier_first: bool,
+    /// `features.email_codes`: the instance can send sign-in codes. Missing means false.
+    pub email_codes: bool,
+    /// `features.emails_enabled`: the instance sends email at all.
+    pub emails_enabled: bool,
+    /// A CAPTCHA may be asked for (`captcha.provider` is not `none`).
+    pub captcha: bool,
+    /// Single sign-on is turned on.
+    pub sso_enabled: bool,
+    /// Every person has to sign in with single sign-on.
+    pub sso_enforced: bool,
+}
+
+impl Discovery {
+    /// The sign-in settings of this instance, with Fluxer's defaults for what is missing.
+    pub fn sign_in_options(&self) -> SignInOptions {
+        let flag = |name: &str| self.features.get(name).and_then(Value::as_bool) == Some(true);
+        let sso = |name: &str| {
+            self.extra
+                .get("sso")
+                .and_then(|s| s.get(name))
+                .and_then(Value::as_bool)
+                == Some(true)
+        };
+        SignInOptions {
+            identity: match self
+                .features
+                .get("account_identity")
+                .and_then(Value::as_str)
+            {
+                Some("username") => Identity::Username,
+                _ => Identity::Email,
+            },
+            identifier_first: flag("identifier_first"),
+            email_codes: flag("email_codes"),
+            emails_enabled: flag("emails_enabled"),
+            captcha: self.captcha_required(),
+            sso_enabled: sso("enabled"),
+            sso_enforced: sso("enforced"),
+        }
+    }
+}
+
 /// The hosts a session's token may be sent to. Store them next to the token
 /// (for example in the same keychain entry) and pass them to
 /// [`crate::Session::from_token_pinned`] on the next start.

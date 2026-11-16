@@ -183,6 +183,12 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# The sign-in steps of the app's own form: identifier, the classic form, a wrong password,
+# the emailed code, the second factor, the new-IP wait.
+for step in identifier classic password code mfa ip; do
+  scene "90-sign-in-$step" "sign-in-$step" c-general
+done
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no

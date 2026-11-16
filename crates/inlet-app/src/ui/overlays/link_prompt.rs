@@ -103,6 +103,7 @@ impl Inlet {
                             }),
                         ),
                     )
+                    .children(self.invite_sign_in_button(&url, known_instance, cx))
                     .child(cancel(t!("common-cancel")));
             }
             Prompt::Unavailable => {

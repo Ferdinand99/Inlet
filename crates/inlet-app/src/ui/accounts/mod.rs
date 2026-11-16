@@ -2,6 +2,11 @@
 //! Accounts in the UI: the sign-in form and the session screens, and what the accounts
 //! domain of the backend reports (sign-in progress, session state, connection status).
 
+#[cfg(feature = "demo")]
+mod demo_steps;
+mod entry_events;
+mod flow;
+mod invite;
 mod screens;
 mod sign_in;
 
@@ -14,11 +19,14 @@ use gpui::{
 
 use crate::app::{Inlet, Screen};
 use crate::backend::accounts::{Cmd, Ev, DEFAULT_INSTANCE};
+use crate::backend::platform::links::Incoming;
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum SignInMode {
+    /// Email or username and password, in the app.
+    Password,
     Browser,
     Token,
 }
@@ -27,6 +35,18 @@ pub enum SignInMode {
 pub struct SignInState {
     pub instance_input: Entity<TextInput>,
     pub token_input: Entity<TextInput>,
+    /// The email address or username.
+    pub identifier_input: Entity<TextInput>,
+    pub password_input: Entity<TextInput>,
+    /// The emailed code, or the authenticator or backup code.
+    pub code_input: Entity<TextInput>,
+    /// Where the in-app sign-in is (step, instance options, countdowns, its error).
+    pub flow: flow::Flow,
+    /// Ticks the screen while something on it counts down.
+    pub clock: Option<gpui::Task<()>>,
+    /// An invite link to another instance that the person is signing in for: its origin
+    /// and code. Offered again once the sign-in worked.
+    pub invite: Option<(String, String)>,
     pub mode: SignInMode,
     pub busy: bool,
     pub error: Option<String>,
@@ -53,7 +73,17 @@ impl SignInState {
                 .masked()
                 .max_chars(512)
         });
-        for input in [&instance_input, &token_input] {
+        let identifier_input = cx.new(|cx| TextInput::new("", cx).max_chars(320));
+        let password_input = cx.new(|cx| TextInput::new("", cx).masked().max_chars(256));
+        let code_input =
+            cx.new(|cx| TextInput::new(t!("entry-code-placeholder"), cx).max_chars(64));
+        for input in [
+            &instance_input,
+            &token_input,
+            &identifier_input,
+            &password_input,
+            &code_input,
+        ] {
             subscriptions.push(cx.subscribe_in(
                 input,
                 window,
@@ -65,7 +95,13 @@ impl SignInState {
         Self {
             instance_input,
             token_input,
-            mode: SignInMode::Browser,
+            identifier_input,
+            password_input,
+            code_input,
+            flow: flow::Flow::default(),
+            clock: None,
+            invite: None,
+            mode: SignInMode::Password,
             busy: false,
             error: None,
             notice: None,
@@ -73,6 +109,24 @@ impl SignInState {
             pasted_token_hash: None,
         }
     }
+}
+
+impl SignInState {
+    /// The host of the invite the person is signing in for.
+    pub fn invite_host(&self) -> Option<String> {
+        let (origin, _) = self.invite.as_ref()?;
+        host_of(origin)
+    }
+}
+
+/// The host (with a port, if any) of an origin such as `https://chat.example`.
+pub(crate) fn host_of(origin: &str) -> Option<String> {
+    let url = url::Url::parse(origin).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
 }
 
 pub(crate) fn hash_text(text: &str) -> u64 {
@@ -125,6 +179,8 @@ impl Inlet {
                 }
                 self.screen = Screen::SignIn;
                 self.sign_in.busy = false;
+                // A fresh start: the form forgets the step it was on and what was typed.
+                self.sign_in_reset_flow(cx);
                 self.sign_in
                     .instance_input
                     .focus_handle(cx)
@@ -141,8 +197,10 @@ impl Inlet {
                     self.sign_in.error = Some(t!("sign-in-handoff-not-https"));
                 }
             }
+            Ev::Entry(event) => self.on_entry_event(event, window, cx),
             Ev::SignInFailed(message) => {
                 self.sign_in.busy = false;
+                self.sign_in.flow.busy_since = None;
                 self.sign_in.handoff = None;
                 self.sign_in.pasted_token_hash = None;
                 self.sign_in.error = Some(message);
@@ -183,6 +241,8 @@ impl Inlet {
                 self.sign_in.error = None;
                 self.sign_in.notice = None;
                 self.sign_in.token_input.update(cx, |i, cx| i.clear(cx));
+                self.sign_in_reset_flow(cx);
+                let invite = self.sign_in.invite.take();
                 if let Some(hash) = self.sign_in.pasted_token_hash.take() {
                     let still_there = cx
                         .read_from_clipboard()
@@ -203,6 +263,13 @@ impl Inlet {
                 if reopen {
                     self.reopen_place(cx);
                 }
+                // Signed in on the instance an invite link pointed at: the link is asked
+                // about again, now as an invite on the signed-in instance.
+                if let Some((origin, code)) = invite {
+                    if host_of(&origin) == host_of(&self.instance) {
+                        self.ask_about_link(Incoming::WebInvite { origin, code }, cx);
+                    }
+                }
                 // Demo screenshots (CI): the account switcher scenes.
                 #[cfg(feature = "demo")]
                 if std::env::var_os("INLET_DEMO").is_some() {
@@ -210,6 +277,9 @@ impl Inlet {
                         crate::demo::scenes::Scene::Accounts => self.switcher.open = true,
                         crate::demo::scenes::Scene::AccountsAdd => {
                             return self.begin_add_account(window, cx);
+                        }
+                        crate::demo::scenes::Scene::SignIn(step) => {
+                            return self.demo_sign_in(step, window, cx);
                         }
                         _ => {}
                     }
@@ -335,5 +405,234 @@ mod tests {
         assert!(safe_handoff_url("http://localhost:8080/login"));
         assert!(!safe_handoff_url("fluxer://handoff"));
         assert!(!safe_handoff_url("not a url"));
+    }
+
+    use gpui::{Render, TestAppContext, Window};
+    use inlet_protocol::Identity;
+    use tokio::sync::mpsc::UnboundedReceiver;
+
+    use super::flow::Step;
+    use crate::backend::accounts::entry::{self, EntryError, EntryInfo, Field};
+    use crate::backend::accounts::AccountKey;
+    use crate::backend::Command;
+
+    struct Probe;
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    fn info(identifier_first: bool) -> EntryInfo {
+        EntryInfo {
+            origin: "https://chat.example".into(),
+            host: "chat.example".into(),
+            identity: Identity::Email,
+            identifier_first,
+            sso_enforced: false,
+        }
+    }
+
+    /// The in-app sign-in commands the UI has sent so far.
+    fn sent(rx: &mut UnboundedReceiver<(Option<AccountKey>, Command)>) -> Vec<entry::Cmd> {
+        let mut out = Vec::new();
+        while let Ok((_, command)) = rx.try_recv() {
+            if let Command::Accounts(Cmd::Entry(cmd)) = command {
+                out.push(cmd);
+            }
+        }
+        out
+    }
+
+    /// An app on the sign-in screen with a backend that records what it is sent. The
+    /// closure drives the app; it gets the window too.
+    fn on_the_sign_in_screen(
+        cx: &mut TestAppContext,
+        drive: impl FnOnce(&mut Inlet, &mut Window, &mut Context<Inlet>),
+    ) -> Vec<entry::Cmd> {
+        let (handle, mut rx) = crate::backend::BackendHandle::recording();
+        let window = cx.add_window(|_, _| Probe);
+        let inlet = window
+            .update(cx, |_, window, cx| {
+                // No backend thread: its start-up events would reach the test's scheduler
+                // from another thread.
+                cx.new(|cx| Inlet::new_with(window, cx, move |_| handle))
+            })
+            .unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                inlet.update(cx, |this, cx| {
+                    this.screen = Screen::SignIn;
+                    drive(this, window, cx);
+                })
+            })
+            .unwrap();
+        sent(&mut rx)
+    }
+
+    #[gpui::test]
+    fn the_password_is_cleared_from_its_field_when_it_is_sent(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(false));
+            this.sign_in
+                .identifier_input
+                .update(cx, |i, cx| i.set_text("ana@example.org", cx));
+            this.sign_in
+                .password_input
+                .update(cx, |i, cx| i.set_text("correct horse", cx));
+            this.submit_sign_in(window, cx);
+            assert_eq!(this.sign_in.password_input.read(cx).text(), "");
+            assert!(this.sign_in.flow.busy());
+        });
+        match commands.as_slice() {
+            [entry::Cmd::Password {
+                identifier,
+                password,
+            }] => {
+                assert_eq!(identifier, "ana@example.org");
+                assert_eq!(password.expose_secret(), "correct horse");
+            }
+            _ => panic!("expected one password command, got {}", commands.len()),
+        }
+    }
+
+    #[gpui::test]
+    fn a_code_is_cleared_from_its_field_when_it_is_sent(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Mfa;
+            this.sign_in
+                .code_input
+                .update(cx, |i, cx| i.set_text("123456", cx));
+            this.submit_sign_in(window, cx);
+            assert_eq!(this.sign_in.code_input.read(cx).text(), "");
+        });
+        assert!(
+            matches!(commands.as_slice(), [entry::Cmd::Mfa { code }] if code.expose_secret() == "123456")
+        );
+    }
+
+    #[gpui::test]
+    fn a_second_submit_while_a_request_is_out_sends_nothing(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(false));
+            this.sign_in
+                .identifier_input
+                .update(cx, |i, cx| i.set_text("ana@example.org", cx));
+            this.sign_in
+                .password_input
+                .update(cx, |i, cx| i.set_text("one", cx));
+            this.submit_sign_in(window, cx);
+            this.sign_in
+                .password_input
+                .update(cx, |i, cx| i.set_text("two", cx));
+            this.submit_sign_in(window, cx);
+        });
+        assert_eq!(commands.len(), 1);
+    }
+
+    #[gpui::test]
+    fn a_pause_the_instance_asked_for_holds_back_the_next_attempt(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(false));
+            this.sign_in.flow.failed(
+                EntryError {
+                    message: String::new(),
+                    field: Field::Password,
+                    wait_secs: Some(60),
+                    restart: false,
+                },
+                std::time::Instant::now(),
+            );
+            this.sign_in
+                .identifier_input
+                .update(cx, |i, cx| i.set_text("ana@example.org", cx));
+            this.sign_in
+                .password_input
+                .update(cx, |i, cx| i.set_text("correct horse", cx));
+            this.submit_sign_in(window, cx);
+        });
+        assert!(commands.is_empty());
+    }
+
+    #[gpui::test]
+    fn an_empty_password_is_not_sent(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(false));
+            this.sign_in
+                .identifier_input
+                .update(cx, |i, cx| i.set_text("ana@example.org", cx));
+            this.submit_sign_in(window, cx);
+            assert!(!this.sign_in.flow.busy());
+        });
+        assert!(commands.is_empty());
+    }
+
+    #[gpui::test]
+    fn the_instance_step_asks_the_backend_to_look_the_instance_up(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in
+                .instance_input
+                .update(cx, |i, cx| i.set_text("chat.example", cx));
+            this.submit_sign_in(window, cx);
+        });
+        assert!(
+            matches!(commands.as_slice(), [entry::Cmd::Start { instance }] if instance == "chat.example")
+        );
+    }
+
+    #[gpui::test]
+    fn leaving_the_sign_in_forgets_the_step_the_codes_and_the_invite(cx: &mut TestAppContext) {
+        let _ = on_the_sign_in_screen(cx, |this, _, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Code;
+            this.sign_in.invite = Some(("https://chat.example".into(), "abc".into()));
+            this.sign_in
+                .code_input
+                .update(cx, |i, cx| i.set_text("123", cx));
+            this.sign_in_left(cx);
+            assert_eq!(this.sign_in.flow.step, Step::Instance);
+            assert!(this.sign_in.flow.info.is_none());
+            assert!(this.sign_in.invite.is_none());
+            assert_eq!(this.sign_in.code_input.read(cx).text(), "");
+        });
+    }
+
+    #[gpui::test]
+    fn an_error_event_keeps_the_field_empty_and_shows_the_message(cx: &mut TestAppContext) {
+        let _ = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(false));
+            this.on_entry_event(
+                entry::Ev::Failed(EntryError {
+                    message: "The email address or the password is wrong.".into(),
+                    field: Field::Password,
+                    wait_secs: None,
+                    restart: false,
+                }),
+                window,
+                cx,
+            );
+            assert_eq!(this.sign_in.password_input.read(cx).text(), "");
+            assert_eq!(
+                this.sign_in.flow.error.as_ref().map(|e| e.message.as_str()),
+                Some("The email address or the password is wrong.")
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_sign_in_the_backend_lost_returns_to_the_instance_step_with_a_message(
+        cx: &mut TestAppContext,
+    ) {
+        let _ = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Password;
+            this.on_entry_event(entry::Ev::Lost, window, cx);
+            assert_eq!(this.sign_in.flow.step, Step::Instance);
+            assert!(this.sign_in.flow.info.is_none());
+            assert!(this.sign_in.flow.error.is_some());
+            assert!(!this.sign_in.flow.busy());
+        });
     }
 }

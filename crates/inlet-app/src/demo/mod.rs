@@ -27,6 +27,7 @@ pub mod pickers;
 pub mod scene_file;
 pub mod scenes;
 pub mod search;
+pub mod signin;
 mod social;
 pub mod threads;
 mod unread;

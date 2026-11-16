@@ -25,7 +25,7 @@ Fluxer's official desktop app is built on Electron. Inlet is a separate, native 
 
 These are on the `v0` branch and wired up in the app. Some are merged but not yet in a release; no release exists yet, so they are listed here anyway.
 
-- Sign in to a Fluxer instance by its address, either through your browser (you confirm a short code on the instance's own page) or by pasting an existing token. Inlet shows which account you signed in as before it saves anything.
+- Sign in to a Fluxer instance by its address, in the app: with your email or username and password (or an emailed code, on instances that use them), your authenticator or backup code when the account has two-factor authentication, and the email link Fluxer sends when you sign in from a new network. The CAPTCHA some instances ask for is solved on your machine. Passkeys and single sign-on are not in the app yet; for those, sign in through your browser (you confirm a short code on the instance's own page), or paste an existing token. Inlet shows which account you signed in as before it saves a browser or pasted token.
 - Stay signed in between starts. If the network is down at start-up or drops later, Inlet keeps retrying with growing delays, and offers a "Reconnect" button when it stops trying.
 - Sign out. A token that Inlet got through the browser is also ended on the server. A token you pasted is only forgotten locally, because it belongs to another client.
 - A server list, a channel list grouped by category, and the list of direct messages.

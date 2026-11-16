@@ -18,6 +18,7 @@
 //! once with typing events (a background gateway never asked for them). The account it
 //! replaces stays connected in the background.
 
+pub mod entry;
 mod store;
 #[cfg(test)]
 pub(crate) mod testkit;
@@ -93,6 +94,8 @@ pub enum Cmd {
     Reconnect(Option<AccountKey>),
     /// The app is closing: end an unconfirmed browser sign-in, then answer.
     Shutdown(std::sync::mpsc::Sender<()>),
+    /// Signing in inside the app (password, email code, second factor).
+    Entry(entry::Cmd),
 }
 
 /// Events of the accounts domain. `Status`, `Error` and `GatewayDown` are about the
@@ -156,6 +159,8 @@ pub enum Ev {
     Status(String),
     /// Something failed that the user should see.
     Error(String),
+    /// A step of the in-app sign-in.
+    Entry(entry::Ev),
 }
 
 /// Which stored session a restore is for.
@@ -223,6 +228,7 @@ pub(super) fn handle(b: &mut Backend, cmd: Cmd) {
             }
         }
         Cmd::SignInBrowser { instance } => b.start_handoff(instance),
+        Cmd::Entry(cmd) => entry::handle(b, cmd),
         Cmd::SignInToken { instance, token } => {
             b.offline = None;
             b.start_connect(instance, None, Credential::Pasted(token), Mode::Fresh, None);
@@ -241,24 +247,7 @@ pub(super) fn handle(b: &mut Backend, cmd: Cmd) {
         }
         Cmd::ConfirmAccount => {
             if let Some(pending) = b.pending_confirm.take() {
-                let origin = pending.connected.session.instance().origin().to_string();
-                let key = AccountKey::new(&origin, &pending.connected.user_id);
-                let known = key
-                    .as_ref()
-                    .is_some_and(|k| b.known.iter().any(|a| &a.key == k));
-                if !known && b.known.len() >= MAX_ACCOUNTS {
-                    b.pending_confirm = Some(pending);
-                    b.drop_pending_confirm();
-                    b.tell(Ev::NeedsSignIn {
-                        instance: Some(origin),
-                    });
-                    b.tell(Ev::SignInFailed(t!(
-                        "sign-in-too-many-accounts",
-                        max = MAX_ACCOUNTS
-                    )));
-                    return;
-                }
-                b.install(pending.connected, true, !pending.from_handoff);
+                b.confirm_new(pending);
             }
         }
         Cmd::RejectAccount => {
@@ -316,6 +305,29 @@ pub(super) fn handle(b: &mut Backend, cmd: Cmd) {
 }
 
 impl Backend {
+    /// A new sign-in is accepted: it is added next to the accounts already signed in
+    /// and becomes the active one (or refused when there are too many).
+    fn confirm_new(&mut self, pending: PendingConfirm) {
+        let origin = pending.connected.session.instance().origin().to_string();
+        let key = AccountKey::new(&origin, &pending.connected.user_id);
+        let known = key
+            .as_ref()
+            .is_some_and(|k| self.known.iter().any(|a| &a.key == k));
+        if !known && self.known.len() >= MAX_ACCOUNTS {
+            self.pending_confirm = Some(pending);
+            self.drop_pending_confirm();
+            self.tell(Ev::NeedsSignIn {
+                instance: Some(origin),
+            });
+            self.tell(Ev::SignInFailed(t!(
+                "sign-in-too-many-accounts",
+                max = MAX_ACCOUNTS
+            )));
+            return;
+        }
+        self.install(pending.connected, true, !pending.from_handoff);
+    }
+
     /// Whether `key` is the account the backend is showing: the active one, or (with no
     /// active account) one that is starting or offline rather than in the background.
     fn is_current(&self, key: &AccountKey) -> bool {
@@ -550,9 +562,7 @@ impl Backend {
                 if self.connecting.as_ref().map(|(a, _, _)| *a) != Some(attempt) {
                     // Cancelled meanwhile. A token Inlet got from the browser is ended on
                     // the server; a pasted one is only forgotten.
-                    if let (Mode::Fresh, Credential::SignedIn(_), Ok(c)) =
-                        (mode, &credential, result)
-                    {
+                    if let (Mode::Fresh, true, Ok(c)) = (mode, credential.is_issued(), result) {
                         self.spawn_guarded("revoke", None, async move {
                             session::revoke(&c.session).await;
                         });
@@ -562,7 +572,17 @@ impl Backend {
                 self.connecting = None;
                 match result {
                     Ok(connected) if mode == Mode::Fresh => {
-                        let from_handoff = matches!(credential, Credential::SignedIn(_));
+                        let from_handoff = credential.is_issued();
+                        // A password sign-in typed in the app needs no second look: the
+                        // person just entered the credentials, nobody else can have
+                        // slipped an account in. It goes straight on.
+                        if matches!(credential, Credential::Entered(_)) {
+                            self.confirm_new(PendingConfirm {
+                                connected,
+                                from_handoff,
+                            });
+                            return;
+                        }
                         self.tell(Ev::ConfirmAccount {
                             display_name: connected.username.clone(),
                             account: connected.account.clone(),
@@ -681,6 +701,7 @@ impl Backend {
                     Err(_) => {}
                 }
             }
+            Internal::Entry(done) => self.entry_done(done),
             Internal::Ended { gen, message } => self.session_ended(gen, message),
             Internal::GatewayEnded { gen, end } => {
                 if self.engine(gen).is_none() {

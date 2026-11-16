@@ -267,6 +267,20 @@ impl BackendHandle {
             account: Arc::default(),
         }
     }
+
+    /// A handle with no backend behind it that keeps what the UI sent, for tests of what
+    /// a screen sends.
+    #[cfg(test)]
+    pub(crate) fn recording() -> (Self, UnboundedReceiver<(Option<AccountKey>, Command)>) {
+        let (tx, rx) = unbounded_channel();
+        (
+            Self {
+                tx,
+                account: Arc::default(),
+            },
+            rx,
+        )
+    }
 }
 
 /// Starts the backend thread. Events arrive on `events`. When the thread ends (a panic in
@@ -345,6 +359,8 @@ enum Internal {
         id: u64,
         result: Result<(p::Instance, p::SignedIn), String>,
     },
+    /// An answer of the in-app sign-in.
+    Entry(accounts::entry::Done),
     /// The session `gen` ended for good (auth failure).
     Ended {
         gen: u64,
@@ -478,6 +494,10 @@ struct Backend {
     handoff: Option<(u64, tokio::sync::oneshot::Sender<()>)>,
     /// A new sign-in waiting for the person to confirm the account.
     pending_confirm: Option<PendingConfirm>,
+    /// The in-app sign-in in progress: the instance and the tickets of its steps.
+    entry: Option<accounts::entry::Entry>,
+    /// The discovery an in-app sign-in starts with, if one is running (its flow number).
+    entry_starting: Option<u64>,
     open_guild: Option<AbortHandle>,
     open_channel: Option<AbortHandle>,
     /// Messages with files on their way, and failed ones kept for Retry (all accounts).
@@ -511,6 +531,8 @@ impl Backend {
             handoff_seq: 0,
             handoff: None,
             pending_confirm: None,
+            entry: None,
+            entry_starting: None,
             open_guild: None,
             open_channel: None,
             uploads: Default::default(),

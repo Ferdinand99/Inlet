@@ -58,6 +58,9 @@
 //!   the guild (see `search.rs`).
 //! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
 //!   `accounts` (their channels with mentions and unread messages).
+//! - `sign-in-identifier`, `sign-in-classic`, `sign-in-password`, `sign-in-code`,
+//!   `sign-in-mfa`, `sign-in-ip`: the sign-in screen on that step, to add an account (see
+//!   `signin.rs`).
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -120,6 +123,8 @@ pub enum Scene {
     ProfilePopout,
     SearchResults,
     QuickSwitcher,
+    /// The sign-in screen on one of its steps (see `signin.rs`).
+    SignIn(super::signin::Step),
 }
 
 impl Scene {
@@ -164,7 +169,7 @@ impl Scene {
             "profile-popout" => Scene::ProfilePopout,
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
-            _ => return None,
+            other => return super::signin::Step::from_name(other).map(Scene::SignIn),
         })
     }
 }
@@ -576,6 +581,12 @@ mod tests {
             "profile-popout",
             "search-results",
             "quick-switcher",
+            "sign-in-identifier",
+            "sign-in-classic",
+            "sign-in-password",
+            "sign-in-code",
+            "sign-in-mfa",
+            "sign-in-ip",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);
