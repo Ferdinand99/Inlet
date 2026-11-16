@@ -303,8 +303,7 @@ pub fn rows() -> Vec<Row> {
 /// The names of the keys in `keys` as gpui spells them (`ctrl-alt-up`), as the platform
 /// writes them.
 pub fn key_names(keys: &str, mac: bool) -> Vec<String> {
-    keys
-        .split('-')
+    keys.split('-')
         .map(|part| match part {
             "ctrl" => t!("keys-ctrl"),
             "cmd" => t!("keys-command"),
@@ -893,13 +892,13 @@ mod tests {
         let guild = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
             inlet.read_with(cx, |i, _| i.selected_guild.clone())
         };
-        cx.simulate_keystrokes("ctrl-alt-down");
+        cx.simulate_keystrokes(SERVER_NEXT.now());
         assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
-        cx.simulate_keystrokes("ctrl-alt-down");
+        cx.simulate_keystrokes(SERVER_NEXT.now());
         assert_eq!(guild(&inlet, cx), None, "the direct messages come first");
-        cx.simulate_keystrokes("ctrl-alt-up");
+        cx.simulate_keystrokes(SERVER_PREVIOUS.now());
         assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
-        cx.simulate_keystrokes("ctrl-alt-up");
+        cx.simulate_keystrokes(SERVER_PREVIOUS.now());
         assert_eq!(guild(&inlet, cx).as_deref(), Some(GUILD));
     }
 
@@ -910,7 +909,12 @@ mod tests {
         let (inlet, cx) = rig(cx);
         cx.update(|window, cx| inlet.update(cx, |this, cx| this.toggle_quick_switcher(window, cx)));
         cx.run_until_parked();
-        cx.simulate_keystrokes("alt-down ctrl-alt-down ctrl-p");
+        cx.simulate_keystrokes(&format!(
+            "{} {} {}",
+            CHANNEL_NEXT.now(),
+            SERVER_NEXT.now(),
+            PINS.now()
+        ));
         inlet.read_with(cx, |i, _| {
             assert_eq!(i.selected_channel.as_deref(), Some("301"));
             assert_eq!(i.selected_guild.as_deref(), Some(GUILD));
@@ -926,11 +930,11 @@ mod tests {
         let open = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
             inlet.read_with(cx, |i, _| i.inbox.open)
         };
-        cx.simulate_keystrokes("ctrl-i");
+        cx.simulate_keystrokes(INBOX.now());
         assert_eq!(open(&inlet, cx), Some(Panel::Inbox));
-        cx.simulate_keystrokes("ctrl-i");
+        cx.simulate_keystrokes(INBOX.now());
         assert_eq!(open(&inlet, cx), None);
-        cx.simulate_keystrokes("ctrl-i ctrl-p");
+        cx.simulate_keystrokes(&format!("{} {}", INBOX.now(), PINS.now()));
         assert_eq!(open(&inlet, cx), Some(Panel::Pins));
         cx.simulate_keystrokes("escape");
         assert_eq!(open(&inlet, cx), None);
@@ -944,20 +948,20 @@ mod tests {
         let help = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
             inlet.read_with(cx, |i, _| i.overlays.keybind_help)
         };
-        cx.simulate_keystrokes("ctrl-/");
+        cx.simulate_keystrokes(HELP.now());
         cx.run_until_parked();
         assert!(help(&inlet, cx));
         cx.simulate_keystrokes("alt-down");
         assert_eq!(open_channel(&inlet, cx).as_deref(), Some("301"));
-        cx.simulate_keystrokes("ctrl-/");
+        cx.simulate_keystrokes(HELP.now());
         assert!(!help(&inlet, cx));
-        cx.simulate_keystrokes("ctrl-/");
+        cx.simulate_keystrokes(HELP.now());
         cx.run_until_parked();
         assert!(help(&inlet, cx));
         cx.simulate_keystrokes("escape");
         assert!(!help(&inlet, cx));
         // Over the inbox it does not open.
-        cx.simulate_keystrokes("ctrl-i ctrl-/");
+        cx.simulate_keystrokes(&format!("{} {}", INBOX.now(), HELP.now()));
         assert!(!help(&inlet, cx));
     }
 
