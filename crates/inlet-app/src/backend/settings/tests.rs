@@ -394,6 +394,21 @@ async fn the_own_profile_is_read_with_its_texts_cleaned() {
         .await;
     let own = profile::load(&client).await.ok().unwrap();
     assert_eq!(own.name, "Ada", "control and direction characters go");
+    // Joiners stay, so an emoji sequence or a Persian name is not rewritten on save.
+    let joined = profile::own_profile(
+        &serde_json::from_value(json!({
+            "user": {"id": "7", "username": "ada",
+                     "global_name": "\u{1F469}\u{200D}\u{1F4BB}\u{200C}\nx"},
+            "user_profile": {"bio": "a\u{200B}b\nc", "pronouns": "x\ny"}
+        }))
+        .unwrap(),
+    );
+    assert_eq!(
+        joined.name, "\u{1F469}\u{200D}\u{1F4BB}\u{200C}x",
+        "no line break in a name"
+    );
+    assert_eq!(joined.bio, "ab\nc", "a bio keeps its line breaks");
+    assert_eq!(joined.pronouns, "xy");
     assert_eq!(own.bio, "line one\nline two", "a bio keeps its line breaks");
     assert_eq!(own.pronouns, "she/her");
     assert_eq!(own.banner.as_deref(), Some("bannerhash"));

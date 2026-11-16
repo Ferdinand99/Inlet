@@ -108,14 +108,19 @@ pub async fn load(client: &p::Client) -> Result<OwnProfile, ProfileError> {
 /// The profile as the tab edits it: texts without control characters (a bio keeps its
 /// line breaks), cut to what a profile may hold.
 pub fn own_profile(full: &p::FullUserProfile) -> OwnProfile {
-    let clean = |s: Option<&str>, max: usize| -> String {
-        s.map(|t| t.chars().filter(|c| !hidden(*c)).take(max).collect())
-            .unwrap_or_default()
+    let clean = |s: Option<&str>, max: usize, multiline: bool| -> String {
+        s.map(|t| {
+            t.chars()
+                .filter(|c| !hidden(*c, multiline))
+                .take(max)
+                .collect()
+        })
+        .unwrap_or_default()
     };
     OwnProfile {
         user_id: full.user.id.clone(),
         username: crate::model::clean_name(&full.user.username),
-        name: clean(full.user.global_name.as_deref(), MAX_NAME_CHARS),
+        name: clean(full.user.global_name.as_deref(), MAX_NAME_CHARS, false),
         avatar: crate::backend::media::user_avatar(&full.user),
         banner: full
             .user_profile
@@ -123,18 +128,40 @@ pub fn own_profile(full: &p::FullUserProfile) -> OwnProfile {
             .as_deref()
             .filter(|h| !h.is_empty() && h.len() <= 128)
             .map(str::to_owned),
-        pronouns: clean(full.user_profile.pronouns.as_deref(), MAX_PRONOUNS_CHARS),
-        bio: clean(full.user_profile.bio.as_deref(), MAX_BIO_READ),
+        pronouns: clean(
+            full.user_profile.pronouns.as_deref(),
+            MAX_PRONOUNS_CHARS,
+            false,
+        ),
+        bio: clean(full.user_profile.bio.as_deref(), MAX_BIO_READ, true),
     }
 }
 
-/// A character that shows nothing or changes how text runs (controls except the line
-/// break, zero-width and direction marks): never kept from the server.
-fn hidden(c: char) -> bool {
-    (c.is_control() && c != '\n')
+/// A character that shows nothing or changes how text runs, never kept from the server:
+/// controls (a bio keeps its line breaks), the zero-width space, the direction marks and
+/// the line and paragraph separators. The zero-width joiner and non-joiner stay: emoji
+/// sequences and some scripts need them, and saving must not rewrite them.
+fn hidden(c: char, multiline: bool) -> bool {
+    (c.is_control() && !(multiline && c == '\n'))
         || matches!(c,
-            '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-            | '\u{2028}' | '\u{2029}')
+            '\u{200B}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}')
+}
+
+/// The profile the demo "saves": what the person asked for, on top of the demo profile.
+#[cfg(feature = "demo")]
+pub fn demo_saved(save: ProfileSave) -> OwnProfile {
+    let mut p = demo_profile();
+    if let Some(name) = save.name {
+        p.name = name;
+    }
+    if let Some(pronouns) = save.pronouns {
+        p.pronouns = pronouns;
+    }
+    if let Some(bio) = save.bio {
+        p.bio = bio;
+    }
+    p
 }
 
 /// Sends a profile edit, then reads the profile.

@@ -78,23 +78,36 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     let internal = backend.internal.clone();
     #[cfg(feature = "demo")]
     if let Some(Active::Demo(_)) = &backend.active {
-        // The demo has no server: the UI already shows the change.
-        if let Cmd::LoadProfile = cmd {
-            backend.emit(Ev::Profile(Box::new(profile::demo_profile())));
+        // The demo has no server: the UI already shows a change to the settings.
+        match cmd {
+            Cmd::LoadProfile => backend.emit(Ev::Profile(Box::new(profile::demo_profile()))),
+            Cmd::SaveProfile(save) => {
+                backend.emit(Ev::ProfileSaved(Box::new(profile::demo_saved(*save))));
+            }
+            Cmd::Save { .. } => {}
         }
         return;
     }
     let Some(Active::Real(r)) = &mut backend.active else {
         // Not signed in, or the command was for an account that is not the active one.
-        let ev = match cmd {
-            Cmd::Save { seq, changes } => Ev::SaveFailed {
-                through: seq,
-                preferences: changes.iter().all(Change::is_preference),
-            },
-            Cmd::LoadProfile => Ev::ProfileFailed(t!("settings-not-connected")),
-            Cmd::SaveProfile(_) => Ev::ProfileSaveFailed(t!("settings-not-connected")),
-        };
-        return backend.emit(ev);
+        match cmd {
+            // Each kind of setting in the command is answered, so none stays waiting.
+            Cmd::Save { seq, changes } => {
+                for preferences in [false, true] {
+                    if changes.iter().any(|c| c.is_preference() == preferences) {
+                        backend.emit(Ev::SaveFailed {
+                            through: seq,
+                            preferences,
+                        });
+                    }
+                }
+            }
+            Cmd::LoadProfile => backend.emit(Ev::ProfileFailed(t!("settings-not-connected"))),
+            Cmd::SaveProfile(_) => {
+                backend.emit(Ev::ProfileSaveFailed(t!("settings-not-connected")));
+            }
+        }
+        return;
     };
     let client = r.session.client().clone();
     let events = r.events.clone();
