@@ -9,6 +9,7 @@ use crate::{about, assets, theme};
 
 impl Render for Inlet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.follow_settings_store(cx);
         self.media_frame(window, cx);
         self.take_channel_jump(window, cx);
         self.threads_frame(window, cx);
@@ -35,6 +36,7 @@ impl Render for Inlet {
         let root = self.notification_keys(root, cx);
         let root = self.picker_keys(root, cx);
         let root = self.search_keys(root, window, cx);
+        let root = self.keymap_keys(root, window, cx);
         if self.show_about {
             return root
                 .child(about::render(self.show_licences, cx))

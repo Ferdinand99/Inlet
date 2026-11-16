@@ -8,6 +8,7 @@ media-size-tb = { $size } TB
 media-audio-detail = { $size } · { $length }
 media-spoiler = SPOILER
 media-explicit = Sensitive content · click to show
+media-explicit-blocked = Hidden by your sensitive content settings
 media-saved = Saved { $name }
 media-save-failed = Could not save the file: { $reason }
 media-save-stopped = the download stopped

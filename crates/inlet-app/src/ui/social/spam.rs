@@ -70,22 +70,6 @@ pub fn user_flags(m: &p::Message) -> u64 {
 }
 
 impl Inlet {
-    /// Whether developer mode is on (from the account's settings, READY and updates).
-    pub(crate) fn spam_on_dispatch(&mut self, d: &p::Dispatch) {
-        match d {
-            p::Dispatch::Ready(ready) => {
-                self.profile.developer_mode = ready
-                    .extra
-                    .get("user_settings")
-                    .and_then(|s| s.get("developer_mode"))
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false);
-            }
-            p::Dispatch::UserSettingsUpdate(s) => self.profile.developer_mode = s.developer_mode,
-            _ => {}
-        }
-    }
-
     /// The marks follow the synced preferences: the lists are rebuilt, and the rows
     /// with them when they changed.
     pub(crate) fn spam_follow_prefs(&mut self, cx: &mut Context<Self>) {

@@ -58,6 +58,8 @@
 //!   the guild (see `search.rs`).
 //! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
 //!   `accounts` (their channels with mentions and unread messages).
+//! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
+//!   chat.
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -120,6 +122,7 @@ pub enum Scene {
     ProfilePopout,
     SearchResults,
     QuickSwitcher,
+    KeybindHelp,
 }
 
 impl Scene {
@@ -164,6 +167,7 @@ impl Scene {
             "profile-popout" => Scene::ProfilePopout,
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
+            "keybind-help" => Scene::KeybindHelp,
             _ => return None,
         })
     }
@@ -231,6 +235,7 @@ pub fn load_scene_file() {
     set("INLET_DEMO_SETTINGS", file.settings.as_deref());
     set("INLET_DEMO_DEEP_LINK", file.deep_link.as_deref());
     set("INLET_DEMO_ACCENT", file.accent.as_deref());
+    set("INLET_DEMO_THEME", Some(file.theme.as_str()));
     // No live demo messages while the screenshot is taken, and animated emoji hold
     // their first frame: a scene must look the same whenever it is taken.
     set("INLET_DEMO_LIVE_SECS", Some("86400"));

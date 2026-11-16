@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Inlet
+GenericName=Chat client
+Comment=A native desktop client that works with Fluxer
+Keywords=chat;messenger;fluxer;
+Exec=inlet %U
+Icon=no.opland.inlet
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+# The window's app id; the desktop matches it to this file (and its icon).
+StartupWMClass=no.opland.inlet
+# inlet:// links open Inlet; the app asks before acting on any of them.
+MimeType=x-scheme-handler/inlet;

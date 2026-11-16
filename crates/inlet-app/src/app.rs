@@ -11,6 +11,8 @@ use crate::backend::{self, accounts, BackendHandle, Event};
 use crate::model::{Channel, Guild};
 use crate::ui;
 
+pub(crate) mod keymap;
+
 #[derive(Clone, PartialEq)]
 pub enum Screen {
     /// Connecting with a saved session (or before the backend has answered).
@@ -140,6 +142,17 @@ impl Inlet {
             cx.notify();
         }));
 
+        // The operating system's light or dark setting, for the theme "system".
+        crate::ui::settings::store::system_appearance_changed(
+            cx,
+            crate::theme::appearance_is_dark(window.appearance()),
+        );
+        subscriptions.push(cx.observe_window_appearance(window, |_, window, cx| {
+            crate::ui::settings::store::system_appearance_changed(
+                cx,
+                crate::theme::appearance_is_dark(window.appearance()),
+            );
+        }));
         Self::watch_reduce_motion(cx);
         let backend = backend(window, cx);
         let notifications = ui::notifications::State::new(window.is_window_active());

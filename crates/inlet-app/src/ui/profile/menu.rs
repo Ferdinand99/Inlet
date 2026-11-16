@@ -102,15 +102,15 @@ impl Inlet {
                 )),
             );
         }
-        menu = menu.child(item("user-menu-copy-id", t!("user-menu-copy-id")).on_click(
-            cx.listener(move |this, _, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(user.to_string()));
-                this.profile.menu = None;
-                cx.notify();
-            }),
-        ));
-        // Developer mode adds the local spam marks (Fluxer's `SpammerOverrideMenuItems`).
-        if self.profile.developer_mode {
+        // Fluxer offers the ID only with developer mode on.
+        if self.settings_values().developer_mode {
+            menu = menu.child(item("user-menu-copy-id", t!("user-menu-copy-id")).on_click(
+                cx.listener(move |this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(user.to_string()));
+                    this.profile.menu = None;
+                    cx.notify();
+                }),
+            ));
             let spam = self.chat.view.spam.clone();
             let flagged = self
                 .account

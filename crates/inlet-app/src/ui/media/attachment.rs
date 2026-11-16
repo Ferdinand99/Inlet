@@ -290,10 +290,16 @@ impl Inlet {
         let mut media = div().flex().flex_row().flex_wrap().gap_1();
         let mut files = div().flex().flex_col().gap_1();
         let (mut any_media, mut any_file) = (false, false);
+        // Without uploaded media inline, pictures and videos show as file cards.
+        let inline = self.settings_values().inline_attachment_media;
         for a in attachments {
             let a = self.media.refresh.current(a);
             let key = format!("{message_id}-{}", a.id);
-            match a.kind {
+            let kind = match a.kind {
+                AttachmentKind::Image | AttachmentKind::Video if !inline => AttachmentKind::File,
+                kind => kind,
+            };
+            match kind {
                 AttachmentKind::Image => {
                     any_media = true;
                     media =
@@ -420,6 +426,35 @@ impl Inlet {
     /// neither). A click reveals it.
     // Deviation: Fluxer blurs the image under the cover; gpui has no blur filter, so the
     // cover is solid (nothing shows through, and nothing loads until revealed).
+    /// What the account's sensitive content setting says about media in the open channel:
+    /// 0 show, 1 blur (here: cover until clicked), 2 block. Direct messages from friends,
+    /// from others (and group chats) and server channels each have their own.
+    fn sensitive_level(&self, cx: &gpui::App) -> u8 {
+        use inlet_protocol::models::channel_type;
+        use inlet_state::relationships::Kind;
+        let v = self.settings_values();
+        let Some(state) = self.account.as_ref().map(|a| a.read(cx)) else {
+            return v.sensitive_servers;
+        };
+        let channel = self.open_channel_id().and_then(|ch| state.channel(ch));
+        match channel {
+            Some(c) if c.kind == channel_type::DM => {
+                let friend = c
+                    .recipients
+                    .first()
+                    .and_then(|u| inlet_state::UserId::parse(&u.id))
+                    .is_some_and(|u| state.relationships().kind(u) == Some(Kind::Friend));
+                if friend {
+                    v.sensitive_friends
+                } else {
+                    v.sensitive_others
+                }
+            }
+            Some(c) if c.kind == channel_type::GROUP_DM => v.sensitive_others,
+            _ => v.sensitive_servers,
+        }
+    }
+
     pub(super) fn cover(
         &self,
         key: &str,
@@ -428,16 +463,28 @@ impl Inlet {
         size: (f32, f32),
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let covered =
-            (spoiler || (explicit && self.media.cover_explicit)) && !self.media.is_revealed(key);
+        // The account's sensitive content setting for the place the media is in.
+        let level = if explicit && self.media.cover_explicit {
+            self.sensitive_level(cx)
+        } else {
+            0
+        };
+        let blocked = !spoiler && level == 2;
+        let covered = (spoiler || level != 0) && (blocked || !self.media.is_revealed(key));
         if !covered {
             return None;
         }
         let label = if spoiler {
             t!("media-spoiler")
+        } else if blocked {
+            t!("media-explicit-blocked")
         } else {
             t!("media-explicit")
         };
+        if blocked {
+            // Blocked: nothing loads and a click shows nothing.
+            return Some(cover_box(format!("cover-{key}"), label, size).into_any_element());
+        }
         let key = key.to_string();
         Some(
             cover_box(format!("cover-{key}"), label, size)

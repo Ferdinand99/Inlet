@@ -1,25 +1,68 @@
 name: Release
 
-# Pushing a tag that starts with "v" builds Inlet on all three platforms and
-# creates a GitHub Release. Releases are always marked as pre-releases while
-# the version starts with 0 or has a pre-release suffix, and are never "latest".
-# The macOS build is signed and notarised by macos-sign.yml, which waits for
-# approval in the protected environment "release".
+# Builds Inlet on all three platforms and publishes a GitHub release. Two ways in:
+#
+# - release-please.yml calls this workflow with the tag it has just created. A tag
+#   created with the default GITHUB_TOKEN does not start other workflows, so the call
+#   is explicit. release-please has already made a draft pre-release for the tag
+#   (with the changelog as notes); this workflow attaches the files to it and
+#   publishes it.
+# - Pushing a tag that starts with "v" by hand. If no release exists for the tag, one
+#   is created.
+#
+# Every release is a pre-release and is never marked as the latest release. The macOS
+# build is signed and notarised by macos-sign.yml, which waits for approval in the
+# protected environment "release".
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build and release (vX.Y.Z); it must point at the commit of the calling run
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  # The build below uses the commit of this run. Make sure that is the commit the tag
+  # names, so the release never holds files built from a different commit.
+  verify:
+    name: Check the tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: The tag is a version tag and points at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$TAG' is not a version tag"
+            exit 1
+          fi
+          read -r type sha < <(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object | "\(.type) \(.sha)"')
+          if [ "$type" = tag ]; then
+            sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)"
+          fi
+          if [ "$sha" != "$GITHUB_SHA" ]; then
+            echo "::error::$TAG points at $sha, but this run builds $GITHUB_SHA"
+            exit 1
+          fi
+          echo "$TAG is at $sha"
+
   build:
     name: Build
+    needs: verify
     uses: ./.github/workflows/build.yml
     permissions:
       contents: read
@@ -40,13 +83,22 @@ jobs:
       dmg-artifact: inlet-macos-aarch64-dmg
       retention-days: 7
 
-  release:
-    name: Create release
-    needs: [build, macos-sign]
+  # A CycloneDX SBOM per platform (sbom.yml); the collect job adds them to the release files.
+  sbom:
+    name: SBOM
+    uses: ./.github/workflows/sbom.yml
+    permissions:
+      contents: read
+
+  # Puts together everything that is published: the packages, the three SBOMs, LICENSE,
+  # THIRD-PARTY-NOTICES and SHA256SUMS.txt. Nothing is published here.
+  collect:
+    name: Collect release files
+    needs: [build, macos-sign, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,9 +111,26 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release
-          cp artifacts/inlet-windows-x86_64/inlet.exe release/inlet-windows-x86_64.exe
+          # The Windows and Linux packages carry the version in their names
+          # (inlet-<version>-windows-x86_64-setup.exe, ...). Each pattern must match
+          # exactly one file, or the release stops here.
+          for pattern in \
+            "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64-setup.exe" \
+            "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64.zip" \
+            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.AppImage" \
+            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.tar.gz"; do
+            mapfile -t files < <(compgen -G "$pattern" || true)
+            if [ "${#files[@]}" -ne 1 ]; then
+              echo "expected exactly one file for $pattern, found ${#files[@]}"
+              exit 1
+            fi
+            cp "${files[0]}" release/
+          done
           cp artifacts/inlet-macos-aarch64-dmg/inlet-macos-aarch64.dmg release/
-          cp artifacts/inlet-linux-x86_64/inlet-linux-x86_64.tar.gz release/
+          # One SBOM per platform build (CycloneDX, JSON).
+          cp artifacts/inlet-sbom-*/*.cdx.json release/
+          sboms=(release/*.cdx.json)
+          test "${#sboms[@]}" -eq 3
           cp LICENSE release/LICENSE
           # Third-party licence notices, if the repository carries them.
           for f in THIRD-PARTY-NOTICES*; do
@@ -72,6 +141,68 @@ jobs:
           cat SHA256SUMS.txt
           ls -l
 
+      # LICENSE and THIRD-PARTY-NOTICES (which holds the licences of the fonts, icons and
+      # Twemoji) are in the release and inside the .zip and .tar.gz packages; the check
+      # fails the release when one of them is missing or lost its licence texts. The
+      # installer, the AppImage and the DMG are built from the same files by the packaging
+      # scripts, which stop without them.
+      - name: Check the licence files
+        run: scripts/check-package-licences.sh release
+
+      # The attest job signs exactly these files, and the release job publishes exactly
+      # these files.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Build provenance (SLSA, signed with Sigstore) for every file that is about to be
+  # published: the packages, the three SBOMs, LICENSE, THIRD-PARTY-NOTICES and
+  # SHA256SUMS.txt. It ties each file to this workflow run and this commit. Anyone can
+  # check a download:
+  #
+  #   gh attestation verify <file> --repo Ferdinand99/Inlet
+  #
+  # The release job needs this job, so nothing is published without its attestation.
+  # Only this job uses id-token and attestations write; a workflow that calls this one
+  # (release-please.yml) has to allow them for the call, but every job here sets its own
+  # permissions. The job runs no repository code: it downloads the collected files and
+  # signs their digests.
+  attest:
+    name: Build provenance
+    needs: collect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release-files
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-files/*
+
+  # Publishes the collected, attested files.
+  release:
+    name: Create release
+    needs: [collect, attest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release
+
       - name: Write release notes
         run: |
           cat > notes.md <<'NOTES'
@@ -81,31 +212,102 @@ jobs:
 
           ## Downloads
 
-          - Windows (x86_64): `inlet-windows-x86_64.exe`. The file is not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
+          - Windows (x86_64): `inlet-<version>-windows-x86_64-setup.exe` installs Inlet for your user account (no administrator rights needed). `inlet-<version>-windows-x86_64.zip` is a portable copy. The files are not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
           - macOS (Apple silicon, macOS 12 or later): `inlet-macos-aarch64.dmg`. Signed with a Developer ID and notarised by Apple. Open the DMG and drag Inlet to Applications.
-          - Linux (x86_64): `inlet-linux-x86_64.tar.gz`.
+          - Linux (x86_64): `inlet-<version>-linux-x86_64.AppImage` (make it executable and run it; it needs FUSE 2, so on Ubuntu 24.04 install `libfuse2t64` or start it with `--appimage-extract-and-run`) or `inlet-<version>-linux-x86_64.tar.gz`.
 
           Check the downloads against `SHA256SUMS.txt`. Licence notices for third-party code are in the `THIRD-PARTY-NOTICES` file when it is attached.
           NOTES
 
-      - name: Create the GitHub Release
+      # A draft release for the tag exists when release-please made the tag: its
+      # notes are the changelog. The draft is filled with the files and published as a
+      # pre-release. Without a draft (a tag pushed by hand) the release is created.
+      # A release that is already published is never touched: one tag, one release.
+      - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          # Every v0.* tag and every tag with a suffix (v1.0.0-beta.1) is a pre-release.
-          # Nothing is ever marked as the latest release.
-          prerelease=false
-          case "$TAG" in
-            v0.*|*-*) prerelease=true ;;
-          esac
-          flags=(--latest=false)
-          if [ "$prerelease" = true ]; then
-            flags+=(--prerelease)
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$TAG' is not a version tag"
+            exit 1
           fi
-          gh release create "$TAG" release/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "Inlet $TAG (beta)" \
-            --notes-file notes.md \
-            "${flags[@]}"
+          title="Inlet $TAG (beta)"
+
+          # Drafts are not found by tag name, so look through the list of releases.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | [.id, .draft] | @tsv' > found.tsv
+          count="$(wc -l < found.tsv)"
+          if [ "$count" -gt 1 ]; then
+            echo "::error::$count releases exist for $TAG"
+            exit 1
+          fi
+
+          if [ "$count" -eq 0 ]; then
+            # Every release is a pre-release and nothing is ever the latest release.
+            gh release create "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "$title" \
+              --notes-file notes.md \
+              --prerelease \
+              --latest=false
+          else
+            read -r id draft < found.tsv
+            if [ "$draft" != true ]; then
+              echo "::error::$TAG already has a published release; not touching it"
+              exit 1
+            fi
+
+            # Notes: the beta notice and downloads, then release-please's changelog.
+            gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq '.body // ""' > changelog.md
+            { cat notes.md; echo; cat changelog.md; } > body.md
+
+            # A re-run starts again: drop assets of the same name first.
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$id/assets?per_page=100" \
+              --jq '.[] | [.id, .name] | @tsv' > assets.tsv
+            for f in release/*; do
+              name="$(basename "$f")"
+              while IFS=$'\t' read -r asset_id asset_name; do
+                if [ "$asset_name" = "$name" ]; then
+                  gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+                fi
+              done < assets.tsv
+              gh api --method POST \
+                -H "Content-Type: application/octet-stream" \
+                --input "$f" \
+                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$id/assets?name=$name" \
+                --jq '"uploaded \(.name)"'
+            done
+
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" \
+              -f name="$title" \
+              -F body=@body.md \
+              -F draft=false \
+              -F prerelease=true \
+              -f make_latest=false \
+              --jq '"published \(.tag_name): draft=\(.draft) prerelease=\(.prerelease)"'
+          fi
+
+      # Fail loudly if the result is not a pre-release or is the latest release.
+      - name: Check that the release is a pre-release and not the latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | [.draft, .prerelease] | @tsv' > state.tsv
+          cat state.tsv
+          if [ "$(cat state.tsv)" != "$(printf 'false\ttrue')" ]; then
+            echo "::error::$TAG must be exactly one published pre-release"
+            exit 1
+          fi
+          # 404 when no release is the latest, which is fine for a first pre-release.
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          echo "Latest release: ${latest:-none}"
+          if [ "$latest" = "$TAG" ]; then
+            echo "::error::$TAG is marked as the latest release"
+            exit 1
+          fi
