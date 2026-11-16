@@ -144,6 +144,8 @@ pub struct State {
     pub popout: Option<Popout>,
     pub full: Option<Full>,
     pub menu: Option<UserMenu>,
+    /// Developer mode is on (the account setting): the user menu adds the spam marks.
+    pub developer_mode: bool,
     pub cache: ProfileCache,
     next_request: u64,
     /// The fetch on its way.

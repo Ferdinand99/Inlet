@@ -61,7 +61,8 @@ impl Inlet {
                 first,
                 count,
                 revealed,
-            } => self.render_blocked_run(first, count, revealed, cx),
+                spam,
+            } => self.render_blocked_run(first, count, revealed, spam, cx),
         }
     }
 

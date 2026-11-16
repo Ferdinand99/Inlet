@@ -85,6 +85,9 @@ pub enum Row {
         first: MessageId,
         count: usize,
         revealed: bool,
+        /// The run is from people flagged as spammers (not blocked): "potential spammer
+        /// messages", shown again by the same click.
+        spam: bool,
     },
 }
 
@@ -424,6 +427,8 @@ pub enum JumpAction {
 #[derive(Default)]
 pub struct MessageView {
     pub rows: Vec<Row>,
+    /// The account local spam marks (see `ui/social/spam.rs`).
+    pub spam: Rc<crate::ui::social::spam::SpamLists>,
     conversions: Conversions,
     /// Messages of the account on their way or failed, for every channel (threads
     /// included). The thread panel's view shares this one store
@@ -912,6 +917,7 @@ impl MessageView {
             let mut prev: Option<(&p::Message, i64, Option<NaiveDate>)> = None;
             // The open run of blocked people's messages: its first message and its row.
             let mut run: Option<usize> = None;
+            let spam_lists = self.spam.clone();
             for m in window.iter() {
                 let Some(id) = MessageId::parse(&m.id) else {
                     continue;
@@ -940,14 +946,27 @@ impl MessageView {
                 }
                 last_mine = UserId::parse(&m.author.id) == Some(me) && is_regular(m.kind);
                 // Fluxer folds messages from blocked people into one line per run.
-                let blocked = is_regular(m.kind)
-                    && UserId::parse(&m.author.id).is_some_and(|a| state.is_blocked(a));
-                if blocked {
+                let author = UserId::parse(&m.author.id);
+                let blocked = is_regular(m.kind) && author.is_some_and(|a| state.is_blocked(a));
+                // People flagged as spammers fold the same way, in runs of their own.
+                let spam = !blocked
+                    && is_regular(m.kind)
+                    && author.is_some_and(|a| {
+                        a != me && spam_lists.is_spammer(a, crate::ui::social::spam::user_flags(m))
+                    });
+                if blocked || spam {
+                    // A run of the other kind ends here.
+                    if run.is_some_and(
+                        |at| matches!(rows[at], Row::Blocked { spam: s, .. } if s != spam),
+                    ) {
+                        run = None;
+                    }
                     let at = *run.get_or_insert_with(|| {
                         rows.push(Row::Blocked {
                             first: id,
                             count: 0,
                             revealed: self.blocked_shown.contains(&id),
+                            spam,
                         });
                         rows.len() - 1
                     });
@@ -1281,6 +1300,8 @@ impl Inlet {
             self.settings_applied(&dispatch, &mut changes, cx);
             self.links_on_dispatch(&dispatch);
             self.pickers_on_dispatch(&dispatch, cx);
+            self.spam_on_dispatch(&dispatch);
+            self.spam_follow_prefs(cx);
             self.after_changes(changes, false, cx);
             // A first READY, or a new one after a reconnect: the open channel's window is
             // missing or stale, so load its newest page.
@@ -1299,6 +1320,8 @@ impl Inlet {
         self.settings_applied(&dispatch, &mut changes, cx);
         self.links_on_dispatch(&dispatch);
         self.pickers_on_dispatch(&dispatch, cx);
+        self.spam_on_dispatch(&dispatch);
+        self.spam_follow_prefs(cx);
         self.note_saved(&dispatch);
         self.inbox_on_dispatch(&dispatch, &rendered, cx);
         self.members_on_dispatch(&dispatch, cx);

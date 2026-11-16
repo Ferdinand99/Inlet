@@ -9,6 +9,7 @@ use std::ops::Range;
 use gpui::{div, prelude::*, px, uniform_list, AnyElement, Context, ObjectFit, SharedString};
 
 use super::emoji::empty;
+use super::item_menu;
 use super::{usable, PickerIcon, PICKER_WIDTH};
 use crate::app::Inlet;
 use crate::backend::composer::gif::Cmd;
@@ -32,6 +33,8 @@ const MAX_PER_GUILD: usize = 300;
 pub struct StickerCell {
     pub sticker: Sticker,
     pub locked: bool,
+    /// The community the sticker belongs to.
+    pub guild: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,6 +86,7 @@ pub fn rows(
             .map(|(s, _)| StickerCell {
                 sticker: s.clone(),
                 locked: !usable(&set.guild, channel_guild, external, global),
+                guild: set.guild.clone(),
             })
             .collect();
         if cells.is_empty() {
@@ -243,6 +247,12 @@ impl Inlet {
         let anim = self.media.images.animator(Motion::Sticker);
         let picture = picture_of(shown, (PICTURE, PICTURE), 0., ObjectFit::Contain, &anim);
         let (id, locked) = (cell.sticker.id.clone(), cell.locked);
+        let menu_subject = item_menu::Subject::Sticker {
+            id: cell.sticker.id.clone(),
+            name: cell.sticker.name.clone(),
+            animated: cell.sticker.animated,
+            guild: cell.guild.clone(),
+        };
         div()
             .id(SharedString::from(format!("picker-sticker-{row}-{col}")))
             .size(px(CELL))
@@ -282,6 +292,14 @@ impl Inlet {
                 }
                 cx.notify();
             }))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    // The sticker's menu: copy, clone, info.
+                    this.open_item_menu(menu_subject.clone(), item_menu::click_at(e));
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 }

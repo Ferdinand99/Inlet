@@ -20,6 +20,7 @@ impl Inlet {
         first: MessageId,
         count: usize,
         revealed: bool,
+        spam: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         div()
@@ -36,10 +37,11 @@ impl Inlet {
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme::text_muted())
             .hover(|s| s.text_color(theme::text_secondary()))
-            .child(if revealed {
-                t!("social-blocked-messages-hide", count = count)
-            } else {
-                t!("social-blocked-messages", count = count)
+            .child(match (spam, revealed) {
+                (false, true) => t!("social-blocked-messages-hide", count = count),
+                (false, false) => t!("social-blocked-messages", count = count),
+                (true, true) => t!("social-spam-messages-hide", count = count),
+                (true, false) => t!("social-spam-messages", count = count),
             })
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_blocked_run(first, cx)))
             .into_any_element()

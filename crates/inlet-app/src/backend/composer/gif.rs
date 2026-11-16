@@ -26,7 +26,8 @@
 //!   protocol (one PATCH per 500 ms batch, two at least 1 s apart); one `GET` when the
 //!   picker opens for an account whose READY gave no preferences;
 //! - memes: one `GET` when the memes tab opens and READY gave none;
-//! - a picked sticker or meme is one message (`POST`).
+//! - a picked sticker or meme is one message (`POST`);
+//! - copying an emoji or sticker into a community is one `POST` per pick.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,6 +51,8 @@ pub const MAX_USAGE_KEYS: usize = 200;
 pub const MAX_FAVOURITE_EMOJI: usize = 500;
 /// Favourite GIFs kept.
 pub const MAX_FAVOURITE_GIFS: usize = 500;
+/// Local spam marks kept per list.
+pub const MAX_SPAM_MARKS: usize = 5_000;
 /// Longest usage or favourite key (Fluxer's `MAX_USAGE_KEY_LENGTH`).
 pub const MAX_KEY_LEN: usize = 256;
 /// Highest usage count (Fluxer's `MAX_USAGE_COUNT`).
@@ -102,6 +105,16 @@ pub enum Cmd {
         meme_id: String,
         nonce: String,
     },
+    /// Copies an emoji or a sticker into one of the account's own communities (the
+    /// server copies it). Answered with [`Ev::Cloned`] or [`Ev::CloneFailed`].
+    CloneExpression {
+        sticker: bool,
+        guild_id: String,
+        source_id: String,
+        /// For the answer: the expression's name and the community's.
+        name: String,
+        target_name: String,
+    },
 }
 
 pub enum Ev {
@@ -129,6 +142,14 @@ pub enum Ev {
     MemesFailed(String),
     /// A sticker or meme was not sent.
     SendFailed(String),
+    /// An emoji or sticker was copied into a community.
+    Cloned {
+        sticker: bool,
+        name: String,
+        target_name: String,
+    },
+    /// Copying an emoji or sticker failed.
+    CloneFailed(String),
 }
 
 /// What the pickers know about the instance and the account.
@@ -179,6 +200,9 @@ pub enum PrefEdit {
         entry: Box<FavoriteGifEntry>,
         on: bool,
     },
+    /// A local mark on a person: `Some(true)` for "spammer", `Some(false)` for "ignore the
+    /// spam flag", `None` for none (Fluxer's `LocalUserSpamOverride`).
+    SpamMark { user_id: String, mark: Option<bool> },
 }
 
 /// Whether `key` is one of Fluxer's emoji usage keys: `unicode:<name>` with a name, or
@@ -297,6 +321,27 @@ impl PrefEdit {
                     gifs.entries.push((**entry).clone());
                 } else if !*on {
                     gifs.entries.retain(|e| e.url != entry.url);
+                }
+            }
+            PrefEdit::SpamMark { user_id, mark } => {
+                if user_id.is_empty()
+                    || user_id.len() > 20
+                    || !user_id.bytes().all(|b| b.is_ascii_digit())
+                {
+                    return;
+                }
+                let lists = prefs
+                    .local_spam_overrides
+                    .get_or_insert_with(Default::default);
+                lists.spammer_user_ids.retain(|u| u != user_id);
+                lists.not_spammer_user_ids.retain(|u| u != user_id);
+                let (list, room) = match mark {
+                    Some(true) => (&mut lists.spammer_user_ids, MAX_SPAM_MARKS),
+                    Some(false) => (&mut lists.not_spammer_user_ids, MAX_SPAM_MARKS),
+                    None => return,
+                };
+                if list.len() < room {
+                    list.push(user_id.clone());
                 }
             }
         }
@@ -621,6 +666,33 @@ impl Backend {
                     if let Err(err) = ctx.client.send(&channel_id, &message).await {
                         ctx.send_failed(err);
                     }
+                });
+            }
+            Cmd::CloneExpression {
+                sticker,
+                guild_id,
+                source_id,
+                name,
+                target_name,
+            } => {
+                self.spawn_guarded("clone expression", None, async move {
+                    let done = if sticker {
+                        ctx.client.clone_sticker(&guild_id, &source_id).await
+                    } else {
+                        ctx.client.clone_emoji(&guild_id, &source_id).await
+                    };
+                    let ev = match done {
+                        Ok(()) => Ev::Cloned {
+                            sticker,
+                            name,
+                            target_name,
+                        },
+                        Err(err) => match reason(&ctx.internal, ctx.gen, err) {
+                            Some(r) => Ev::CloneFailed(r),
+                            None => return,
+                        },
+                    };
+                    let _ = ctx.events.unbounded_send(super::Ev::Pickers(ev));
                 });
             }
             Cmd::SendMeme {

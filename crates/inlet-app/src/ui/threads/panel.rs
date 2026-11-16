@@ -79,6 +79,7 @@ impl Panel {
         let mut view = MessageView::new();
         view.compact = chat.compact;
         view.share_outbox(chat);
+        view.spam = chat.spam.clone();
         view.continue_requests(last_request);
         Panel {
             thread,

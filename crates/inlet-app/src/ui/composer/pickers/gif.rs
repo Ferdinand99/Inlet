@@ -24,9 +24,10 @@ use inlet_protocol::Transform;
 use url::Url;
 
 use super::emoji::empty;
+use super::item_menu;
 use super::{Insert, Target, PICKER_WIDTH};
 use crate::app::Inlet;
-use crate::backend::composer::gif::{favourite_entry, locale, Cmd, PrefEdit};
+use crate::backend::composer::gif::{favourite_entry, locale, Cmd};
 use crate::backend::composer::Cmd as ComposerCmd;
 use crate::theme;
 use crate::ui::media::animation_budget::Motion;
@@ -573,17 +574,21 @@ impl Inlet {
             }))
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                     let entry = match &fav {
                         Tile::Gif(g) => favourite_entry(g),
                         Tile::Favourite(e) => (**e).clone(),
                         _ => return,
                     };
-                    let on = !this.composer.pickers.prefs.is_favourite_gif(&entry.url);
-                    this.edit_prefs(PrefEdit::FavouriteGif {
-                        entry: Box::new(entry),
-                        on,
-                    });
+                    let link = sendable(&entry.url);
+                    // The GIF's menu: favourite, copy the link.
+                    this.open_item_menu(
+                        item_menu::Subject::Gif {
+                            entry: Box::new(entry),
+                            link,
+                        },
+                        item_menu::click_at(e),
+                    );
                     cx.notify();
                 }),
             )

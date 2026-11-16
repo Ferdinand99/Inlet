@@ -107,6 +107,20 @@ impl PickerPrefs {
             .map_or(&[], |s| s.favorite_emoji_ids.as_slice())
     }
 
+    /// The local spam marks: people marked as spammers, and people whose server spam flag
+    /// is ignored.
+    pub fn spam_marks(&self) -> (&[String], &[String]) {
+        self.shown
+            .local_spam_overrides
+            .as_ref()
+            .map_or((&[], &[]), |l| {
+                (
+                    l.spammer_user_ids.as_slice(),
+                    l.not_spammer_user_ids.as_slice(),
+                )
+            })
+    }
+
     pub fn is_favourite(&self, key: &str) -> bool {
         self.favourites().iter().any(|k| k == key)
     }
