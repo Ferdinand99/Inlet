@@ -34,7 +34,8 @@ use fluxer_markdown_parser::ast::TimestampStyle;
 use gpui::SharedString;
 
 pub use blocks::{
-    mark_edited, parse, parse_bio_with, parse_embed_with, parse_with, render, RenderCtx,
+    mark_edited, parse, parse_bio_with, parse_embed_with, parse_reply_with, parse_with, render,
+    RenderCtx,
 };
 pub use code::{with_message_budget, OffThread};
 pub use mention::MentionNames;

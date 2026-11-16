@@ -193,7 +193,12 @@ fn to_reply(v: &serde_json::Value, names: &Names) -> Option<Reply> {
         if cut && text.matches("||").count() % 2 == 1 {
             text.push_str("||");
         }
-        model::snippet(&crate::ui::markdown::plain_text(&text, names), 90)
+        let plain = crate::ui::markdown::plain_text(&text, names);
+        if plain.trim().is_empty() {
+            t!("reply-no-text")
+        } else {
+            model::snippet(&plain, 90)
+        }
     };
     Some(Reply {
         author: model::clean_name(name),
