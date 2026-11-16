@@ -146,15 +146,15 @@ fn main() {
     ] {
         let mut state = AccountState::from_ready_at(&ready(), 0);
         let ch = ChannelId(CHANNEL);
-        // Messages built first, so only what the window keeps is counted.
-        let messages: Vec<Message> = (0..full as u64)
-            .map(|n| message(1_000_000 + n, kind))
-            .collect();
         let before = live();
         state.begin_load(ch);
         // The newest page first, then the pages before it, as scrolling back asks for them.
-        for (i, chunk) in messages.chunks(50).rev().enumerate() {
-            let page: Vec<Message> = chunk.to_vec();
+        // Each page is made from its JSON and moved in, as a page off the wire is.
+        let pages = full.div_ceil(50) as u64;
+        for (i, p) in (0..pages).rev().enumerate() {
+            let page: Vec<Message> = (p * 50..(p * 50 + 50).min(full as u64))
+                .map(|n| message(1_000_000 + n, kind))
+                .collect();
             let oldest = state.messages(ch).and_then(|w| w.oldest_id());
             let page = match (i, oldest) {
                 (0, _) | (_, None) => MessagesPage::latest(page, 50),
@@ -162,7 +162,7 @@ fn main() {
             };
             state.apply_messages(ch, page);
         }
-        // The pages above were cloned and dropped: what is left is the window's.
+        // What the pages left behind is the window's.
         let heap = live() - before;
         let win = state.messages(ch).expect("a window");
         let n = win.len().max(1) as f64;

@@ -32,6 +32,40 @@ pub(crate) fn map_size(o: &Map<String, Value>) -> usize {
     o.iter().map(|(k, v)| 24 + k.len() + value_size(v)).sum()
 }
 
+/// Heap bytes a `Value` owns beyond the 32 bytes it takes inside its parent: the text of a
+/// string, the elements of an array, the entries of an object. Counted as the program asks
+/// the allocator for them (the allocator adds about 16 bytes to each block on top).
+pub(crate) fn heap_value(v: &Value) -> usize {
+    match v {
+        Value::String(s) => s.len(),
+        Value::Array(a) => {
+            a.len() * std::mem::size_of::<Value>() + a.iter().map(heap_value).sum::<usize>()
+        }
+        Value::Object(o) => heap_map(o),
+        _ => 0,
+    }
+}
+
+/// Heap bytes of a JSON object (`serde_json` with `preserve_order`: a vector of entries of
+/// hash, key and value, and a table of indices of one word each, sized to a power of two with
+/// one control byte per slot).
+pub(crate) fn heap_map(o: &Map<String, Value>) -> usize {
+    let n = o.len();
+    if n == 0 {
+        return 0;
+    }
+    let entry = 8 + std::mem::size_of::<String>() + std::mem::size_of::<Value>();
+    let slots = (n * 8).div_ceil(7).next_power_of_two().max(4);
+    // The vector of entries grew by doubling from 4 as the object was read.
+    let cap = n.next_power_of_two().max(4);
+    cap * entry
+        + slots * 9
+        + 16
+        + o.iter()
+            .map(|(k, v)| k.len() + heap_value(v))
+            .sum::<usize>()
+}
+
 pub(crate) fn opt_len(s: &Option<String>) -> usize {
     s.as_ref().map_or(0, String::len)
 }
