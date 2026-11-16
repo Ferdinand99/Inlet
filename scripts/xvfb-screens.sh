@@ -185,6 +185,9 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# The channel header with the search column open at 1280 px: a long channel name keeps
+# its place, the topic and the status line give way first.
+scene 80-header-search-long-name search-results c-rules
 # The sign-in steps of the app's own form: identifier, the classic form, a wrong password,
 # the emailed code, the second factor, the new-IP wait.
 for step in identifier classic password code mfa ip; do

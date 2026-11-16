@@ -184,6 +184,46 @@ pub fn is_visible(c: char) -> bool {
             | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}' | '\u{E0000}'..='\u{E007F}')
 }
 
+/// A custom status text for display: only what draws something, plus the join controls
+/// an emoji sequence needs. A zero-width joiner stays between two visible characters
+/// (a family or a profession emoji) and a variation selector stays after the character
+/// it styles (a red heart); one that stands alone goes, as Fluxer removes stray join
+/// controls (`STRAY_JOIN_CONTROLS_REGEX`). A zero-width non-joiner between two visible
+/// characters stays too: words in Persian and Indic scripts need it. Control, direction
+/// and other zero-width characters go; spaces stay. Not trimmed and not cut.
+pub fn clean_display_text(text: &str) -> String {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Last {
+        /// Nothing a joiner or selector can attach to (the start, a space, a joiner).
+        Apart,
+        /// A visible character.
+        Base,
+        /// A variation selector after a visible character.
+        Selector,
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut last = Last::Apart;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if is_visible(c) {
+            out.push(c);
+            last = Last::Base;
+        } else if c == ' '
+            || (matches!(c, '\u{200D}' | '\u{200C}')
+                && last != Last::Apart
+                && chars.peek().is_some_and(|next| is_visible(*next)))
+        {
+            // A space, or a joiner between two visible characters.
+            out.push(c);
+            last = Last::Apart;
+        } else if matches!(c, '\u{FE0E}' | '\u{FE0F}') && last == Last::Base {
+            out.push(c);
+            last = Last::Selector;
+        }
+    }
+    out
+}
+
 /// A bounded presence cache.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Presences {

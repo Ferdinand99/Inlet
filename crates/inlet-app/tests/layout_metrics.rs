@@ -157,3 +157,37 @@ fn member_list_hides_below_1024(cx: &mut TestAppContext) {
         "no member list in a 1000 px window"
     );
 }
+
+/// With the search column open at 1280 px the chat beside it is narrow; the channel's
+/// name must keep the width it has in a wide header (the topic and the status line give
+/// way first), not shrink to a few letters.
+#[gpui::test]
+fn channel_name_keeps_its_width_beside_the_search_column(cx: &mut TestAppContext) {
+    let wide = {
+        let cx = open_at(cx, (1920., WINDOW.1));
+        bounds(cx, selector::CHAT_HEADER_TITLE).size.width
+    };
+    let (_probe, cx) = cx.add_window_view(Probe::with_search_open);
+    cx.simulate_resize(size(px(WINDOW.0), px(WINDOW.1)));
+    cx.run_until_parked();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let header = bounds(cx, selector::CHAT_HEADER);
+    let title = bounds(cx, selector::CHAT_HEADER_TITLE);
+    assert!(
+        header.size.width < px(WINDOW.0 - 400.),
+        "the search column leaves the chat narrow: header {} px",
+        px_f(header.size.width)
+    );
+    assert_px(
+        title.size.width,
+        px_f(wide),
+        "channel name width beside search",
+    );
+    // Nothing of the header runs out of it on the right.
+    let status = bounds(cx, selector::CHAT_HEADER_STATUS);
+    assert!(
+        status.origin.x + status.size.width <= header.origin.x + header.size.width,
+        "the status line ends inside the header"
+    );
+}
