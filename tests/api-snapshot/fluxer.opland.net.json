@@ -2087,6 +2087,64 @@
     "204": {}
    }
   },
+  "POST /guilds/{}/emojis/clone": {
+   "documentedPath": "/guilds/{guild_id}/emojis/clone",
+   "operationId": "clone_guild_emoji",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "guild_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "GuildEmojiCloneRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "GuildEmojiResponse"
+     }
+    }
+   }
+  },
+  "POST /guilds/{}/stickers/clone": {
+   "documentedPath": "/guilds/{guild_id}/stickers/clone",
+   "operationId": "clone_guild_sticker",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "guild_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "GuildStickerCloneRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "GuildStickerResponse"
+     }
+    }
+   }
+  },
   "POST /invites/{}": {
    "documentedPath": "/invites/{invite_code}",
    "operationId": "accept_invite",
@@ -6590,6 +6648,17 @@
    ],
    "type": "object"
   },
+  "GuildEmojiCloneRequest": {
+   "properties": {
+    "source_emoji_id": {
+     "$ref": "SnowflakeType"
+    }
+   },
+   "required": [
+    "source_emoji_id"
+   ],
+   "type": "object"
+  },
   "GuildEmojiMetadataResponse": {
    "additionalProperties": false,
    "properties": {
@@ -7560,6 +7629,17 @@
     "permissions",
     "position",
     "unicode_emoji"
+   ],
+   "type": "object"
+  },
+  "GuildStickerCloneRequest": {
+   "properties": {
+    "source_sticker_id": {
+     "$ref": "SnowflakeType"
+    }
+   },
+   "required": [
+    "source_sticker_id"
    ],
    "type": "object"
   },
