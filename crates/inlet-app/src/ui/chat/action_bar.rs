@@ -353,7 +353,7 @@ impl Inlet {
             has_embeds: !m.embeds.is_empty(),
             embeds_hidden: meta.embeds_hidden,
             saved: self.chat.actions.is_saved(id),
-            developer: crate::ui::settings::store::values(cx).developer_mode,
+            developer: self.settings_values().developer_mode,
         })
     }
 
@@ -794,6 +794,19 @@ mod tests {
         let menu = menu_actions(&f);
         assert!(!menu.contains(&Action::AddReaction) && !menu.contains(&Action::Edit));
         assert!(menu.contains(&Action::Forward) && menu.contains(&Action::MarkUnread));
+    }
+
+    #[test]
+    fn copy_id_is_offered_only_with_developer_mode() {
+        let member = state(MEMBER, 0);
+        let on = facts(&member, 100, true);
+        assert!(menu_actions(&on).contains(&Action::CopyId));
+        let off = Facts {
+            developer: false,
+            ..on
+        };
+        assert!(!menu_actions(&off).contains(&Action::CopyId));
+        assert!(menu_actions(&off).contains(&Action::CopyLink));
     }
 
     #[test]

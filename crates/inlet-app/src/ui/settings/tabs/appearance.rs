@@ -4,7 +4,7 @@
 //! messages and the zoom. A change shows at once and goes to the account, so Fluxer and
 //! Inlet agree; the zoom is this computer's (the Desktop tab's setting).
 
-use gpui::{div, prelude::*, px, AnyElement, Context, SharedString};
+use gpui::{div, prelude::*, px, rems, AnyElement, Context, SharedString};
 
 use super::super::controls::{page, radio, stepper, theme_card};
 use super::super::store;
@@ -68,7 +68,7 @@ impl SettingsTab for AppearanceTab {
             .rounded(px(8.))
             .bg(theme::bg_textarea())
             .text_color(theme::text())
-            .text_size(px(theme::message_font_px()))
+            .text_size(rems(theme::message_font_px() / theme::DEFAULT_FONT_PX))
             .line_height(px(theme::message_line_px()))
             .child(t!("settings-appearance-sample"));
 

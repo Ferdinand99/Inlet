@@ -13,14 +13,14 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender as
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use super::Ev;
+use super::account::Ev;
 use crate::backend::{report, Internal, Ui};
 use crate::theme::Pref;
 
 /// How long a write waits for more changes before it goes out.
 pub const GATHER: Duration = Duration::from_millis(600);
 /// Shortest time between two writes of the account settings.
-pub const MIN_GAP: Duration = Duration::from_secs(2);
+pub const MIN_GAP: Duration = Duration::from_secs(3);
 
 /// One change to a setting. The UI keeps the newest per kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,14 +155,13 @@ impl Wish {
 
 /// What the write task does next.
 #[derive(Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum Next {
     /// Nothing waits.
     Idle,
     /// A write waits this long (for more changes or for the minimum gap).
     Wait(Duration),
     /// Write this now.
-    Write(Wish),
+    Write(Box<Wish>),
 }
 
 /// Keeps the newest wish per field and says when to write: [`GATHER`] after the first
@@ -195,7 +194,7 @@ impl Coalescer {
         }
         self.last_write = Some(now);
         self.first_at = None;
-        Next::Write(std::mem::take(&mut self.wish))
+        Next::Write(Box::new(std::mem::take(&mut self.wish)))
     }
 }
 

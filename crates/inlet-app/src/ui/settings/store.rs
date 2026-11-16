@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, Global};
+use gpui::{App, AppContext, Global};
 use inlet_protocol as p;
 use inlet_state::settings::Display;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use super::sync::{Tracker, Values};
 use crate::app::CurrentBackend;
 use crate::backend::platform::prefs;
-use crate::backend::settings::{write::Change, Cmd};
+use crate::backend::settings::account::Cmd;
+use crate::backend::settings::write::Change;
 use crate::theme::{self, Pref};
 use crate::ui::media::animation_budget::MotionPrefs;
 
@@ -77,17 +78,23 @@ pub struct Store {
     generation: u64,
     /// What the colours and metrics were last switched to.
     applied: Option<Values>,
+    /// What `settings.json` holds.
+    saved: Option<Values>,
+    /// The write of the local copy that waits for the clicks to stop.
+    save_task: Option<gpui::Task<()>>,
 }
 
 impl Global for Store {}
 
 impl Store {
-    fn new(values: Values, path: Option<PathBuf>) -> Self {
+    pub(crate) fn new(values: Values, path: Option<PathBuf>) -> Self {
         Store {
             tracker: Tracker::new(values),
             path,
             generation: 1,
             applied: None,
+            saved: None,
+            save_task: None,
         }
     }
 }
@@ -117,7 +124,8 @@ pub fn init(cx: &mut App) {
     // What was kept is what is shown: nothing to write back.
     switch_render_state(&values);
     let mut store = Store::new(values.clone(), path);
-    store.applied = Some(values);
+    store.applied = Some(values.clone());
+    store.saved = Some(values);
     cx.set_global(store);
 }
 
@@ -154,27 +162,60 @@ pub fn change(cx: &mut App, change: Change) {
     }
 }
 
-/// The account settings as the server says them: READY, an update, or the answer to a
-/// write (`answer`: the command it answers for).
-pub fn server_settings(
-    cx: &mut App,
-    settings: &p::UserSettings,
-    display: Option<Display>,
-    answer: Option<u64>,
-) {
+/// How long after the answer to a write the settings wait for the gateway's snapshot
+/// before the answer's own values stand.
+const ECHO_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A snapshot of the account settings from the gateway (READY, or an update), in the
+/// order they arrive. `display` is the synced preferences' font size and spacing.
+pub fn gateway_settings(cx: &mut App, settings: &p::UserSettings, display: Option<Display>) {
     let s = store(cx);
-    let base = s.tracker.confirmed().clone();
-    let values = Values::from_server(settings, display, &base);
-    let before = s.tracker.values();
-    s.tracker.server(settings.version(), values, answer);
-    if s.tracker.values() != before {
+    let values = Values::from_server(settings, display, s.tracker.confirmed());
+    if s.tracker.gateway(values) {
         apply(cx);
     }
 }
 
+/// The answer to a write of account settings up to command `through`. It ends the
+/// wait for the write, with the gateway's snapshot (or, if that does not come, the
+/// answer's own values) deciding what is shown.
+pub fn answer_settings(cx: &mut App, settings: &p::UserSettings, through: u64) {
+    let s = store(cx);
+    let values = Values::from_server(settings, Display::of(settings), s.tracker.confirmed());
+    if s.tracker.answered(Some(values), through, false) {
+        apply(cx);
+    }
+    expire_later(cx, through, false);
+}
+
 /// The synced preferences as stored after a write of them up to command `through`.
-pub fn preferences(cx: &mut App, display: Display, through: u64) {
-    if store(cx).tracker.preferences(display, through) {
+pub fn answer_preferences(cx: &mut App, display: Display, through: u64) {
+    let s = store(cx);
+    let mut values = s.tracker.confirmed().clone();
+    if let Some(px) = display.font_size.filter(|px| px.is_finite()) {
+        values.font_size = px.round().clamp(8., 48.) as u8;
+    }
+    if let Some(px) = display.message_group_spacing.filter(|px| px.is_finite()) {
+        values.group_spacing = px.round().clamp(0., 64.) as u8;
+    }
+    if s.tracker.answered(Some(values), through, true) {
+        apply(cx);
+    }
+    expire_later(cx, through, true);
+}
+
+/// After [`ECHO_WAIT`], an edit the answer settled stops waiting for the snapshot.
+fn expire_later(cx: &mut App, through: u64, preferences: bool) {
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(ECHO_WAIT).await;
+        cx.update(|cx| expire(cx, through, preferences));
+    })
+    .detach();
+}
+
+/// The snapshot after a write did not come: what the answer said stands.
+fn expire(cx: &mut App, through: u64, preferences: bool) {
+    if cx.has_global::<Store>() && store(cx).tracker.expire(through, preferences) {
         apply(cx);
     }
 }
@@ -210,30 +251,58 @@ fn switch_render_state(v: &Values) {
     theme::set_group_spacing(f32::from(v.group_spacing));
 }
 
-/// Switches the colours and metrics to what is shown, keeps the local copy, and makes
-/// every window draw again.
+/// How long after the last change the local copy is written.
+const SAVE_AFTER: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// Writes the local copy and the media switches, for what is shown now, if they changed.
+fn write_local(cx: &mut App) {
+    let s = store(cx);
+    s.save_task = None;
+    let (Some(path), Some(now)) = (s.path.clone(), s.applied.clone()) else {
+        return;
+    };
+    let before = s.saved.replace(now.clone());
+    let local = LocalCopy::of(&now);
+    let motion = MotionPrefs::of_settings(&now);
+    let local_changed = before.as_ref().map(LocalCopy::of) != Some(local.clone());
+    let motion_changed = before.as_ref().map(MotionPrefs::of_settings) != Some(motion);
+    if !local_changed && !motion_changed {
+        return;
+    }
+    cx.background_spawn(async move {
+        if local_changed {
+            if let Err(err) = prefs::save_section(&path, APPEARANCE_KEY, &local) {
+                log::warn!("could not write the appearance settings: {err}");
+            }
+        }
+        if motion_changed {
+            if let Err(err) = motion.save(&path) {
+                log::warn!("could not write the media settings: {err}");
+            }
+        }
+    })
+    .detach();
+}
+
+/// Switches the colours and metrics to what is shown, keeps the local copy (a moment
+/// later), and makes every window draw again.
 fn apply(cx: &mut App) {
     let s = store(cx);
     let now = s.tracker.values();
     if s.applied.as_ref() == Some(&now) {
         return;
     }
-    let before = s.applied.replace(now.clone());
+    s.applied = Some(now.clone());
     switch_render_state(&now);
     s.generation += 1;
-    if let Some(path) = s.path.clone() {
-        let local = LocalCopy::of(&now);
-        if before.as_ref().map(LocalCopy::of) != Some(local.clone()) {
-            if let Err(err) = prefs::save_section(&path, APPEARANCE_KEY, &local) {
-                log::warn!("could not write the appearance settings: {err}");
-            }
-        }
-        let motion = MotionPrefs::of_settings(&now);
-        if before.as_ref().map(MotionPrefs::of_settings) != Some(motion) {
-            if let Err(err) = motion.save(&path) {
-                log::warn!("could not write the media settings: {err}");
-            }
-        }
+    let save_later = s.path.is_some() && s.save_task.is_none();
+    if save_later {
+        // The local copy is written once the clicks have stopped, off the UI thread.
+        let task = cx.spawn(async move |cx| {
+            cx.background_executor().timer(SAVE_AFTER).await;
+            cx.update(write_local);
+        });
+        store(cx).save_task = Some(task);
     }
     cx.refresh_windows();
 }
@@ -243,7 +312,6 @@ pub(crate) mod tests {
     use super::*;
     use crate::theme::Theme;
     use gpui::{div, prelude::*, Context, IntoElement, Render, TestAppContext, Window};
-    use serde_json::json;
 
     /// A view that draws the way the chat does: the chat colour, and it keeps what it
     /// drew last.
@@ -317,15 +385,14 @@ pub(crate) mod tests {
         cx.run_until_parked();
         assert_eq!(drawn(cx, &view).0, Theme::Dark);
 
-        // The server's word shows the same way: another client picked coal.
-        let coal: p::UserSettings = serde_json::from_value(json!({
-            "theme": "coal", "version": 99, "message_display_compact": true,
-            "gif_auto_play": true, "animate_emoji": true, "render_embeds": true,
-            "render_reactions": true, "render_spoilers": 1
-        }))
-        .unwrap();
-        // The pending click on "system" is answered for first, as the writer would.
-        cx.update(|_, cx| server_settings(cx, &coal, None, Some(10)));
+        // The server's word shows the same way: another client picked coal. The gateway
+        // says so (Fluxer's settings carry no version), and the answer to the click on
+        // "system" settles it.
+        let coal: p::UserSettings = crate::ui::settings::sync::tests::fluxer("coal", 3);
+        cx.update(|_, cx| gateway_settings(cx, &coal, None));
+        cx.update(|_, cx| answer_settings(cx, &coal, 100));
+        // No snapshot holds the click's value: after the wait it is let go.
+        cx.update(|_, cx| expire(cx, 100, false));
         cx.run_until_parked();
         assert_eq!(drawn(cx, &view), (Theme::Coal, 0x02));
         cx.update(|_, _| {

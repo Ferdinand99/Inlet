@@ -93,7 +93,7 @@ fn clicking_as_fast_as_possible_stays_within_the_settings_budget() {
             now,
         );
         while let Next::Write(w) = c.next(now) {
-            writes.push((at, w));
+            writes.push((at, *w));
         }
     }
     // What still waits goes out as the budget frees up.
@@ -102,7 +102,7 @@ fn clicking_as_fast_as_possible_stays_within_the_settings_budget() {
         match c.next(t0 + at) {
             Next::Idle => break,
             Next::Wait(d) => at += d,
-            Next::Write(w) => writes.push((at, w)),
+            Next::Write(w) => writes.push((at, *w)),
         }
     }
     assert!(!writes.is_empty());
@@ -111,7 +111,7 @@ fn clicking_as_fast_as_possible_stays_within_the_settings_budget() {
             .iter()
             .filter(|(t, _)| *t >= *start && *t < *start + Duration::from_secs(10))
             .count();
-        assert!(in_window <= 5, "{in_window} writes in ten seconds");
+        assert!(in_window <= 4, "{in_window} writes in ten seconds");
     }
     for pair in writes.windows(2) {
         assert!(
@@ -190,8 +190,21 @@ fn a_change_goes_into_the_field_the_server_knows() {
     assert_eq!(a.message_group_spacing, Some(8.));
 }
 
-/// Twenty clicks in a burst are one `PATCH` with the newest values; the next burst
-/// waits for the gap.
+/// Waits until `route` has had `n` requests; false if that does not happen in time.
+async fn wait_for(server: &MockServer, n: usize, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while Instant::now() < deadline {
+        if patches(server, "/api/v1/users/@me/settings").await.len() >= n {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    false
+}
+
+/// Twenty clicks in a burst are one `PATCH` with the newest values; the next change
+/// waits for the gap since that write. Nothing here depends on how fast the machine is:
+/// each step waits for what it expects, and the gap is measured from the first write.
 #[tokio::test]
 async fn a_burst_of_changes_is_one_write_and_the_next_waits_for_the_gap() {
     let (server, client) = fixture("tok-settings-burst").await;
@@ -210,7 +223,6 @@ async fn a_burst_of_changes_is_one_write_and_the_next_waits_for_the_gap() {
     let mut writer = Writer::default();
     let wishes = writer.sender(&client, &events, &internal, 1);
 
-    let started = Instant::now();
     for seq in 1..=20u64 {
         let theme = [Pref::Light, Pref::Coal][(seq % 2) as usize];
         wishes
@@ -220,7 +232,11 @@ async fn a_burst_of_changes_is_one_write_and_the_next_waits_for_the_gap() {
             ))
             .unwrap();
     }
-    tokio::time::sleep(GATHER + Duration::from_millis(500)).await;
+    assert!(
+        wait_for(&server, 1, Duration::from_secs(10)).await,
+        "the burst is written"
+    );
+    let first_at = Instant::now();
     let first = patches(&server, "/api/v1/users/@me/settings").await;
     assert_eq!(first.len(), 1, "one write for the whole burst");
     let body: Value = serde_json::from_slice(&first[0].body).unwrap();
@@ -229,14 +245,21 @@ async fn a_burst_of_changes_is_one_write_and_the_next_waits_for_the_gap() {
 
     // Another change at once: it waits for the minimum gap since the write.
     wishes.send(wish(21, &[Change::Compact(true)])).unwrap();
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         patches(&server, "/api/v1/users/@me/settings").await.len(),
         1,
         "still inside the gap"
     );
-    let until = started + GATHER + MIN_GAP + Duration::from_millis(900);
-    tokio::time::sleep_until(until).await;
+    assert!(
+        wait_for(&server, 2, Duration::from_secs(15)).await,
+        "then it is written"
+    );
+    // The gap counts from the first write, which happened no later than `first_at`.
+    assert!(
+        Instant::now() + Duration::from_millis(300) >= first_at + MIN_GAP,
+        "the second write came inside the gap"
+    );
     let all = patches(&server, "/api/v1/users/@me/settings").await;
     assert_eq!(all.len(), 2);
     let body: Value = serde_json::from_slice(&all[1].body).unwrap();
@@ -245,11 +268,68 @@ async fn a_burst_of_changes_is_one_write_and_the_next_waits_for_the_gap() {
     // The UI is told how far each write got.
     let mut through = Vec::new();
     while let Ok(event) = rx.try_recv() {
-        if let Event::Settings(super::Ev::AccountSaved { through: t, .. }) = event {
+        if let Event::Settings(super::Ev::Account(super::account::Ev::AccountSaved {
+            through: t,
+            ..
+        })) = event
+        {
             through.push(t);
         }
     }
     assert_eq!(through, vec![20, 21]);
+}
+
+/// The account's three writers on the one budget (Fluxer allows 20 `PATCH
+/// /users/@me/settings` per 10 s): presence and status picks, account settings, and
+/// the synced preferences that the font and spacing steppers write. Each is driven as
+/// fast as a person can click for half a minute; together they stay under the budget in
+/// every ten seconds.
+#[test]
+fn the_three_settings_writers_together_stay_under_the_budget() {
+    use crate::backend::social::presence::{SAVES_PER_WINDOW, SAVE_WINDOW};
+    let t0 = Instant::now();
+    let mut account = Coalescer::default();
+    let mut writes: Vec<Duration> = Vec::new();
+    // Presence and status picks: the most its coalescer lets through, all at the start of
+    // each window (the worst place for a ten-second stretch).
+    for window in 0..2u32 {
+        for k in 0..SAVES_PER_WINDOW as u32 {
+            writes.push(SAVE_WINDOW * window + Duration::from_millis(100 * u64::from(k)));
+        }
+    }
+    // The protocol's single preference writer: a batch after 500 ms, two PATCH at least
+    // 1 s apart.
+    let mut prefs_due: Option<Duration> = None;
+    let mut prefs_last: Option<Duration> = None;
+    for i in 0..1_500u64 {
+        let at = Duration::from_millis(20 * i);
+        let now = t0 + at;
+        account.add(
+            wish(
+                i + 1,
+                &[Change::Theme(Pref::Light), Change::Compact(i % 2 == 0)],
+            ),
+            now,
+        );
+        while let Next::Write(_) = account.next(now) {
+            writes.push(at);
+        }
+        let first = *prefs_due.get_or_insert(at + Duration::from_millis(500));
+        let spaced = prefs_last.map_or(first, |l| first.max(l + Duration::from_secs(1)));
+        if at >= spaced {
+            writes.push(at);
+            prefs_last = Some(at);
+            prefs_due = None;
+        }
+    }
+    assert!(writes.len() > 20, "all three wrote");
+    for start in &writes {
+        let n = writes
+            .iter()
+            .filter(|t| **t >= *start && **t < *start + Duration::from_secs(10))
+            .count();
+        assert!(n < 20, "{n} writes in ten seconds");
+    }
 }
 
 #[tokio::test]
@@ -273,10 +353,10 @@ async fn a_failed_write_is_reported_to_the_ui() {
     let mut failed = None;
     let deadline = Instant::now() + Duration::from_secs(5);
     while failed.is_none() && Instant::now() < deadline {
-        if let Ok(Event::Settings(super::Ev::SaveFailed {
+        if let Ok(Event::Settings(super::Ev::Account(super::account::Ev::SaveFailed {
             through,
             preferences,
-        })) = rx.try_recv()
+        }))) = rx.try_recv()
         {
             failed = Some((through, preferences));
         } else {

@@ -120,7 +120,9 @@ pub fn own_profile(full: &p::FullUserProfile) -> OwnProfile {
     OwnProfile {
         user_id: full.user.id.clone(),
         username: crate::model::clean_name(&full.user.username),
-        name: clean(full.user.global_name.as_deref(), MAX_NAME_CHARS, false),
+        name: clean(full.user.global_name.as_deref(), MAX_NAME_CHARS, false)
+            .trim()
+            .to_owned(),
         avatar: crate::backend::media::user_avatar(&full.user),
         banner: full
             .user_profile
@@ -132,7 +134,9 @@ pub fn own_profile(full: &p::FullUserProfile) -> OwnProfile {
             full.user_profile.pronouns.as_deref(),
             MAX_PRONOUNS_CHARS,
             false,
-        ),
+        )
+        .trim()
+        .to_owned(),
         bio: clean(full.user_profile.bio.as_deref(), MAX_BIO_READ, true),
     }
 }
@@ -209,6 +213,11 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
         Some("image/gif")
     } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Some("image/webp")
+    } else if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && matches!(&bytes[8..12], b"avif" | b"avis")
+    {
+        Some("image/avif")
     } else {
         None
     }

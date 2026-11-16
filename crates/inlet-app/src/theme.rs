@@ -566,7 +566,8 @@ pub fn syntax_tag() -> Hsla {
 
 // ---- Message actions -----------------------------------------------------------
 
-/// The action bar, menus and popovers over the chat (`--background-tertiary`).
+/// The action bar, menus and popovers over the chat. Dark and coal use `--background-tertiary`;
+/// light is a step lighter than the chat (Fluxer's `--form-surface-background`).
 pub fn floating_bg() -> Hsla {
     pick(0x2a2730, 0x141217, 0xf8f8f9)
 }

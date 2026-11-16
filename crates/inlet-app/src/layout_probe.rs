@@ -64,6 +64,14 @@ impl Probe {
     }
 }
 
+impl Probe {
+    /// The app view, for tests that look at its state.
+    #[cfg(test)]
+    pub(crate) fn inlet(&self) -> &Entity<Inlet> {
+        &self.inlet
+    }
+}
+
 impl Render for Probe {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.inlet.clone())

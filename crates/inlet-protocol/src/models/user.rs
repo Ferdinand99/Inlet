@@ -140,17 +140,6 @@ pub struct UserSettings {
 }
 
 impl UserSettings {
-    /// The settings' version number. It goes up with every change on the server, so of
-    /// two snapshots the one with the higher number is the newer. `None` when the
-    /// object is not a full snapshot (a partial update has none).
-    pub fn version(&self) -> Option<i64> {
-        match self.extra.get("version")? {
-            Value::Number(n) => n.as_i64(),
-            Value::String(s) => s.trim().parse().ok(),
-            _ => None,
-        }
-    }
-
     /// Who may send a friend request, as flags (1 mutual friends, 2 mutual servers,
     /// 4 anyone).
     pub fn friend_source_flags(&self) -> Option<u64> {
@@ -522,17 +511,15 @@ mod tests {
     }
 
     #[test]
-    fn settings_expose_their_version_and_privacy_fields() {
+    fn settings_expose_their_privacy_fields() {
         let s: UserSettings = serde_json::from_value(json!({
-            "theme": "coal", "version": 7, "friend_source_flags": 3,
+            "theme": "coal", "friend_source_flags": 0,
             "default_guilds_restricted": true
         }))
         .unwrap();
-        assert_eq!(s.version(), Some(7));
-        assert_eq!(s.friend_source_flags(), Some(3));
+        assert_eq!(s.friend_source_flags(), Some(0));
         assert_eq!(s.default_guilds_restricted(), Some(true));
         let partial: UserSettings = serde_json::from_value(json!({"status": "dnd"})).unwrap();
-        assert_eq!(partial.version(), None);
         assert_eq!(partial.friend_source_flags(), None);
     }
 }

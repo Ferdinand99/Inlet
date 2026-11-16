@@ -103,7 +103,7 @@ impl Inlet {
             );
         }
         // Fluxer offers the ID only with developer mode on.
-        if crate::ui::settings::store::values(cx).developer_mode {
+        if self.settings_values().developer_mode {
             menu = menu.child(item("user-menu-copy-id", t!("user-menu-copy-id")).on_click(
                 cx.listener(move |this, _, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(user.to_string()));

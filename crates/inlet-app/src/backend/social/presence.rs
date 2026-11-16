@@ -132,14 +132,13 @@ impl Save {
 
 /// What the write task does next.
 #[derive(Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum Next {
     /// Nothing waits.
     Idle,
     /// A write waits for the budget this long.
     Wait(Duration),
     /// Write this now.
-    Write(p::UserSettingsUpdate),
+    Write(Box<p::UserSettingsUpdate>),
 }
 
 /// Writes only the newest wish, at most [`SAVES_PER_WINDOW`] per [`SAVE_WINDOW`].
@@ -195,7 +194,7 @@ impl Coalescer {
         }
         self.sent.push_back(now);
         self.before = std::mem::replace(&mut self.written, self.wanted.clone());
-        Next::Write(update)
+        Next::Write(Box::new(update))
     }
 
     /// The last write failed: what it carried does not count as written, so the next

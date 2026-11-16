@@ -130,7 +130,7 @@ impl Inlet {
             &m.spoiler_links
         };
         // The account's "show embeds" switch, besides "Suppress Embeds" on the message.
-        let settings = crate::ui::settings::store::values(cx);
+        let settings = self.settings_values();
         if !row.meta.embeds_hidden && settings.render_embeds {
             for (i, e) in m.embeds.iter().enumerate() {
                 let id = format!("m{}-e{i}", m.id);

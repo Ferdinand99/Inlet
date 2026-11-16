@@ -1,22 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The settings the person can change, and how an edit and the server's word meet.
 //!
-//! An edit is applied at once and shown; it is also sent to the server. Until the
-//! server has answered for it, the edit stays on top of what the server last said
-//! ([`Tracker::values`]). The server's settings carry a `version` that goes up with
-//! every change, and that settles two clients that change the same setting:
+//! An edit is applied at once and shown; it is also sent to the server. Fluxer's user
+//! settings carry no version: the server's order is the order of the gateway, and
+//! Fluxer's own client replaces its settings with every USER_SETTINGS_UPDATE. So does
+//! this, in the order the snapshots arrive ([`Tracker::gateway`]); READY is the first.
 //!
-//! - a snapshot that is not newer than the newest one seen (an echo that came late) is
-//!   ignored, so an old echo can never undo a later click;
-//! - a snapshot that is newer replaces what the server is known to say. An edit still
-//!   waiting for its answer stays on top until the answer comes: the answer carries the
-//!   version of this client's own write, and if another client's snapshot has a higher
-//!   one, that client wrote last and its value is what is shown. If this client's write
-//!   has the higher version, it wrote last and its value stays.
+//! An edit stays on top of what the server last said until the server has settled it:
 //!
-//! The synced preferences (font size, message spacing) have no version of their own;
-//! they travel inside the same user settings object, and their answers are taken as
-//! they come.
+//! - the answer to the write has come ([`Tracker::answered`]), and
+//! - a snapshot from the gateway has arrived that holds the edit's value (the echo of
+//!   the write: Fluxer sends one after every write, in the server's order, so if another
+//!   client wrote after this one, its snapshot follows the echo).
+//!
+//! A snapshot that arrives while the edit waits and does not hold its value (the echo of
+//! an earlier write, or a change another client made first) updates what the server is
+//! known to say but never hides the edit.
+//! The answer itself gives no values: it may be older than a change another client made
+//! after it. If the snapshot never comes, [`Tracker::expire`] lets the answer's values
+//! stand after a short wait, so a lost echo cannot pin an edit.
 
 use inlet_protocol as p;
 use inlet_state::settings::Display;
@@ -130,12 +132,16 @@ impl Values {
     }
 }
 
-/// An edit that waits for the server's answer.
+/// An edit that waits for the server.
 #[derive(Clone, Debug, PartialEq)]
 struct Pending {
     change: Change,
     /// The number of the command that carried it.
     seq: u64,
+    /// The server has answered for the write.
+    answered: bool,
+    /// A snapshot from the gateway has arrived that holds the edit's value.
+    echoed: bool,
 }
 
 /// What an edit and the server's snapshots make of the settings.
@@ -144,11 +150,11 @@ pub struct Tracker {
     /// What the server last said (or, before it has said anything, the copy kept from
     /// last time).
     confirmed: Values,
-    /// The newest version seen.
-    version: Option<i64>,
-    /// The newest edit of each kind that the server has not answered for.
+    /// The newest edit of each kind that the server has not settled.
     pending: Vec<Pending>,
     seq: u64,
+    /// What the newest answer to a write said, if no snapshot has come since.
+    answer: Option<Values>,
 }
 
 impl Tracker {
@@ -159,8 +165,8 @@ impl Tracker {
         }
     }
 
-    /// The settings to show: what the server said, with the edits it has not answered
-    /// for on top.
+    /// The settings to show: what the server said, with the edits it has not settled
+    /// on top.
     pub fn values(&self) -> Values {
         let mut v = self.confirmed.clone();
         for p in &self.pending {
@@ -174,7 +180,7 @@ impl Tracker {
         &self.confirmed
     }
 
-    /// An edit: shown at once, and kept on top until the server answers. Returns the
+    /// An edit: shown at once, and kept on top until the server settles it. Returns the
     /// number of the command that carries it to the server.
     pub fn edit(&mut self, change: Change) -> u64 {
         self.seq += 1;
@@ -183,6 +189,8 @@ impl Tracker {
         self.pending.push(Pending {
             change,
             seq: self.seq,
+            answered: false,
+            echoed: false,
         });
         self.seq
     }
@@ -193,42 +201,50 @@ impl Tracker {
         self.pending.iter().any(|p| p.change.kind() == kind)
     }
 
-    /// A snapshot of the account settings: from the gateway (READY, an update) or the
-    /// answer to a write when `answer_through` names the command it answers for.
-    /// `version` is the snapshot's version, `None` for a server that sends none (it is
-    /// then taken as the newest). Returns whether what is shown may have changed.
-    pub fn server(&mut self, version: Option<i64>, values: Values, answer: Option<u64>) -> bool {
+    /// A snapshot from the gateway (READY, or an update). It is what the server says now.
+    /// Returns whether what is shown may have changed.
+    pub fn gateway(&mut self, values: Values) -> bool {
         let before = self.values();
-        let newer = match (version, self.version) {
-            (Some(v), Some(known)) => v > known,
-            _ => true,
-        };
-        if newer {
-            self.version = version.or(self.version);
-            self.confirmed = values;
+        self.confirmed = values;
+        self.answer = None;
+        for p in &mut self.pending {
+            let mut with_edit = self.confirmed.clone();
+            with_edit.apply(&p.change);
+            if with_edit == self.confirmed {
+                p.echoed = true;
+            }
         }
-        if let Some(through) = answer {
-            // The server has answered for these edits, whether or not its snapshot was
-            // the newest: if another client wrote later, its value is already shown.
-            // Preference edits are answered for by their own write.
-            self.pending
-                .retain(|p| p.change.is_preference() || p.seq > through);
-        }
+        self.pending.retain(|p| !(p.answered && p.echoed));
         self.values() != before
     }
 
-    /// The synced preferences as the server stored them after a write of them up to
-    /// command `through`.
-    pub fn preferences(&mut self, display: Display, through: u64) -> bool {
+    /// The server has answered for the writes up to command `through`: of the account
+    /// settings, or (`preferences`) of the synced preferences. `values` are what the
+    /// answer said; they are kept for [`Tracker::expire`] only.
+    pub fn answered(&mut self, values: Option<Values>, through: u64, preferences: bool) -> bool {
         let before = self.values();
-        if let Some(px) = display.font_size.filter(|px| px.is_finite()) {
-            self.confirmed.font_size = px.round().clamp(8., 48.) as u8;
+        for p in &mut self.pending {
+            if p.change.is_preference() == preferences && p.seq <= through {
+                p.answered = true;
+            }
         }
-        if let Some(px) = display.message_group_spacing.filter(|px| px.is_finite()) {
-            self.confirmed.group_spacing = px.round().clamp(0., 64.) as u8;
+        if values.is_some() {
+            self.answer = values;
         }
-        self.pending
-            .retain(|p| !(p.change.is_preference() && p.seq <= through));
+        self.pending.retain(|p| !(p.answered && p.echoed));
+        self.values() != before
+    }
+
+    /// The echo of the write up to command `through` has not come: what the answer said
+    /// stands, and the edits it settled stop waiting.
+    pub fn expire(&mut self, through: u64, preferences: bool) -> bool {
+        let before = self.values();
+        if let Some(values) = self.answer.take() {
+            self.confirmed = values;
+        }
+        self.pending.retain(|p| {
+            !(p.answered && p.change.is_preference() == preferences && p.seq <= through)
+        });
         self.values() != before
     }
 
@@ -241,111 +257,149 @@ impl Tracker {
         self.values() != before
     }
 
-    /// Another account is shown: its edits and its versions are not this one's. The
-    /// values stay until its own snapshot comes.
+    /// Another account is shown: its edits are not this one's. The values stay until
+    /// its own snapshot comes.
     pub fn reset_account(&mut self) {
         self.confirmed = self.values();
         self.pending.clear();
-        self.version = None;
+        self.answer = None;
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    fn server_values(theme: &str, version: i64) -> (Option<i64>, Values) {
-        let s: p::UserSettings = serde_json::from_value(json!({
-            "theme": theme, "version": version, "message_display_compact": false,
-            "gif_auto_play": true, "animate_emoji": true, "render_embeds": true,
-            "render_reactions": true, "render_spoilers": 1,
+    /// The settings object as Fluxer sends it: the whole object, no version.
+    pub(crate) fn fluxer(theme: &str, friend_flags: u64) -> p::UserSettings {
+        serde_json::from_value(json!({
+            "status": "online", "theme": theme, "locale": "en-US",
+            "message_display_compact": false, "gif_auto_play": true,
+            "animate_emoji": true, "animate_stickers": 0, "render_embeds": true,
+            "render_reactions": true, "render_spoilers": 1, "developer_mode": false,
+            "inline_attachment_media": true, "inline_embed_media": true,
+            "friend_source_flags": friend_flags, "default_guilds_restricted": false,
+            "incoming_call_flags": 8, "group_dm_add_permission_flags": 8,
+            "guild_folders": [], "afk_timeout": 600, "time_format": 0
         }))
-        .unwrap();
-        (
-            s.version(),
-            Values::from_server(&s, None, &Values::default()),
-        )
+        .unwrap()
+    }
+
+    fn snapshot(theme: &str) -> Values {
+        Values::from_server(&fluxer(theme, 3), None, &Values::default())
     }
 
     fn shown(t: &Tracker) -> Pref {
         t.values().theme
     }
 
-    /// Two clients change the theme: whichever the server applied last is shown, in
-    /// whatever order the two answers reach this client.
+    fn account_kind() -> crate::backend::settings::write::Kind {
+        Change::Theme(Pref::Dark).kind()
+    }
+
+    /// Two clients change the theme: whichever the server applied last is shown, whatever
+    /// order the answer and the gateway's snapshots arrive in (the gateway's order is the
+    /// server's: this client's echo, then the other client's update if it wrote later).
     #[test]
     fn server_setting_conflict_takes_the_newest() {
-        // The other client wrote first (version 9), this client's write won (10).
+        // The other client wrote first, this client's write won.
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("dark", 8);
-        t.server(v, vals, None);
+        t.gateway(snapshot("dark"));
         let seq = t.edit(Change::Theme(Pref::Light));
         assert_eq!(shown(&t), Pref::Light, "the click shows at once");
-        let (v, vals) = server_values("coal", 9);
-        t.server(v, vals, None);
-        assert_eq!(
-            shown(&t),
-            Pref::Light,
-            "the click stays on top while it waits"
-        );
-        let (v, vals) = server_values("light", 10);
-        t.server(v, vals, Some(seq));
+        t.gateway(snapshot("coal"));
+        assert_eq!(shown(&t), Pref::Light, "the click stays on top while it waits");
+        t.answered(Some(snapshot("light")), seq, false);
+        assert_eq!(shown(&t), Pref::Light, "still waiting for the echo");
+        t.gateway(snapshot("light"));
         assert_eq!(shown(&t), Pref::Light, "this client wrote last");
-        assert!(!t.is_waiting(Change::Theme(Pref::Dark).kind()));
+        assert!(!t.is_waiting(account_kind()));
 
-        // The other client wrote last (version 11 against this client's 10).
+        // This client wrote first, the other client's update came after the echo and
+        // before the answer.
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("dark", 8);
-        t.server(v, vals, None);
+        t.gateway(snapshot("dark"));
         let seq = t.edit(Change::Theme(Pref::Light));
-        let (v, vals) = server_values("coal", 11);
-        t.server(v, vals, None);
-        let (v, vals) = server_values("light", 10);
-        t.server(v, vals, Some(seq));
-        assert_eq!(shown(&t), Pref::Coal, "the newer version is the newest");
+        t.gateway(snapshot("light"));
+        t.gateway(snapshot("coal"));
+        assert_eq!(shown(&t), Pref::Light, "not settled before the answer");
+        t.answered(Some(snapshot("light")), seq, false);
+        assert_eq!(shown(&t), Pref::Coal, "the update after the write is the newest");
+
+        // The same, with the answer first.
+        let mut t = Tracker::new(Values::default());
+        t.gateway(snapshot("dark"));
+        let seq = t.edit(Change::Theme(Pref::Light));
+        t.answered(Some(snapshot("light")), seq, false);
+        assert_eq!(shown(&t), Pref::Light);
+        t.gateway(snapshot("light"));
+        t.gateway(snapshot("coal"));
+        assert_eq!(shown(&t), Pref::Coal);
     }
 
     #[test]
-    fn an_older_snapshot_is_ignored_and_a_newer_one_replaces() {
+    fn another_device_changes_the_theme_without_any_version() {
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("light", 5);
-        assert!(t.server(v, vals, None));
+        assert!(t.gateway(snapshot("light")));
         assert_eq!(shown(&t), Pref::Light);
-        let (v, vals) = server_values("coal", 4);
-        assert!(!t.server(v, vals, None), "an old echo changes nothing");
-        assert_eq!(shown(&t), Pref::Light);
-        let (v, vals) = server_values("coal", 6);
-        assert!(t.server(v, vals, None));
-        assert_eq!(
-            shown(&t),
-            Pref::Coal,
-            "another client's change shows at once"
+        assert!(t.gateway(snapshot("coal")));
+        assert_eq!(shown(&t), Pref::Coal, "the next update shows at once");
+        assert!(
+            !t.gateway(snapshot("coal")),
+            "the same again changes nothing"
         );
+    }
+
+    #[test]
+    fn a_ready_without_a_version_sets_what_the_privacy_tab_shows() {
+        let ready = fluxer("dark", 0);
+        let v = Values::from_server(&ready, None, &Values::default());
+        assert_eq!(v.friend_sources, 0, "a flag of 0 is shown as 0");
+        let mut t = Tracker::new(Values::default());
+        t.gateway(v);
+        assert_eq!(t.values().friend_sources, 0);
+        let ready: p::UserSettings = serde_json::from_value(json!({
+            "theme": "dark", "default_guilds_restricted": true
+        }))
+        .unwrap();
+        let v = Values::from_server(&ready, None, &Values::default());
+        assert!(!v.dms_from_members);
+        assert_eq!(v.friend_sources, 3, "not said: the default stays");
     }
 
     #[test]
     fn the_echo_of_an_earlier_write_does_not_undo_a_later_click() {
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("dark", 1);
-        t.server(v, vals, None);
+        t.gateway(snapshot("dark"));
         t.edit(Change::Theme(Pref::Light));
         let seq2 = t.edit(Change::Theme(Pref::Coal));
         // The gateway echoes the first write.
-        let (v, vals) = server_values("light", 2);
-        t.server(v, vals, None);
+        t.gateway(snapshot("light"));
         assert_eq!(shown(&t), Pref::Coal);
-        let (v, vals) = server_values("coal", 3);
-        t.server(v, vals, Some(seq2));
+        t.answered(Some(snapshot("coal")), seq2, false);
         assert_eq!(shown(&t), Pref::Coal);
-        assert!(!t.is_waiting(Change::Theme(Pref::Dark).kind()));
+        t.gateway(snapshot("coal"));
+        assert_eq!(shown(&t), Pref::Coal);
+        assert!(!t.is_waiting(account_kind()));
+    }
+
+    #[test]
+    fn a_lost_echo_cannot_pin_an_edit() {
+        let mut t = Tracker::new(Values::default());
+        t.gateway(snapshot("dark"));
+        let seq = t.edit(Change::Theme(Pref::Light));
+        t.answered(Some(snapshot("light")), seq, false);
+        assert!(t.is_waiting(account_kind()));
+        t.expire(seq, false);
+        assert!(!t.is_waiting(account_kind()));
+        assert_eq!(shown(&t), Pref::Light, "what the answer said stands");
     }
 
     #[test]
     fn a_failed_write_goes_back_to_what_the_server_holds() {
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("dark", 1);
-        t.server(v, vals, None);
+        t.gateway(snapshot("dark"));
         let seq = t.edit(Change::Theme(Pref::Light));
         let font = t.edit(Change::FontSize(20));
         assert!(t.failed(seq, false));
@@ -362,39 +416,55 @@ mod tests {
     #[test]
     fn an_edit_after_the_answer_started_stays_on_top() {
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("dark", 1);
-        t.server(v, vals, None);
+        t.gateway(snapshot("dark"));
         let first = t.edit(Change::Theme(Pref::Light));
         let second = t.edit(Change::Theme(Pref::Coal));
         assert!(second > first);
         // The answer is for the first command only; the second still waits.
-        let (v, vals) = server_values("light", 2);
-        t.server(v, vals, Some(first));
+        t.answered(Some(snapshot("light")), first, false);
+        t.gateway(snapshot("light"));
         assert_eq!(shown(&t), Pref::Coal);
-        assert!(t.is_waiting(Change::Theme(Pref::Dark).kind()));
+        assert!(t.is_waiting(account_kind()));
     }
 
     #[test]
-    fn preferences_come_from_the_synced_preferences() {
+    fn preferences_are_settled_by_their_own_answer_and_the_next_snapshot() {
         let mut t = Tracker::new(Values::default());
+        t.gateway(snapshot("dark"));
         let seq = t.edit(Change::GroupSpacing(8));
         assert_eq!(t.values().group_spacing, 8);
-        t.preferences(
-            Display {
-                font_size: Some(18.),
-                message_group_spacing: Some(8.),
-            },
-            seq,
+        // An answer to an account write does not settle a preference edit.
+        t.answered(None, seq, false);
+        t.gateway(snapshot("dark"));
+        assert_eq!(t.values().group_spacing, 8);
+        t.answered(None, seq, true);
+        assert_eq!(
+            t.values().group_spacing,
+            8,
+            "answered, the echo is still to come"
         );
+        assert!(t.is_waiting(Change::GroupSpacing(0).kind()));
+        let display = Display {
+            font_size: Some(18.),
+            message_group_spacing: Some(8.),
+        };
+        t.gateway(Values::from_server(
+            &fluxer("dark", 3),
+            Some(display),
+            &Values::default(),
+        ));
         assert_eq!(t.values().font_size, 18);
         assert_eq!(t.values().group_spacing, 8);
-        assert!(!t.is_waiting(Change::GroupSpacing(0).kind()));
+        assert!(
+            !t.is_waiting(Change::GroupSpacing(0).kind()),
+            "settled by the echo"
+        );
     }
 
     #[test]
     fn values_of_the_server_fill_in_what_it_does_not_say() {
         let s: p::UserSettings = serde_json::from_value(json!({
-            "theme": "dark_legacy", "version": 3, "render_spoilers": 9,
+            "theme": "dark_legacy", "render_spoilers": 9,
             "friend_source_flags": 15, "default_guilds_restricted": true,
             "animate_stickers": 2, "developer_mode": true
         }))
@@ -425,15 +495,12 @@ mod tests {
     }
 
     #[test]
-    fn another_account_starts_without_the_old_ones_versions() {
+    fn another_account_starts_without_the_old_ones_edits() {
         let mut t = Tracker::new(Values::default());
-        let (v, vals) = server_values("light", 50);
-        t.server(v, vals, None);
+        t.gateway(snapshot("light"));
         t.edit(Change::Theme(Pref::Coal));
         t.reset_account();
-        // The other account's version is lower, and still taken.
-        let (v, vals) = server_values("dark", 3);
-        assert!(t.server(v, vals, None));
+        assert!(t.gateway(snapshot("dark")));
         assert_eq!(shown(&t), Pref::Dark);
     }
 }

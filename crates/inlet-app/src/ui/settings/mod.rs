@@ -18,7 +18,8 @@ use gpui::{
 use inlet_state::settings::Display;
 
 use crate::app::Inlet;
-use crate::backend::settings::Ev;
+use crate::backend::settings::account::Ev;
+use crate::backend::settings::Ev as SettingsEv;
 use crate::desktop::Layer;
 use crate::theme;
 use crate::ui::widgets::button;
@@ -169,14 +170,14 @@ impl Inlet {
     /// Events from the backend's settings domain.
     pub(crate) fn on_settings_event(
         &mut self,
-        event: Ev,
+        event: SettingsEv,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let SettingsEv::Account(event) = event;
         match event {
             Ev::AccountSaved { through, settings } => {
-                let display = Display::of(&settings);
-                store::server_settings(cx, &settings, display, Some(through));
+                store::answer_settings(cx, &settings, through);
             }
             Ev::PrefsSaved { through, prefs } => {
                 let a = prefs.get().accessibility.as_ref();
@@ -184,7 +185,7 @@ impl Inlet {
                     font_size: a.and_then(|a| a.font_size),
                     message_group_spacing: a.and_then(|a| a.message_group_spacing),
                 };
-                store::preferences(cx, display, through);
+                store::answer_preferences(cx, display, through);
             }
             Ev::SaveFailed {
                 through,
@@ -206,10 +207,10 @@ impl Inlet {
             return;
         };
         let state = account.read(cx).settings().clone();
-        // Only a full snapshot says what every setting is: a partial update (or the
-        // demo's READY) has no version, and its missing switches would read as off.
-        if let Some(user) = state.user().filter(|u| u.version().is_some()) {
-            store::server_settings(cx, user, Some(state.display()), None);
+        // The state keeps only whole snapshots (a partial update, or the demo's READY,
+        // would read as every switch off).
+        if let Some(user) = state.user() {
+            store::gateway_settings(cx, user, Some(state.display()));
         }
     }
 
@@ -218,6 +219,16 @@ impl Inlet {
         store::reset_account(cx);
         self.settings.profile.reset();
         self.follow_account_settings(cx);
+    }
+
+    /// The settings as the view last followed them. Rows and menus read this instead of
+    /// the store, which works the values out again on every call.
+    pub(crate) fn settings_values(&self) -> &Values {
+        static DEFAULTS: std::sync::OnceLock<Values> = std::sync::OnceLock::new();
+        self.settings
+            .applied
+            .as_ref()
+            .unwrap_or_else(|| DEFAULTS.get_or_init(Values::default))
     }
 
     /// Before the view draws: follows the store when what it shows moved. The message
@@ -269,6 +280,8 @@ impl Inlet {
         });
         self.settings.view = Some(view);
         self.profile_ensure_inputs(cx);
+        // Read again each time the settings open: Fluxer may have changed the profile.
+        self.settings.profile.load = profile::Load::NotAsked;
         self.profile_load(cx);
         cx.notify();
     }
@@ -307,5 +320,66 @@ impl Inlet {
                 ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "demo")]
+mod tests {
+    use gpui::{px, size, AppContext, TestAppContext};
+
+    use super::store;
+    use super::sync::Values;
+    use crate::backend::settings::write::Change;
+    use crate::layout_probe::{selector, Probe};
+
+    /// The settings reach the message view that keeps state of its own: the display
+    /// mode, the spoilers, and the height of the rows that a new font size changes.
+    #[gpui::test]
+    fn the_message_view_follows_the_settings(cx: &mut TestAppContext) {
+        let (probe, cx) = cx.add_window_view(Probe::new);
+        cx.update(|_, cx| cx.set_global(store::Store::new(Values::default(), None)));
+        cx.simulate_resize(size(px(1280.), px(860.)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let inlet = cx.read_entity(&probe, |p, _| p.inlet().clone());
+        let height = |cx: &mut gpui::VisualTestContext| {
+            cx.debug_bounds(selector::MESSAGE_ROW)
+                .expect("a cozy message row")
+                .size
+                .height
+                .as_f32()
+        };
+        let before = height(cx);
+        cx.read_entity(&inlet, |i, _| {
+            assert!(!i.chat.view.compact && !i.chat.view.show_spoilers);
+        });
+
+        cx.update(|_, cx| store::change(cx, Change::FontSize(24)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(
+            height(cx) > before,
+            "bigger text makes a taller row: {before} then {}",
+            height(cx)
+        );
+
+        cx.update(|_, cx| {
+            store::change(cx, Change::RenderSpoilers(0));
+            store::change(cx, Change::Compact(true));
+        });
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.read_entity(&inlet, |i, _| {
+            assert!(i.chat.view.compact, "the display mode follows");
+            assert!(i.chat.view.show_spoilers, "spoilers show without a click");
+            assert_eq!(i.settings_values().font_size, 24);
+        });
+        cx.update(|_, cx| {
+            store::change(cx, Change::FontSize(16));
+        });
     }
 }

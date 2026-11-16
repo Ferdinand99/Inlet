@@ -6,10 +6,10 @@
 use gpui::{AppContext, Context, Entity, PathPromptOptions, SharedString};
 
 use crate::app::Inlet;
+use crate::backend::settings::account::Cmd;
 use crate::backend::settings::profile::{
     ImageChange, OwnProfile, ProfileSave, MAX_BIO_CHARS, MAX_NAME_CHARS, MAX_PRONOUNS_CHARS,
 };
-use crate::backend::settings::Cmd;
 use crate::text_input::TextInput;
 
 /// Which of the two pictures.
