@@ -33,6 +33,9 @@ pub struct OverlayState {
     pub focus_before: Option<FocusHandle>,
     /// The list of keyboard shortcuts is open (see `keybind_help`).
     pub keybind_help: bool,
+    /// The keyboard was put on the window because no message box showed (see
+    /// `app::keymap`); the box gets it back when a channel opens.
+    pub keys_parked: bool,
     /// Demo scene `keybind-help`: the list was opened (or not asked for).
     #[cfg(feature = "demo")]
     pub demo_help_done: bool,

@@ -772,6 +772,30 @@ impl Inlet {
         cx.notify();
     }
 
+    /// Once per frame: where no message box is on screen (a server without a channel to
+    /// open, or while its list loads) the keyboard is on the window, not on the hidden
+    /// box, so the shortcuts still work. A channel that opens takes it back for its box
+    /// (`ComposerView::set_channel`); the friends page and a forum have their own rules.
+    fn keys_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen != Screen::Main || self.layer_open() {
+            return;
+        }
+        if self.selected_channel.is_none() {
+            if self.composer.view.focus_handle(cx).is_focused(window) {
+                window.focus(&self.focus, cx);
+                self.overlays.keys_parked = true;
+            }
+        } else if self.overlays.keys_parked && !self.forum_is_open() {
+            // A channel opened (also the one the box already had, which does not take the
+            // keyboard itself): the box has it, if nothing else took it meanwhile.
+            self.overlays.keys_parked = false;
+            if self.focus.is_focused(window) {
+                let handle = self.composer.view.focus_handle(cx);
+                window.focus(&handle, cx);
+            }
+        }
+    }
+
     /// The window's handlers of the shortcuts above, and the demo scene that opens the
     /// help.
     pub(crate) fn keymap_keys<E: InteractiveElement>(
@@ -780,9 +804,9 @@ impl Inlet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> E {
+        self.keys_frame(window, cx);
         #[cfg(feature = "demo")]
         self.demo_keybind_help(window, cx);
-        let _ = window;
         el.on_action(
             cx.listener(|this, _: &PreviousChannel, window, cx| {
                 this.step_channel(false, window, cx)
@@ -1326,29 +1350,39 @@ mod tests {
         })
     }
 
-    /// The server keys leave the keyboard where it is: the message box keeps it (and
-    /// takes it back for the channel that opens), and Ctrl+Tab steps like Ctrl+Alt+Down.
+    fn window_focused(inlet: &Entity<Inlet>, cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, cx| inlet.read(cx).focus.is_focused(window))
+    }
+
+    /// A server step that lands where no message box shows (here: its channels have not
+    /// arrived, as in an empty server) puts the keyboard on the window, so the next
+    /// server keys, Ctrl+Tab too, still work. A channel that opens gives the keyboard to
+    /// its message box.
     #[gpui::test]
-    fn the_server_keys_leave_the_keyboard_in_the_message_box(cx: &mut TestAppContext) {
+    fn server_keys_do_not_go_dead_in_a_server_without_a_message_box(cx: &mut TestAppContext) {
         let (inlet, cx) = rig(cx);
+        let guild = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
+            inlet.read_with(cx, |i, _| i.selected_guild.clone())
+        };
         assert!(composer_focused(&inlet, cx));
         cx.simulate_keystrokes(SERVER_NEXT.now());
-        assert!(
-            composer_focused(&inlet, cx),
-            "Ctrl+Alt+Down took the keyboard"
-        );
-        first_channel_opens(&inlet, "401", cx);
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
+        assert!(window_focused(&inlet, cx), "the keyboard is on the window");
+        assert!(!composer_focused(&inlet, cx));
+        // No channel opened: the next keys still work.
+        cx.simulate_keystrokes(SERVER_NEXT_ALSO.now());
+        assert_eq!(guild(&inlet, cx), None);
+        cx.simulate_keystrokes(SERVER_PREVIOUS_ALSO.now());
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
+        cx.simulate_keystrokes(SERVER_PREVIOUS.now());
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(GUILD));
+        // A channel opens: its message box has the keyboard again.
+        first_channel_opens(&inlet, "301", cx);
         assert!(
             composer_focused(&inlet, cx),
             "the box takes the keyboard back"
         );
-        cx.simulate_keystrokes(SERVER_NEXT_ALSO.now());
-        let guild = inlet.read_with(cx, |i, _| i.selected_guild.clone());
-        assert_eq!(guild, None, "Ctrl+Tab steps to the next server");
-        first_channel_opens(&inlet, "401", cx);
-        cx.simulate_keystrokes(SERVER_PREVIOUS_ALSO.now());
-        let guild = inlet.read_with(cx, |i, _| i.selected_guild.clone());
-        assert_eq!(guild.as_deref(), Some(OTHER_GUILD));
+        assert!(!window_focused(&inlet, cx));
     }
 
     /// Ctrl+Alt+Shift+Down goes to the next channel with a mention, not to one that is
