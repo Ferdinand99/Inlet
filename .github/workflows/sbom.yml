@@ -100,6 +100,7 @@ jobs:
           ' "$file" > /dev/null
           # No path of the build machine in the file.
           if grep -Eq '/home/runner|/Users/runner|D:\\a|/__w/' "$file"; then
+            grep -Eo '.{0,80}(/home/runner|/Users/runner|D:\\a|/__w/).{0,80}' "$file" | head -n 5
             echo "::error::the SBOM holds a path of the build machine"
             exit 1
           fi
