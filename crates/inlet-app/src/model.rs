@@ -149,6 +149,24 @@ pub struct Embed {
 }
 
 impl Embed {
+    /// The embed without its pictures and videos (the account does not show media of
+    /// links inline), or `None` when nothing is left to show: an embed that is only
+    /// media, or has no text.
+    pub fn without_media(&self) -> Option<Embed> {
+        let mut e = self.clone();
+        e.image = None;
+        e.thumbnail = None;
+        e.video = None;
+        let alone = matches!(e.kind, EmbedKind::Image | EmbedKind::Gifv);
+        let has_text = e.author.is_some()
+            || e.title.is_some()
+            || e.provider.is_some()
+            || !e.description.is_empty()
+            || !e.fields.is_empty()
+            || e.footer.is_some();
+        (!alone && has_text).then_some(e)
+    }
+
     /// Whether the embed shows an image or video below its text.
     pub fn has_media(&self) -> bool {
         self.image.is_some() || self.video.is_some()
