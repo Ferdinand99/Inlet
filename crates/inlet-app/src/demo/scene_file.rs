@@ -6,7 +6,7 @@
 //! name = "chat-groups"          # also the screenshot's file name
 //! window = [1280, 860]          # inner size in logical pixels
 //! scale = 1.0                   # device pixels per logical pixel the baseline has
-//! theme = "dark"                # the only theme so far
+//! theme = "dark"                # "dark", "coal" or "light"
 //! ignore = [[0, 0, 72, 48]]     # [x, y, w, h] in logical pixels, not compared
 //! demo = true                   # false: no demo account (the sign-in screen)
 //! scene = "default"             # a demo scene (`scenes.rs`)
@@ -120,8 +120,11 @@ impl SceneFile {
         if !(self.scale.is_finite() && (0.5..=4.0).contains(&self.scale)) {
             return Err(format!("scale {} is outside 0.5 to 4", self.scale));
         }
-        if self.theme != "dark" {
-            return Err(format!("theme {:?}: only \"dark\" exists", self.theme));
+        if !["dark", "coal", "light"].contains(&self.theme.as_str()) {
+            return Err(format!(
+                "theme {:?}: use \"dark\", \"coal\" or \"light\"",
+                self.theme
+            ));
         }
         let mut ignored = 0u64;
         for r in &self.ignore {
@@ -190,8 +193,11 @@ mod tests {
         assert_eq!(file.ignore, vec![[0, 0, 10, 10]]);
 
         let base = "name = \"x\"\nwindow = [1280, 860]\nscale = 1.0\n";
+        for theme in ["dark", "coal", "light"] {
+            assert!(SceneFile::parse(&format!("{base}theme = \"{theme}\"")).is_ok());
+        }
         for bad in [
-            format!("{base}theme = \"light\""),
+            format!("{base}theme = \"neon\""),
             format!("{base}theme = \"dark\"\ncolour = 1"),
             format!("{base}theme = \"dark\"\nignore = [[1200, 0, 100, 10]]"),
             format!("{base}theme = \"dark\"\ndemo = false\nguild = \"g1\""),

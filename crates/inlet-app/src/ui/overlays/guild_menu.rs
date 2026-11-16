@@ -180,6 +180,7 @@ impl Inlet {
         let muted = self.guild_muted(&guild, cx);
         let hides_muted = self.guild_hides_muted(&guild, cx);
         let can_leave = self.can_leave_guild(&guild, cx);
+        let privacy_id = guild.clone();
         let (read_id, mute_id, hide_id, notify_id, copy_id, leave_id) = (
             guild.clone(),
             guild.clone(),
@@ -282,9 +283,9 @@ impl Inlet {
                     t!("nav-menu-privacy"),
                     false,
                 )
-                .on_click(cx.listener(|this, _, _, cx| {
+                .on_click(cx.listener(move |this, _, _, cx| {
                     this.nav_close(cx);
-                    this.open_settings(Some("privacy"), cx);
+                    this.open_guild_privacy(privacy_id.clone(), cx);
                 })),
             )
             .child(

@@ -59,7 +59,7 @@ rail-folder-show-icon = Show the icon while the folder is closed
 rail-folder-read = Mark as read
 rail-folder-delete = Delete folder
 rail-folder-save = Save
-rail-save-failed = The server order could not be saved: { $error }
+rail-save-failed = The server order could not be saved.
 
 sidebar-members = Members
 sidebar-unknown-user = Unknown user
@@ -80,3 +80,8 @@ favorites-new-category = New category
 favorites-category-name = Category { $number }
 rail-too-many-folders = Too many folders: the server keeps at most 100 entries in the server list. Put servers into folders to make room.
 rail-folder-initial = F
+nav-privacy-title = Privacy in { $name }
+nav-privacy-body = Choose who in this server may send you direct messages. The privacy settings hold the choice for servers you join later.
+nav-privacy-members = Allow direct messages from server members
+nav-privacy-bots = Allow direct messages from bots of this server
+nav-privacy-done = Done

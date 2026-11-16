@@ -479,6 +479,11 @@ impl Inlet {
 
 /// The star in the channel header: add the open channel to the favourites or take it out.
 pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement> {
+    // With the search column open in a window that is not wide, the chat is narrow and the
+    // channel's name keeps its room (the right-click menu still has the entry).
+    if this.search_panel_open() && this.members.window_width < 1500. {
+        return None;
+    }
     let channel = this.selected_channel.clone()?;
     let on = this.channel_favorite_state(&channel)?;
     let color = if on {

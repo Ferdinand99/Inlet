@@ -47,6 +47,12 @@ pub enum NavDialog {
         error: Option<String>,
     },
     Folder(FolderEdit),
+    /// The privacy window of a server: DMs from its members and bots.
+    Privacy {
+        guild: String,
+        name: String,
+        allowed: super::guild_privacy::Allowed,
+    },
     Invite(InviteView),
     AddServer(AddServer),
     Gate(Gate),
@@ -169,6 +175,7 @@ impl Inlet {
                 self.render_leave(guild, name, busy, error, cx)
             }
             NavDialog::Folder(_) => self.render_folder_dialog(cx),
+            NavDialog::Privacy { .. } => self.render_guild_privacy(cx),
             NavDialog::Invite(_) => self.render_invite(cx),
             NavDialog::AddServer(_) => self.render_add_server(cx),
             NavDialog::Gate(gate) => {

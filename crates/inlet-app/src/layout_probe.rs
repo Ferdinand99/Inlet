@@ -71,12 +71,6 @@ impl Probe {
         Self { inlet }
     }
 
-    /// The view, for the tests inside the crate.
-    #[cfg(test)]
-    pub(crate) fn inlet(&self) -> &Entity<Inlet> {
-        &self.inlet
-    }
-
     /// The same with the search column open beside the chat, as after a click on the
     /// header's search field.
     pub fn with_search_open(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -87,6 +81,14 @@ impl Probe {
             inlet
         });
         Self { inlet }
+    }
+}
+
+impl Probe {
+    /// The app view, for tests that look at its state.
+    #[cfg(test)]
+    pub(crate) fn inlet(&self) -> &Entity<Inlet> {
+        &self.inlet
     }
 }
 

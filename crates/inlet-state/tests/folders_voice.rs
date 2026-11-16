@@ -13,7 +13,7 @@ fn folders_come_from_ready_and_follow_settings_updates() {
         json!([]),
         json!([]),
     );
-    v["user_settings"] = json!({"guild_folders": [
+    v["user_settings"] = json!({"theme": "dark", "guild_folders": [
         {"id": 1, "name": "Work", "color": 16711680, "icon": "shield", "guild_ids": [GUILD]}
     ]});
     let mut s = AccountState::from_ready_at(&ready_from(v), JOINED_MS as i64);
@@ -25,7 +25,7 @@ fn folders_come_from_ready_and_follow_settings_updates() {
 
     let c = s.apply(&d(
         "USER_SETTINGS_UPDATE",
-        json!({"guild_folders": [{"id": -1, "guild_ids": [GUILD]}]}),
+        json!({"theme": "dark", "guild_folders": [{"id": -1, "guild_ids": [GUILD]}]}),
     ));
     assert!(c.folders);
     assert!(s.settings().guild_folders()[0].is_uncategorized());

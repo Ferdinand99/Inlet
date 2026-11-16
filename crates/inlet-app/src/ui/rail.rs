@@ -23,7 +23,7 @@ use inlet_protocol::models::GuildFolder;
 
 use crate::app::Inlet;
 use crate::assets::Icon;
-use crate::backend::settings::{folders as backend_folders, Cmd as SettingsCmd};
+use crate::backend::settings::account::Cmd as AccountCmd;
 use crate::model::Guild;
 use crate::theme;
 use crate::ui::notifications::badge::{rail_badge, RailMarks};
@@ -218,8 +218,9 @@ impl Inlet {
             return;
         }
         self.rail.pending = Some((folders.clone(), Instant::now()));
-        self.backend
-            .send(SettingsCmd::Folders(backend_folders::Cmd::Save { folders }));
+        // One of the account's settings writes: the same request, gathering and gap as
+        // the theme and the privacy switches (Fluxer's 20 per 10 s are shared).
+        self.backend.send(AccountCmd::SaveGuildFolders { folders });
         cx.notify();
     }
 
@@ -246,21 +247,31 @@ impl Inlet {
         cx.notify();
     }
 
-    /// Events of the guild order saves.
-    pub(crate) fn on_folders_event(&mut self, event: backend_folders::Ev, cx: &mut Context<Self>) {
-        match event {
-            backend_folders::Ev::Saved(settings) => {
-                if let Some(account) = self.account.clone() {
-                    let update = inlet_protocol::Dispatch::UserSettingsUpdate(settings);
-                    account.update(cx, |s, _| s.apply(&update));
-                }
-                self.rail_sync(cx);
-            }
-            backend_folders::Ev::Failed(reason) => {
-                self.rail.pending = None;
-                self.chat.error = Some(t!("rail-save-failed", error = reason.as_str()));
-                cx.notify();
-            }
+    /// The answer to a settings write while a server order is on its way: it goes the
+    /// way an update from the gateway goes, so the account's state, the settings store
+    /// and the rail all take it in one place.
+    pub(crate) fn rail_answer(
+        &mut self,
+        settings: Box<inlet_protocol::UserSettings>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rail.pending.is_none() {
+            return;
+        }
+        let event = crate::backend::messages::Ev::Dispatch {
+            dispatch: Box::new(inlet_protocol::Dispatch::UserSettingsUpdate(settings)),
+            rendered: Vec::new(),
+        };
+        self.on_messages_event(event, window, cx);
+        self.rail_sync(cx);
+    }
+
+    /// A settings write failed: the rail shows what the server holds again.
+    pub(crate) fn rail_save_failed(&mut self, cx: &mut Context<Self>) {
+        if self.rail.pending.take().is_some() {
+            self.chat.error = Some(t!("rail-save-failed"));
+            cx.notify();
         }
     }
 

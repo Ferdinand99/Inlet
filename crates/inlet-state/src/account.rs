@@ -1036,11 +1036,6 @@ impl AccountState {
         self.member_total
     }
 
-    /// The guild order and folders from the account settings.
-    pub fn settings(&self) -> &Settings {
-        &self.settings
-    }
-
     /// Who is in which voice channel.
     pub fn voice(&self) -> &Voice {
         &self.voice
@@ -1049,6 +1044,12 @@ impl AccountState {
     /// Notification settings.
     pub fn guild_settings(&self) -> &GuildSettings {
         &self.guild_settings
+    }
+
+    /// The account's user settings as the server last said (theme, message display,
+    /// privacy), without the big parts.
+    pub fn settings(&self) -> &Settings {
+        &self.settings
     }
 
     /// The account's permissions in a guild channel. [`Permissions::NONE`]

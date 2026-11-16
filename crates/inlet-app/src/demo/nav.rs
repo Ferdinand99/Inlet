@@ -80,6 +80,7 @@ pub fn user_settings(scene: Scene) -> Option<Value> {
     let id = |g: &str| snowflake(g);
     Some(json!({
         "status": "online",
+        "theme": "dark",
         "custom_status": null,
         "guild_folders": [
             {"id": -1, "guild_ids": [id("g1")]},

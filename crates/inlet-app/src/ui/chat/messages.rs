@@ -447,6 +447,9 @@ pub struct MessageView {
     next_request: u64,
     /// Compact mode: no avatars, the time before the name, no space between groups.
     pub compact: bool,
+    /// When spoilers show without a click: 0 always, 1 never, 2 in channels the account
+    /// moderates (the account's spoiler setting).
+    pub spoilers: u8,
     /// The open channel's newest page has landed.
     loaded: bool,
     newest_retries: u8,
@@ -785,6 +788,7 @@ impl MessageView {
     pub fn new() -> Self {
         Self {
             compact: starts_compact(),
+            spoilers: 1,
             ..Self::default()
         }
     }
@@ -896,6 +900,9 @@ impl MessageView {
         if !self.detached {
             self.detached_new = 0;
         }
+        // Spoilers that show by themselves: always, or where the account moderates.
+        let spoilers_shown = self.spoilers == 0
+            || (self.spoilers == 2 && super::action_bar::Perms::of(state, ch).moderates());
         let me = state.me_id();
         // Whether the last row is this account's message (pending rows group under it).
         let mut last_mine = false;
@@ -979,7 +986,7 @@ impl MessageView {
                     grouped,
                     mention: mentions_me(state, ch, m),
                     jumped: self.is_highlighted(id, now),
-                    revealed: self.revealed.contains(&id),
+                    revealed: spoilers_shown || self.revealed.contains(&id),
                     name_color: name_color(state, guild, m),
                     tag: tag(channel, m, &c.shown),
                     reply: reply_of(m, &c.shown),
@@ -1267,6 +1274,8 @@ impl Inlet {
             return;
         }
         if let p::Dispatch::Ready(ready) = &dispatch {
+            // The first READY of a session: the settings of the account before are gone.
+            let first_ready = self.account.is_none();
             let mut changes = match self.account.clone() {
                 None => {
                     let state = account_state_from(ready);
@@ -1280,6 +1289,11 @@ impl Inlet {
             };
             self.settings_applied(&dispatch, &mut changes, cx);
             self.pickers_on_dispatch(&dispatch, cx);
+            if first_ready {
+                crate::ui::settings::store::reset_account(cx);
+                self.settings.profile.reset();
+            }
+            self.follow_account_settings(cx);
             self.rail_sync(cx);
             self.after_changes(changes, false, cx);
             // A first READY, or a new one after a reconnect: the open channel's window is
@@ -1299,6 +1313,7 @@ impl Inlet {
         self.settings_applied(&dispatch, &mut changes, cx);
         self.pickers_on_dispatch(&dispatch, cx);
         if matches!(dispatch, p::Dispatch::UserSettingsUpdate(_)) {
+            self.follow_account_settings(cx);
             self.rail_sync(cx);
         }
         self.note_saved(&dispatch);
@@ -1488,6 +1503,20 @@ impl Inlet {
             list.splice(range, count);
         }
         self.chat.view.rows = new;
+    }
+
+    /// Builds the rows again and measures all of them again: the settings changed how
+    /// a row looks or how tall it is (display mode, font size, spacing, spoilers,
+    /// embeds, reactions).
+    pub(crate) fn refresh_rows_from_scratch(&mut self, cx: &mut Context<Self>) {
+        let new = match (self.open_channel_id(), self.account.clone()) {
+            (Some(ch), Some(account)) => self.chat.view.build_rows(account.read(cx), ch),
+            _ => Vec::new(),
+        };
+        let before = self.chat.view.rows.len();
+        let count = new.len();
+        self.chat.view.rows = new;
+        self.chat.message_list.splice(0..before, count);
     }
 
     /// Shows a newly selected channel: an empty list until its messages are there.

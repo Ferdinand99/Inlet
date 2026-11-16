@@ -6,7 +6,7 @@
 
 use gpui::{div, prelude::*, px, svg, AnyElement, FontWeight, Hsla, Pixels, Svg};
 
-use super::message::{AVATAR_COLUMN, GROUP_SPACING};
+use super::message::{group_spacing_for, AVATAR_COLUMN};
 use super::messages::{SystemKind, SystemRow};
 use crate::assets::Icon;
 use crate::theme;
@@ -65,7 +65,7 @@ pub fn render(row: &SystemRow, compact: bool) -> AnyElement {
     };
     div()
         .w_full()
-        .when(!compact, |d| d.pt(px(GROUP_SPACING)))
+        .pt(px(group_spacing_for(compact)))
         .child(
             div()
                 .w_full()
@@ -76,7 +76,7 @@ pub fn render(row: &SystemRow, compact: bool) -> AnyElement {
                 .flex_row()
                 .items_center()
                 .gap_3()
-                .line_height(px(22.))
+                .line_height(px(theme::message_line_px()))
                 .hover(|s| s.bg(theme::hover_bg()))
                 .child(
                     div()

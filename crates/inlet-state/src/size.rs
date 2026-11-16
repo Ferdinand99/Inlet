@@ -76,7 +76,13 @@ pub(crate) fn cap_user(u: &mut User) {
     trim_extra(
         &mut u.extra,
         MAX_USER_EXTRA_BYTES,
-        &["mfa_enabled", "accent_color", "banner", "verified"],
+        &[
+            "mfa_enabled",
+            "accent_color",
+            "banner",
+            "verified",
+            "nsfw_allowed",
+        ],
     );
 }
 

@@ -248,6 +248,7 @@ pub fn load_scene_file() {
     set("INLET_DEMO_SETTINGS", file.settings.as_deref());
     set("INLET_DEMO_DEEP_LINK", file.deep_link.as_deref());
     set("INLET_DEMO_ACCENT", file.accent.as_deref());
+    set("INLET_DEMO_THEME", Some(file.theme.as_str()));
     // No live demo messages while the screenshot is taken, and animated emoji hold
     // their first frame: a scene must look the same whenever it is taken.
     set("INLET_DEMO_LIVE_SECS", Some("86400"));

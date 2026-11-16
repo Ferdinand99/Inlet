@@ -5,6 +5,7 @@ pub mod account_switcher;
 mod context_menu;
 pub mod gate;
 pub mod guild_menu;
+mod guild_privacy;
 pub mod invite_accept;
 pub mod keybind_help;
 mod link_confirm;
