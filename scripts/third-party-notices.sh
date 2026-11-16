@@ -104,5 +104,8 @@ tab="$(printf '\t')"
   cat "$work/blocks/tail"
 } > "$work/sorted"
 
-cat "$work/sorted" > THIRD-PARTY-NOTICES
+# The crates of this repository are listed without a version: release-please changes
+# their version on every release, and the committed file must stay current without a
+# second edit. They are the entries whose repository is this one.
+sed -E 's|^(  - [^ ]+) [0-9][^ ]* (\(https://github\.com/Ferdinand99/Inlet\))$|\1 \2|' "$work/sorted" > THIRD-PARTY-NOTICES
 echo "wrote THIRD-PARTY-NOTICES ($(wc -l < THIRD-PARTY-NOTICES) lines)"

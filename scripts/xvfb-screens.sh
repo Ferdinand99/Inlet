@@ -177,6 +177,8 @@ scene 100-banners banners c-general
 scene 101-banners-maintenance banners-maintenance c-general
 scene 102-banners-connection banners-connection c-general
 scene 103-terms terms c-general
+# The list of keyboard shortcuts (Ctrl+/).
+scene 70-keybind-help keybind-help c-general
 
 # 10. The Notifications settings tab.
 INLET_DEMO=1 INLET_DEMO_LIVE_SECS=3600 INLET_DEMO_GUILD=g1 INLET_DEMO_CHANNEL=c-general INLET_DEMO_SETTINGS=notifications "$bin" >>"$out/demo.log" 2>&1 &

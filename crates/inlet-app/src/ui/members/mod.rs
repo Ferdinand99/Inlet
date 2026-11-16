@@ -179,32 +179,37 @@ pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement
             .when(shown, |d| d.bg(theme::selected_bg()))
             .hover(|s| s.bg(theme::hover_bg()))
             .child(MemberIcon::Users.el(px(24.), color))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.members.hidden = !this.members.hidden;
-                let prefs = MemberPrefs {
-                    shown: !this.members.hidden,
-                };
-                // Saved off the UI thread; a failed write only loses the choice.
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Some(path) = crate::backend::platform::prefs::settings_path() {
-                            if let Err(e) = crate::backend::platform::prefs::save_section(
-                                &path,
-                                SETTINGS_KEY,
-                                &prefs,
-                            ) {
-                                log::warn!("could not save the member list setting: {e}");
-                            }
-                        }
-                    })
-                    .detach();
-                cx.notify();
-            }))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_member_list(cx)))
             .into_any_element(),
     )
 }
 
 impl Inlet {
+    /// Shows or hides the member list (the header button, and Ctrl+U). The choice is
+    /// saved; nothing happens where there is no member list to show.
+    pub(crate) fn toggle_member_list(&mut self, cx: &mut Context<Self>) {
+        if self.member_list_channel().is_none() {
+            return;
+        }
+        self.members.hidden = !self.members.hidden;
+        let prefs = MemberPrefs {
+            shown: !self.members.hidden,
+        };
+        // Saved off the UI thread; a failed write only loses the choice.
+        cx.background_executor()
+            .spawn(async move {
+                if let Some(path) = crate::backend::platform::prefs::settings_path() {
+                    if let Err(e) =
+                        crate::backend::platform::prefs::save_section(&path, SETTINGS_KEY, &prefs)
+                    {
+                        log::warn!("could not save the member list setting: {e}");
+                    }
+                }
+            })
+            .detach();
+        cx.notify();
+    }
+
     /// The guild and channel whose member list may show: a guild text or announcement
     /// channel on the main screen.
     pub(crate) fn member_list_channel(&self) -> Option<(GuildId, ChannelId)> {

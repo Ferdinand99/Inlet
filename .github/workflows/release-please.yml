@@ -1,0 +1,56 @@
+name: Release Please
+
+# Keeps one release PR open on main. It bumps the version in Cargo.toml and
+# Cargo.lock and writes CHANGELOG.md from the Conventional Commit messages.
+#
+# Merging the release PR makes release-please create the tag (vX.Y.Z) and a draft
+# pre-release for it. A tag created with the default GITHUB_TOKEN does not start
+# other workflows, so this workflow calls release.yml itself with that tag. It
+# builds, waits for the approval of the macOS signing job in the protected
+# environment "release", attaches the files to the draft and publishes it as a
+# pre-release. No personal access token and no other secret is involved.
+#
+# Releases are always pre-releases and never the latest release. See
+# docs/RELEASING.md.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# One run at a time: two runs must not open or update the release PR together.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR and tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  release:
+    name: Build and publish ${{ needs.release-please.outputs.tag_name }}
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/release.yml
+    # The secrets of the environment "release" only reach the signing workflow when
+    # the callers let secrets through. The repository holds no others.
+    secrets: inherit
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}

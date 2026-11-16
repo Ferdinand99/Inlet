@@ -58,6 +58,8 @@
 //!   the guild (see `search.rs`).
 //! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
 //!   `accounts` (their channels with mentions and unread messages).
+//! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
+//!   chat.
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -124,6 +126,7 @@ pub enum Scene {
     BannersMaintenance,
     BannersConnection,
     Terms,
+    KeybindHelp,
 }
 
 impl Scene {
@@ -172,6 +175,7 @@ impl Scene {
             "banners-maintenance" => Scene::BannersMaintenance,
             "banners-connection" => Scene::BannersConnection,
             "terms" => Scene::Terms,
+            "keybind-help" => Scene::KeybindHelp,
             _ => return None,
         })
     }
