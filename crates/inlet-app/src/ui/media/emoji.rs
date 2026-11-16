@@ -55,7 +55,7 @@ pub fn custom_emoji_requests(
         let url = Url::parse(&proxy.emoji(id, animate, px)?).ok()?;
         Some(MediaRequest::new(url, MediaKind::Emoji, Fit::square(px)).with_proxy_size(px))
     };
-    let moving = (animated && prefs.allows(Motion::Emoji))
+    let moving = (animated && prefs.fetches_animation(Motion::Emoji))
         .then(|| request(true, 1.))
         .flatten();
     (moving, request(false, scale))
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn animated_emoji_setting_off_fetches_only_the_still() {
+    fn animated_emoji_setting_off_still_fetches_the_animation_for_hover() {
         let proxy = p::Media::new("https://media.example.org").unwrap();
         let on = MotionPrefs::default();
         let off = MotionPrefs {
@@ -445,9 +445,10 @@ mod tests {
             .url
             .as_str()
             .starts_with("https://media.example.org/emojis/123456789012345678.webp"));
-        // Off: only the still, whose decoded image has one frame.
+        // Off: the animation is still fetched, for the pointer to play it; the budget
+        // shows its first frame until then.
         let (moving, still) = custom_emoji_requests(&proxy, "123456789012345678", true, &off, 2.);
-        assert!(moving.is_none());
+        assert!(moving.is_some());
         assert!(still.is_some());
         // A still emoji never asks for an animation; a bad ID asks for nothing.
         assert!(custom_emoji_requests(&proxy, "1", false, &on, 1.)

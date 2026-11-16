@@ -1,0 +1,147 @@
+name: SBOM
+
+# A CycloneDX software bill of materials (SBOM) for each release platform: every crate
+# the Inlet binary of that platform is built from, with its version, licence and source,
+# resolved for the platform's target triple with the release features. cargo-cyclonedx
+# reads Cargo.lock and `cargo metadata`; it compiles nothing.
+#
+# release.yml calls this workflow and attaches the three files to the release (and the
+# release's build provenance attestation covers them). On pull requests the workflow runs
+# when the dependencies or this file change, so a change that breaks the SBOM shows up
+# before a release. The files are uploaded as the artifacts inlet-sbom-<platform>.
+
+on:
+  pull_request:
+    branches: [v0, main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/*/Cargo.toml
+      - rust-toolchain.toml
+      - .github/workflows/sbom.yml
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbom-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  # The git dependencies (gpui's repository, Fluxer's) are large; the git command line
+  # fetches them much faster than cargo's built-in client.
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  sbom:
+    name: SBOM (${{ matrix.platform }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
+          - platform: macos-aarch64
+            target: aarch64-apple-darwin
+          - platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      # The released cargo-cyclonedx binary, checked against the hash in the action's
+      # manifest, instead of compiling it.
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-cyclonedx@0.5.9
+          fallback: none
+
+      # One <package>.cdx.json per workspace member is written next to its Cargo.toml; the
+      # one of the app (package "inlet") is the SBOM of the shipped binary. Default
+      # features, as in the release builds. It is renamed after the release file it
+      # belongs to.
+      - name: Generate the SBOM
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format json --spec-version 1.5 --target "$TARGET"
+          mkdir sbom
+          # The component references of the workspace crates are file URLs of the build
+          # directory; make them the same everywhere (every reference is rewritten the
+          # same way, so the links between components stay intact).
+          sed "s|file://$PWD|file:///workspace|g" crates/inlet-app/inlet.cdx.json > full.cdx.json
+          # cargo metadata unifies features over the dev-dependencies too, so the generator
+          # also lists crates that only a test build uses (gpui's test support pulls in
+          # proptest, for one). The SBOM describes the shipped binary: keep the crates of
+          # the normal dependency tree of the app for this target, and the links between
+          # them.
+          cargo tree --locked -e normal --target "$TARGET" -p inlet --prefix none \
+            | awk '{ v = $2; sub(/^v/, "", v); print $1 " " v }' | sort -u > shipped.txt
+          wc -l shipped.txt
+          jq --rawfile shipped shipped.txt '
+            ($shipped | split("\n") | map(select(length > 0) | {(.): true}) | add) as $keep
+            | .components |= map(select($keep[.name + " " + (.version // "")] // false))
+            | ([.components[]."bom-ref" // empty] + [.metadata.component."bom-ref"]
+               | map({(.): true}) | add) as $refs
+            | .dependencies |= map(
+                select($refs[.ref] // false)
+                | .dependsOn |= ((. // []) | map(select($refs[.] // false))))
+          ' full.cdx.json > "sbom/inlet-$PLATFORM.cdx.json"
+          rm full.cdx.json shipped.txt
+          ls -l sbom
+          # The generator must not have changed the lock file.
+          git diff --exit-code Cargo.lock
+
+      - name: Check the SBOM
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          file="sbom/inlet-$PLATFORM.cdx.json"
+          jq -e '
+            .bomFormat == "CycloneDX"
+            and .specVersion == "1.5"
+            and .metadata.component.name == "inlet"
+            and (.components | length) > 100
+            and all(.components[]; .name != "proptest" and .name != "wiremock")
+          ' "$file" > /dev/null
+          # No path of the build machine in the file.
+          if grep -Eq '/home/runner|/Users/runner|D:\\a|/__w/' "$file"; then
+            grep -Eo '.{0,80}(/home/runner|/Users/runner|D:\\a|/__w/).{0,80}' "$file" | head -n 5
+            echo "::error::the SBOM holds a path of the build machine"
+            exit 1
+          fi
+          # The platform's own crates are in, the other platforms' are not.
+          case "$PLATFORM" in
+            windows-x86_64) want='"windows-sys"'; unwanted='"core-foundation"' ;;
+            macos-aarch64) want='"core-foundation"'; unwanted='"windows-sys"' ;;
+            linux-x86_64) want='"wayland-client"'; unwanted='"core-foundation"' ;;
+          esac
+          grep -qF "$want" "$file" || { echo "::error::$want is not in the $PLATFORM SBOM"; exit 1; }
+          if grep -qF "$unwanted" "$file"; then
+            echo "::error::$unwanted is in the $PLATFORM SBOM, but it is not built there"
+            exit 1
+          fi
+          jq -r '"\(.metadata.component.name) \(.metadata.component.version): \(.components | length) components"' "$file"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: inlet-sbom-${{ matrix.platform }}
+          path: sbom/
+          if-no-files-found: error
+          retention-days: 7

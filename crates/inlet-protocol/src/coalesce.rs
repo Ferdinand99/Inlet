@@ -344,4 +344,25 @@ mod tests {
         tokio::time::advance(Duration::from_secs(10)).await;
         assert_eq!(s.reserve_search(Instant::now()), Ok(Duration::ZERO));
     }
+
+    #[test]
+    fn gif_searches_get_one_slot_per_half_second() {
+        let s = Shared::default();
+        let now = Instant::now();
+        // Slots 0, 0.5, ... 3 s away: seven go, the rest would wait more than 3 s.
+        for n in 0..7u32 {
+            assert_eq!(s.reserve_gif_search(now), Ok(GIF_SEARCH_INTERVAL * n));
+        }
+        for _ in 0..3 {
+            assert_eq!(s.reserve_gif_search(now), Err(GIF_SEARCH_INTERVAL * 7));
+        }
+        // Refused ones reserved nothing: 3 s later the next slot is half a second away.
+        let later = now + Duration::from_secs(3);
+        assert_eq!(s.reserve_gif_search(later), Ok(GIF_SEARCH_INTERVAL));
+        // Long after the last slot a search starts at once.
+        assert_eq!(
+            s.reserve_gif_search(later + Duration::from_secs(10)),
+            Ok(Duration::ZERO)
+        );
+    }
 }

@@ -142,6 +142,17 @@ impl Inlet {
             cx.notify();
         }));
 
+        // The operating system's light or dark setting, for the theme "system".
+        crate::ui::settings::store::system_appearance_changed(
+            cx,
+            crate::theme::appearance_is_dark(window.appearance()),
+        );
+        subscriptions.push(cx.observe_window_appearance(window, |_, window, cx| {
+            crate::ui::settings::store::system_appearance_changed(
+                cx,
+                crate::theme::appearance_is_dark(window.appearance()),
+            );
+        }));
         Self::watch_reduce_motion(cx);
         let backend = backend(window, cx);
         let notifications = ui::notifications::State::new(window.is_window_active());

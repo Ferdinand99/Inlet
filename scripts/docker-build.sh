@@ -26,6 +26,16 @@
 # anything named in INLET_EXPORT), which this script unpacks into the working tree.
 # Everything it starts is labelled owner=inlet and removed on exit (--rm).
 #
+# Stale artefacts: the two slot volumes are shared by every worktree, and cargo calls
+# a crate fresh when its fingerprint matches and no source file is newer than its last
+# build. The tar is unpacked before the run waits for its slot, so its files could be
+# older than what another worktree built there in the meantime, and the run would reuse
+# that build of the workspace crates. The choice: once the slot is held, the container
+# stamps every source file with the current time (docker/builder-entry.sh), so the
+# workspace crates always rebuild from the tree that was sent. The dependency cache and
+# rustc's incremental cache are kept, and no per-worktree target dir is needed (a copy
+# of the dependencies per worktree would cost tens of GB). --self-test checks the stamp.
+#
 # Docker host: whatever the docker CLI uses (DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG).
 # Optional settings can live in an untracked file, .inlet-build.env in the repository
 # root (or the file named by INLET_BUILD_ENV): NAME=value lines; variables already set
@@ -149,7 +159,7 @@ self_test() {
   echo "self-test: three calls at once, each holds a slot for 12 s" >&2
   for n in 1 2 3; do
     DEV_RUN="inlet-$tag-$n" DEV_TITLE="docker-build.sh self-test $n of 3" \
-      "$0" --exec sh -c 'echo "inside: $(hostname)"; sleep 12' >"$tmp/out$n" 2>"$tmp/err$n" &
+      "$0" --exec sh -c 'echo "inside: $(hostname) mtime=$(stat -c %Y /src/Cargo.toml)"; sleep 12' >"$tmp/out$n" 2>"$tmp/err$n" &
     pids+=($!)
   done
 
@@ -208,6 +218,19 @@ self_test() {
       echo "FAIL: the third call got a slot before any run finished" >&2; fail=1
     fi
   fi
+
+  # The source files are stamped once the slot is held, not when they were unpacked: a
+  # run that waited must not look older than what ran in its slot before it.
+  local got stamp
+  for n in 1 2 3; do
+    got="$(sed -n 's/.*slot=[ab] acquired epoch=\([0-9]*\)[.0-9]*.*/\1/p' "$tmp/err$n" | head -1)"
+    stamp="$(sed -n 's/.*inside: .* mtime=\([0-9]*\).*/\1/p' "$tmp/err$n" | head -1)"
+    if [ -n "$got" ] && [ -n "$stamp" ] && [ "$stamp" -ge "$got" ]; then
+      echo "ok: call $n has its sources stamped at or after getting its slot" >&2
+    else
+      echo "FAIL: call $n: sources stamped at '${stamp:-?}', slot acquired at '${got:-?}'" >&2; fail=1
+    fi
+  done
 
   # Nothing of ours may be left behind.
   local left

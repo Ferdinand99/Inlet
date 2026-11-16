@@ -408,6 +408,29 @@ https://x.example/a.png||",
     }
 
     #[test]
+    fn without_media_inline_an_embed_keeps_its_text_and_loses_its_pictures() {
+        let article = model::Embed {
+            kind: model::EmbedKind::Article,
+            title: Some("A title".into()),
+            image: Some(model::EmbedMedia::default()),
+            thumbnail: Some(model::EmbedMedia::default()),
+            ..Default::default()
+        };
+        let bare = article.without_media().expect("the text stays");
+        assert_eq!(bare.title.as_deref(), Some("A title"));
+        assert!(bare.image.is_none() && bare.thumbnail.is_none() && bare.video.is_none());
+        // A link that is only a picture has nothing left, and neither has an empty embed.
+        let picture = model::Embed {
+            kind: model::EmbedKind::Image,
+            title: Some("x".into()),
+            image: Some(model::EmbedMedia::default()),
+            ..Default::default()
+        };
+        assert!(picture.without_media().is_none());
+        assert!(model::Embed::default().without_media().is_none());
+    }
+
+    #[test]
     fn explicit_video_embeds_are_covered() {
         use crate::ui::media::video_explicit;
         let plain = model::EmbedMedia::default();

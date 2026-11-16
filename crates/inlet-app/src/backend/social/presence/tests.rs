@@ -51,14 +51,14 @@ fn status_updates_are_coalesced_five_per_twenty_seconds() {
         });
         c.want(wish.clone());
         while let Next::Write(u) = c.next(now) {
-            writes.push((now, u));
+            writes.push((now, *u));
         }
     }
     // What still waits goes out as the budget frees up.
     let mut now = t0 + Duration::from_secs(20);
     loop {
         match c.next(now) {
-            Next::Write(u) => writes.push((now, u)),
+            Next::Write(u) => writes.push((now, *u)),
             Next::Wait(w) => now += w,
             Next::Idle => break,
         }

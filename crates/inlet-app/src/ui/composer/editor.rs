@@ -769,6 +769,12 @@ impl ComposerView {
             window.play_system_bell();
             return;
         }
+        // The account's "turn text smileys into emoji" setting.
+        let wire = if crate::ui::settings::store::values(cx).convert_emoticons {
+            super::emoticons::convert(&wire)
+        } else {
+            wire
+        };
         let content = match commands::parse(&wire) {
             Parsed::Nick(_) => {
                 // The nickname is what the person sees, not the wire text with its
