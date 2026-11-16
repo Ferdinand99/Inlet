@@ -66,7 +66,8 @@ jobs:
           set -eu
           title="API drift: ${INSTANCE}"
           body="$RUNNER_TEMP/issue.md"
-          hash="$(grep -o 'drift-hash: [0-9a-f]*' "$body" | head -n 1)"
+          # The marker is the last line the tool writes; the diff above it is untrusted text.
+          hash="$(tail -n 1 "$body" | grep -Eo 'drift-hash: [0-9a-f]{16}')"
           [ -n "$hash" ]
           number="$(gh issue list --state open --search "API drift in:title" --limit 100 --json number,title \
             | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')"
@@ -76,7 +77,7 @@ jobs:
           fi
           # A comment only when the drift differs from what is already on the issue.
           seen="$(gh issue view "$number" --json body,comments --jq '[.body, (.comments[].body)] | join("\n")')"
-          if printf '%s' "$seen" | grep -qF "$hash"; then
+          if printf '%s' "$seen" | grep -qF "<!-- $hash -->"; then
             echo "Issue #$number already shows this drift."
           else
             gh issue comment "$number" --body-file "$body"

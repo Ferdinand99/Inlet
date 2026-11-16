@@ -17,6 +17,7 @@ Exit codes: 0 no drift, 1 drift, 2 internal error or stale route list, 3 fetch e
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -288,21 +289,38 @@ def inlet_routes():
 # ---------------------------------------------------------------------------
 
 
-def norm(node, refs):
-    """A schema or other node without prose; `$ref`s become names and are collected."""
+# Keys whose value is a map from names to schemas: the names are data, not keywords,
+# so a property that is called `title` or `description` is kept.
+NAME_MAPS = {"properties", "patternProperties", "dependentSchemas", "$defs", "definitions"}
+# Keys whose value is a literal, not a schema: kept as it is.
+LITERALS = {"default", "const", "enum"}
+
+
+def norm(node, refs, names=False):
+    """A schema or other node without prose; `$ref`s become names and are collected.
+
+    `names` is true for the map of a `properties`-like keyword: its keys are never
+    dropped and a key called `$ref` is no reference there.
+    """
     if isinstance(node, dict):
         ref = node.get("$ref")
-        if isinstance(ref, str):
+        if not names and isinstance(ref, str):
             if not ref.startswith(REF_PREFIX):
                 raise ToolError(f"unexpected $ref {ref!r}")
             name = ref[len(REF_PREFIX):]
             refs.add(name)
             return {"$ref": name}
-        return {
-            k: norm(v, refs)
-            for k, v in sorted(node.items())
-            if k not in NOISE_KEYS
-        }
+        out = {}
+        for k, v in sorted(node.items()):
+            if names:
+                out[k] = norm(v, refs)
+            elif k in NOISE_KEYS:
+                continue
+            elif k in LITERALS:
+                out[k] = sorted(v, key=lambda x: json.dumps(x, sort_keys=True)) if k == "enum" and isinstance(v, list) else v
+            else:
+                out[k] = norm(v, refs, names=k in NAME_MAPS)
+        return out
     if isinstance(node, list):
         items = [norm(v, refs) for v in node]
         # Order carries no meaning in these.
@@ -349,7 +367,18 @@ def operation_view(op, refs):
 
 
 def extract(doc, routes):
-    """The snapshot of `routes` taken from an OpenAPI document."""
+    """The snapshot of `routes` taken from an OpenAPI document.
+
+    A document of an unexpected shape or depth is a fetch error (the run fails, no
+    issue is opened); it must never end in the exit code of drift.
+    """
+    try:
+        return _extract(doc, routes)
+    except (AttributeError, TypeError, KeyError, ValueError, RecursionError):
+        raise FetchError("the document does not have the shape of an OpenAPI document") from None
+
+
+def _extract(doc, routes):
     if not isinstance(doc, dict) or not isinstance(doc.get("paths"), dict):
         raise FetchError("the document has no `paths` object")
     schemas = doc.get("components", {}).get("schemas", {})
@@ -458,13 +487,14 @@ def http_get_json(url):
         raise
     except urllib.error.HTTPError as e:
         raise FetchError(f"HTTP {e.code} from {url}") from None
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+        # Also a download cut short (IncompleteRead) or a timeout while reading.
         raise FetchError(f"cannot fetch {url}: {e.__class__.__name__}") from None
     if len(body) > MAX_BYTES:
         raise FetchError(f"{url} is larger than {MAX_BYTES} bytes")
     try:
         return json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):  # not JSON, or nested too deeply to parse
         raise FetchError(f"{url} is not JSON") from None
 
 
@@ -607,8 +637,9 @@ def main(argv=None):
     except ToolError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        # Never let a crash end in Python's exit code 1, which means drift here.
+    except Exception as e:  # noqa: BLE001
+        # Last resort, so that a bug or an odd input ends in 2 and not in an uncaught
+        # exception, whose exit code 1 means drift here.
         print(f"error: {e.__class__.__name__}: {e}", file=sys.stderr)
         return 2
 

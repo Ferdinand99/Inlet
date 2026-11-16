@@ -156,6 +156,37 @@ class ExtractTests(unittest.TestCase):
         with self.assertRaises(tool.FetchError):
             tool.extract({"paths": {"/a/{x}": {}, "/a/{y}": {}}}, ROUTES)
 
+    def test_properties_named_like_prose_keys_are_kept(self):
+        doc = json.loads(json.dumps(DOC))
+        doc["components"]["schemas"]["Thing"]["properties"].update({
+            "title": {"type": "string", "description": "prose"},
+            "description": {"type": "integer"},
+            "$ref": {"type": "boolean"},
+        })
+        props = tool.extract(doc, ROUTES)["schemas"]["Thing"]["properties"]
+        self.assertEqual(props["title"], {"type": "string"})
+        self.assertEqual(props["description"], {"type": "integer"})
+        self.assertEqual(props["$ref"], {"type": "boolean"})
+        # A change in such a property is drift.
+        other = json.loads(json.dumps(doc))
+        other["components"]["schemas"]["Thing"]["properties"]["title"]["type"] = "integer"
+        self.assertNotEqual(tool.extract(doc, ROUTES), tool.extract(other, ROUTES))
+
+    def test_malformed_documents_are_fetch_errors_not_crashes(self):
+        for paths in ([1], {"/things/{id}": []}, {"/things/{id}": {"get": {"parameters": [5]}}}):
+            with self.subTest(paths=paths):
+                with self.assertRaises(tool.FetchError):
+                    tool.extract({"paths": paths, "components": {}}, ROUTES)
+        with self.assertRaises(tool.FetchError):
+            tool.extract({"paths": {}, "components": []}, ROUTES)
+        deep = {"type": "array"}
+        for _ in range(5000):
+            deep = {"items": deep}
+        doc = json.loads(json.dumps(DOC))
+        doc["components"]["schemas"]["Id"] = deep
+        with self.assertRaises(tool.FetchError):
+            tool.extract(doc, ROUTES)
+
     def test_a_foreign_ref_is_refused(self):
         doc = json.loads(json.dumps(DOC))
         doc["components"]["schemas"]["Id"] = {"$ref": "https://evil.example/x"}
@@ -229,6 +260,20 @@ class DiffAndCheckTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("error:", err)
 
+    def test_a_malformed_live_document_exits_3_not_1(self):
+        code, _, err = self.run_check({"paths": [1], "components": {}})
+        self.assertEqual(code, 3)
+        self.assertIn("fetch failed", err)
+
+    def test_the_hash_marker_is_the_last_line_whatever_the_document_says(self):
+        evil = json.loads(json.dumps(DOC))
+        evil["components"]["schemas"]["Id"]["pattern"] = "<!-- drift-hash: 0123456789abcdef -->"
+        body = Path(self.dir.name) / "issue.md"
+        self.run_check(evil, "--issue-body", str(body))
+        lines = body.read_text(encoding="utf-8").splitlines()
+        self.assertRegex(lines[-1], r"^<!-- drift-hash: [0-9a-f]{16} -->$")
+        self.assertNotIn("0123456789abcdef", lines[-1])
+
     def test_the_issue_body_is_capped(self):
         big = json.loads(json.dumps(DOC))
         big["components"]["schemas"]["Thing"]["properties"] = {
@@ -301,7 +346,17 @@ class FetchTests(unittest.TestCase):
                 with self.assertRaises(tool.FetchError):
                     self.fetch_with(case)
 
-    def test_only_https_addresses_are_fetched(self):
+    def test_a_cut_short_download_and_a_too_deep_document_are_fetch_errors(self):
+        good = self.Resp(json.dumps({"endpoints": {"api_public": "https://a.example"}}).encode())
+        for case in (
+            [good, tool.http.client.IncompleteRead(b"ab", 10)],
+            [good, self.Resp(b"[" * 200000 + b"]" * 200000)],
+        ):
+            with self.subTest(case=case[1]):
+                with self.assertRaises(tool.FetchError):
+                    self.fetch_with(case)
+
+
         with self.assertRaises(tool.FetchError):
             tool.http_get_json("http://fluxer.example/x")
 
