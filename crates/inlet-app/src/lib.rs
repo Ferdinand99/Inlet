@@ -17,6 +17,8 @@ mod app;
 mod assets;
 mod backend;
 mod brand_icon;
+#[doc(hidden)]
+pub mod crash;
 #[cfg(feature = "demo")]
 mod demo;
 mod desktop;

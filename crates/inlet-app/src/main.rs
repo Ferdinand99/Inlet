@@ -74,6 +74,8 @@ fn print_line(line: &str) {
 }
 
 fn main() {
+    // First, so that a panic anywhere after this (the installer hooks included) is recorded.
+    inlet::crash::install();
     match early_exit(std::env::args_os().nth(1).as_deref()) {
         Some(EarlyExit::Version) => print_line(&format!("inlet {}", env!("CARGO_PKG_VERSION"))),
         Some(EarlyExit::InstallerHook) => {}
