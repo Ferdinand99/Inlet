@@ -14,6 +14,7 @@ pub mod commands;
 pub mod drafts;
 pub mod edit_inline;
 pub mod editor;
+pub mod emoticons;
 pub mod pickers;
 pub mod reply_bar;
 pub mod slowmode;

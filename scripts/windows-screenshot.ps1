@@ -237,6 +237,17 @@ foreach ($step in "identifier", "classic", "password", "code", "mfa", "ip") {
     Run-Demo "90-sign-in-$step" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "sign-in-$step"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 }
 
+# The settings tabs of the account (My profile, Appearance on coal, Messages and media,
+# Privacy, Advanced, Accounts), and the chat in the light and coal themes.
+Run-Demo "60-settings-my-profile" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "my-profile"; INLET_DEMO_THEME = "dark" } 10
+Run-Demo "61-settings-appearance-coal" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "appearance"; INLET_DEMO_THEME = "coal" } 10
+Run-Demo "62-settings-messages-media" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "messages-media"; INLET_DEMO_THEME = "dark" } 10
+Run-Demo "63-settings-privacy" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "privacy"; INLET_DEMO_THEME = "dark" } 10
+Run-Demo "64-settings-advanced" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "advanced"; INLET_DEMO_THEME = "dark" } 10
+Run-Demo "65-settings-accounts" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "accounts"; INLET_DEMO_THEME = "dark" } 10
+Run-Demo "66-chat-light" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "chat-cozy"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "light" } 10
+Run-Demo "67-chat-coal" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "chat-cozy"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "coal" } 10
+
 # A demo that quit before its screenshot crashed: fail the job, the pictures are not
 # worth checking.
 if ($script:Failed.Count -gt 0) {
