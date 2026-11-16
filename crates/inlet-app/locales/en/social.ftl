@@ -68,6 +68,10 @@ social-group-no-friends = No friends to add.
 social-group-add-title = Add friends to { $name }
 social-group-add-body = Pick the friends to add. You can add { $count } more.
 social-group-full = This group is full. Remove someone before adding more people.
+social-group-added-some = { $count } { $count ->
+    [one] person was added.
+   *[other] people were added.
+}
 social-group-add = Add Friends
 social-group-name = Group name
 social-group-name-placeholder = Group name

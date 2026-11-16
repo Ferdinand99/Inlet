@@ -128,10 +128,14 @@ impl GroupDmWindow {
     }
 
     /// Whether the call named `key` is this window's: its own key, the invite link of
-    /// the add window, or a call to any community (whose key starts with the window's).
+    /// the add window, a revoke in the invites window, or a call to any community (whose
+    /// key starts with the window's).
     pub fn owns(&self, key: &str) -> bool {
         match self.mode {
             Mode::Add { channel } => key == self.key() || key == format!("invite-link:{channel}"),
+            Mode::Invites { channel } => {
+                key == self.key() || key.starts_with(&format!("invite-revoke:{channel}:"))
+            }
             Mode::InviteToCommunity { .. } => key.starts_with(&self.key()),
             _ => key == self.key(),
         }

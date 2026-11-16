@@ -179,9 +179,9 @@ impl Cmd {
             Cmd::PinDm { channel_id, .. } => format!("dm:{channel_id}"),
             Cmd::SetFriendNickname { user_id, .. } => format!("nick:{user_id}"),
             Cmd::CreateGroupInvite { channel_id } => format!("invite-link:{channel_id}"),
-            Cmd::ListGroupInvites { channel_id } | Cmd::RevokeInvite { channel_id, .. } => {
-                format!("invites:{channel_id}")
-            }
+            Cmd::ListGroupInvites { channel_id } => format!("invites:{channel_id}"),
+            // Its own key: a revoke is not dropped because a list is being read.
+            Cmd::RevokeInvite { channel_id, code } => format!("invite-revoke:{channel_id}:{code}"),
             Cmd::InviteToCommunity {
                 user_id, guild_id, ..
             } => format!("community:{user_id}:{guild_id}"),
@@ -217,6 +217,11 @@ pub enum GroupDm {
         addable: Vec<String>,
     },
     Failed(String),
+    /// Some people were added (their user IDs) before the rest ended as `rest`.
+    Partial {
+        added: Vec<String>,
+        rest: Box<GroupDm>,
+    },
 }
 
 /// One invite of a group DM, as the invites window shows it.
@@ -657,20 +662,22 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
         return;
     }
     let internal = backend.internal.clone();
-    if matches!(cmd, Cmd::CreateGroupDm { .. } | Cmd::AddRecipients { .. }) {
-        // The CAPTCHA work can take a while: after a moment the window says so.
+    // The CAPTCHA work can take a while: after a moment the window says so. The hint
+    // ends with its call, so it never speaks for a later call with the same key.
+    let hint = matches!(cmd, Cmd::CreateGroupDm { .. } | Cmd::AddRecipients { .. }).then(|| {
         backend.spawn_guarded(
             "social slow hint",
             None,
             slow_hint(events.clone(), account.clone(), key.clone()),
-        );
-    }
+        )
+    });
     // Made before the task, so the target is freed and the UI answered even when the
     // task panics, is aborted, or is dropped before it first runs.
     let mut call = Call {
         account,
         key,
         events,
+        hint,
         answered: false,
     };
     backend.spawn_guarded("social action", None, async move {
@@ -693,12 +700,17 @@ struct Call {
     account: AccountKey,
     key: String,
     events: super::super::Ui,
+    /// The call's "still working" timer, stopped when the call ends.
+    hint: Option<tokio::task::AbortHandle>,
     answered: bool,
 }
 
 impl Call {
     fn answer(&mut self, ev: Ev) {
         self.answered = true;
+        if let Some(hint) = self.hint.take() {
+            hint.abort();
+        }
         with_gate(&self.account, |g| g.finish(&self.key));
         let _ = self.events.unbounded_send(super::Ev::Relationships(ev));
     }
@@ -774,13 +786,19 @@ async fn run(
             user_ids,
         } => {
             // One call each; the first that does not go through ends the rest (a
-            // CAPTCHA or a limit would stop the others too).
+            // CAPTCHA or a limit would stop the others too), and says who was added.
+            let mut added = Vec::new();
             for user_id in &user_ids {
-                match group_result(client.add_group_dm_recipient(&channel_id, user_id).await) {
-                    Ok((GroupDm::Done, _)) => {}
-                    Ok((result, _)) => return group_answer(account, key, result),
-                    Err(err) => return group_failed(internal, gen, key, err),
-                }
+                let ended =
+                    match group_result(client.add_group_dm_recipient(&channel_id, user_id).await) {
+                        Ok((GroupDm::Done, _)) => {
+                            added.push(user_id.clone());
+                            continue;
+                        }
+                        Ok((result, _)) => group_answer(account, key, result),
+                        Err(err) => group_failed(internal, gen, key, err),
+                    };
+                return with_added(ended, added);
             }
             group_answer(account, key, GroupDm::Done)
         }
@@ -944,6 +962,20 @@ fn group_answer(account: &AccountKey, key: String, result: GroupDm) -> Ev {
         });
     }
     Ev::GroupDm { key, result }
+}
+
+/// A group answer that says who was added before it, when anyone was.
+fn with_added(ev: Ev, added: Vec<String>) -> Ev {
+    match ev {
+        Ev::GroupDm { key, result } if !added.is_empty() => Ev::GroupDm {
+            key,
+            result: GroupDm::Partial {
+                added,
+                rest: Box::new(result),
+            },
+        },
+        other => other,
+    }
 }
 
 fn group_failed(internal: &TokioSender<Internal>, gen: u64, key: String, err: p::Error) -> Ev {

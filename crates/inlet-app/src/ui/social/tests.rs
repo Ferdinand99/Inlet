@@ -568,11 +568,19 @@ fn the_owner_reads_and_revokes_the_groups_invites(cx: &mut TestAppContext) {
             code: "aaaa1111".into(),
         };
         this.run_confirm(&ask, cx);
-        assert!(this.social.busy.contains("invites:100"));
+        assert!(this.social.busy.contains("invite-revoke:100:aaaa1111"));
+        assert!(
+            this.social
+                .group_dm
+                .as_ref()
+                .unwrap()
+                .owns("invite-revoke:100:aaaa1111"),
+            "its refusal shows in the window"
+        );
         tell(
             this,
             Ev::Done {
-                key: "invites:100".into(),
+                key: "invite-revoke:100:aaaa1111".into(),
             },
             window,
             cx,
@@ -712,5 +720,38 @@ fn a_group_knows_its_owner_and_its_name(cx: &mut TestAppContext) {
         let state = this.account.as_ref().unwrap().read(cx);
         assert_eq!(group_dm::group_owner(state, GROUP), Some(UserId(1)));
         assert_eq!(group_dm::group_name(state, GROUP), "Crew");
+    });
+}
+
+#[gpui::test]
+fn people_added_before_a_refusal_leave_the_list_and_the_line_says_so(cx: &mut TestAppContext) {
+    let (inlet, cx) = rig(cx, "1");
+    inlet.update_in(cx, |this, window, cx| {
+        this.open_group_dm(Mode::Add { channel: GROUP }, window, cx);
+        this.toggle_pick(UserId(6), cx);
+        this.group_dm_go(window, cx);
+        tell(
+            this,
+            Ev::GroupDm {
+                key: "group:100".into(),
+                result: GroupDm::Partial {
+                    added: vec!["6".into()],
+                    rest: Box::new(GroupDm::Captcha),
+                },
+            },
+            window,
+            cx,
+        );
+        let w = this.social.group_dm.as_ref().expect("the window stays");
+        assert!(w.picked.is_empty(), "Dee is in the group now");
+        assert_eq!(
+            w.message,
+            Some(format!(
+                "{} {}",
+                t!("social-group-added-some", count = 1),
+                t!("social-group-dm-captcha")
+            ))
+        );
+        assert!(this.social.busy.is_empty());
     });
 }

@@ -939,10 +939,18 @@ impl Inlet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Some people went in before the call ended: they are no longer to be picked, and
+        // the line says how many.
+        let (added, result) = match result {
+            GroupDm::Partial { added, rest } => (added, *rest),
+            other => (Vec::new(), other),
+        };
         let mine = self.social.group_dm.as_ref().is_some_and(|w| w.owns(key));
         if mine {
             if let Some(w) = self.social.group_dm.as_mut() {
                 w.hint = None;
+                let gone: Vec<UserId> = added.iter().filter_map(|id| UserId::parse(id)).collect();
+                w.picked.retain(|u| !gone.contains(u));
             }
         }
         let text = match &result {
@@ -999,6 +1007,15 @@ impl Inlet {
                 t!("social-group-dm-not-addable", names = names.join(", "))
             }
             GroupDm::Failed(reason) => reason.clone(),
+            GroupDm::Partial { .. } => return,
+        };
+        let text = if added.is_empty() {
+            text
+        } else {
+            format!(
+                "{} {text}",
+                t!("social-group-added-some", count = added.len())
+            )
         };
         self.social.done.remove(key);
         match self.social.group_dm.as_mut().filter(|w| w.owns(key)) {

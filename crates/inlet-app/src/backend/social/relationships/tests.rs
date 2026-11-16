@@ -152,6 +152,7 @@ fn a_call_that_never_answers_frees_its_target_and_fails() {
         account: account.clone(),
         key: "user:9".into(),
         events: ui,
+        hint: None,
         answered: false,
     });
     assert!(with_gate(&account, |g| g.admit(
@@ -543,7 +544,7 @@ async fn group_invites_are_listed_made_with_a_day_and_revoked() {
         })
         .await,
         Ev::Done {
-            key: "invites:500".into()
+            key: "invite-revoke:500:aaaa1111".into()
         }
     );
 }
@@ -672,11 +673,15 @@ async fn adding_people_stops_at_the_first_one_that_does_not_go_through() {
         user_ids: vec!["11".into(), "12".into(), "13".into()],
     };
     let ev = run(&client, &internal, 1, &key("10"), &cmd.key(), cmd.clone()).await;
+    // The first person went in before the second one was refused: the answer says so.
     assert_eq!(
         ev,
         Ev::GroupDm {
             key: "group:500".into(),
-            result: GroupDm::Failed(t!("social-group-full"))
+            result: GroupDm::Partial {
+                added: vec!["11".into()],
+                rest: Box::new(GroupDm::Failed(t!("social-group-full"))),
+            }
         }
     );
     let puts: Vec<String> = requests(&server)
@@ -716,4 +721,64 @@ async fn a_group_call_that_runs_long_says_it_is_still_working() {
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
     slow_hint(crate::backend::Ui::new(tx), account, "group-dm".to_owned()).await;
     assert!(rx.try_recv().is_err(), "done calls say nothing");
+}
+
+#[test]
+fn a_revoke_and_a_list_of_the_same_group_do_not_block_each_other() {
+    let list = Cmd::ListGroupInvites {
+        channel_id: "500".into(),
+    };
+    let revoke = Cmd::RevokeInvite {
+        channel_id: "500".into(),
+        code: "aaaa1111".into(),
+    };
+    assert_ne!(list.key(), revoke.key());
+    let now = Instant::now();
+    let mut g = Gate::default();
+    assert!(g.admit(&list.key(), list.budget(), now).is_ok());
+    assert!(
+        g.admit(&revoke.key(), revoke.budget(), now).is_ok(),
+        "the revoke goes while the list is read"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_still_working_timer_ends_with_its_call() {
+    let account = key("12");
+    assert!(with_gate(&account, |g| g.admit(
+        "group-dm",
+        Budget::GroupCreate,
+        Instant::now()
+    ))
+    .is_ok());
+    let (tx, mut rx) = futures::channel::mpsc::unbounded();
+    let hint = tokio::spawn(slow_hint(
+        crate::backend::Ui::new(tx.clone()),
+        account.clone(),
+        "group-dm".to_owned(),
+    ));
+    let mut call = Call {
+        account: account.clone(),
+        key: "group-dm".into(),
+        events: crate::backend::Ui::new(tx),
+        hint: Some(hint.abort_handle()),
+        answered: false,
+    };
+    // The call answers at once; a new call with the same key starts at once too.
+    call.answer(Ev::Done {
+        key: "group-dm".into(),
+    });
+    assert!(with_gate(&account, |g| g.admit(
+        "group-dm",
+        Budget::GroupCreate,
+        Instant::now()
+    ))
+    .is_ok());
+    assert!(hint.await.unwrap_err().is_cancelled(), "the timer is gone");
+    tokio::time::sleep(SLOW_HINT * 2).await;
+    let mut said = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        said.push(ev);
+    }
+    assert_eq!(said.len(), 1, "only the call's own answer, no hint");
 }
