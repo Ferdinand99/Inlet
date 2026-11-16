@@ -830,7 +830,8 @@ jobs:
           retention-days: 7
 
   # See screenshots-windows. Uses the demo build of the Linux job, under Xvfb with
-  # software Vulkan (lavapipe) at 96 DPI and a scale of 1.
+  # software Vulkan (lavapipe) at 96 DPI and a scale of 1. The script gives the app a
+  # closed set of fonts (FONTCONFIG_FILE), so a new runner image cannot move the text.
   screenshots-linux:
     name: Linux screenshots (demo)
     needs: linux
@@ -859,7 +860,7 @@ jobs:
             libvulkan1 mesa-vulkan-drivers libegl1 libgl1-mesa-dri \
             libxkbcommon-x11-0 libxcb1 libx11-xcb1 libwayland-client0 libfontconfig1 \
             libasound2t64 \
-            fonts-noto-cjk
+            fonts-dejavu-core fonts-noto-color-emoji
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
