@@ -11,6 +11,7 @@
 //! - `blocks`: the parse entry, nodes to [`Block`]s, and drawing a list of blocks
 //! - `inline`: inline nodes to an [`Inline`], and drawing one
 //! - `mention`: mention pills and their names
+//! - `plain`: a message as one line of plain text (the reply preview)
 //! - `timestamp`: `<t:…>` timestamps
 //! - `emoji`: Unicode emoji as Twemoji, the parser's emoji context, jumbo emoji
 //! - `code`: code blocks with highlighting
@@ -22,6 +23,7 @@ mod code;
 mod emoji;
 mod inline;
 mod mention;
+mod plain;
 mod table;
 mod timestamp;
 
@@ -36,6 +38,7 @@ pub use blocks::{
 };
 pub use code::{with_message_budget, OffThread};
 pub use mention::MentionNames;
+pub use plain::plain_text;
 pub use timestamp::refresh_due;
 
 pub fn mono_font() -> &'static str {
