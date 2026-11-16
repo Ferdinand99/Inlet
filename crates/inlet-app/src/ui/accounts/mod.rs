@@ -20,7 +20,7 @@ use gpui::{
 use crate::app::{Inlet, Screen};
 use crate::backend::accounts::{Cmd, Ev, DEFAULT_INSTANCE};
 use crate::backend::platform::links::Incoming;
-use crate::text_input::{InputEvent, TextInput};
+use crate::text_input::{InputChanged, InputEvent, TextInput};
 use crate::theme;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -92,6 +92,12 @@ impl SignInState {
                 },
             ));
         }
+        // The emailed code goes in at the sixth digit, as in Fluxer's client.
+        subscriptions.push(cx.subscribe_in(
+            &code_input,
+            window,
+            |this, _, _: &InputChanged, window, cx| this.submit_code_when_complete(window, cx),
+        ));
         Self {
             instance_input,
             token_input,
@@ -651,6 +657,7 @@ mod tests {
                 entry::Cmd::IpRetry => "ip-retry",
                 entry::Cmd::Back => "back",
                 entry::Cmd::Leave => "leave",
+                entry::Cmd::Invite(_) => "invite",
             })
             .collect()
     }
@@ -692,5 +699,67 @@ mod tests {
             assert_eq!(this.sign_in.password_input.read(cx).text(), "");
             assert!(this.sign_in.busy);
         });
+    }
+
+    /// Types into the code field the way the keyboard and paste do.
+    fn type_code(this: &mut Inlet, text: &str, window: &mut Window, cx: &mut Context<Inlet>) {
+        use gpui::EntityInputHandler;
+        this.sign_in
+            .code_input
+            .update(cx, |i, cx| i.replace_text_in_range(None, text, window, cx));
+    }
+
+    #[gpui::test]
+    fn the_emailed_code_is_sent_at_the_sixth_digit(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Code;
+            type_code(this, "12345", window, cx);
+            type_code(this, "6", window, cx);
+        });
+        assert!(
+            matches!(commands.as_slice(), [entry::Cmd::Code { code }] if code.expose_secret() == "123456"),
+            "{:?}",
+            names(&commands)
+        );
+    }
+
+    #[gpui::test]
+    fn five_digits_are_not_sent(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Code;
+            type_code(this, "12345", window, cx);
+        });
+        assert!(commands.is_empty());
+    }
+
+    #[gpui::test]
+    fn a_code_pasted_with_a_space_is_sent_at_once(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Code;
+            type_code(this, "123 456", window, cx);
+        });
+        assert_eq!(names(&commands), ["code"]);
+    }
+
+    #[gpui::test]
+    fn a_second_factor_code_waits_for_enter(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Mfa;
+            type_code(this, "123456", window, cx);
+        });
+        assert!(commands.is_empty());
+    }
+
+    #[gpui::test]
+    fn signing_in_from_an_invite_carries_its_code_to_the_backend(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in_for_invite("https://chat.example".into(), "abc123".into(), window, cx);
+        });
+        assert_eq!(names(&commands), ["leave", "invite", "start"]);
+        assert!(matches!(&commands[1], entry::Cmd::Invite(Some(code)) if code == "abc123"));
     }
 }

@@ -156,6 +156,16 @@ pub async fn verify_email_code(
     ticket: &Ticket,
     code: &Secret,
 ) -> Result<SignInResult> {
+    verify_email_code_with_invite(instance, ticket, code, None).await
+}
+
+/// [`verify_email_code`] for a sign-in that starts from an invite.
+pub async fn verify_email_code_with_invite(
+    instance: &Instance,
+    ticket: &Ticket,
+    code: &Secret,
+    invite_code: Option<&str>,
+) -> Result<SignInResult> {
     // The server takes exactly six digits; a code pasted as "123 456" or "123-456" is
     // the same code (Fluxer's client keeps the digits too).
     let mut digits = String::with_capacity(6);
@@ -171,6 +181,7 @@ pub async fn verify_email_code(
         // Signing in only: a sign-up needs the terms, which this flow never accepts.
         "consent": false,
     });
+    super::with_invite(&mut body, invite_code);
     let sent = post_with_captcha(instance, "/auth/email-code/verify", &body).await;
     wipe(&mut body, &["code", "ticket"]);
     let (raw, captcha_failed) = sent?;

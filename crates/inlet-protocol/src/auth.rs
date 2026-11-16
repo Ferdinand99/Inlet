@@ -34,7 +34,8 @@ use crate::token::Token;
 
 mod entry;
 pub use entry::{
-    identify, send_email_code, verify_email_code, CodePurpose, CodeSent, Identified, SignInMethod,
+    identify, send_email_code, verify_email_code, verify_email_code_with_invite, CodePurpose,
+    CodeSent, Identified, SignInMethod,
 };
 
 /// How long the CAPTCHA solver may run.
@@ -196,6 +197,7 @@ async fn post_with_captcha(
                 tracing::info!("solving the sign-in CAPTCHA");
                 match crate::altcha::solve(challenge, CAPTCHA_TIMEOUT).await {
                     Ok(t) => captcha_token = Some(t),
+                    Err(Error::Cancelled) => return Err(Error::Cancelled),
                     Err(e) => {
                         tracing::warn!("CAPTCHA not solved: {e}");
                         return Ok((raw, true));
@@ -289,7 +291,26 @@ pub async fn sign_in_password(
     login: &str,
     password: &Secret,
 ) -> Result<SignInResult> {
+    sign_in_password_with_invite(instance, login, password, None).await
+}
+
+/// Adds the invite the person is signing in for; the instance joins the server after a
+/// sign-in without a second factor (and after the second factor, with the same code).
+fn with_invite(body: &mut Value, invite_code: Option<&str>) {
+    if let Some(code) = invite_code.filter(|c| !c.is_empty() && c.len() <= 256) {
+        body["invite_code"] = Value::String(code.to_owned());
+    }
+}
+
+/// [`sign_in_password`] for a sign-in that starts from an invite (`invite_code`).
+pub async fn sign_in_password_with_invite(
+    instance: &Instance,
+    login: &str,
+    password: &Secret,
+    invite_code: Option<&str>,
+) -> Result<SignInResult> {
     let mut body = json!({ "login": login, "password": password.expose_secret() });
+    with_invite(&mut body, invite_code);
     let sent = post_with_captcha(instance, "/auth/login", &body).await;
     wipe(&mut body, &["password"]);
     let (raw, captcha_failed) = sent?;
@@ -302,7 +323,18 @@ pub async fn sign_in_totp(
     ticket: &Ticket,
     code: &Secret,
 ) -> Result<SignInResult> {
+    sign_in_totp_with_invite(instance, ticket, code, None).await
+}
+
+/// [`sign_in_totp`] for a sign-in that starts from an invite.
+pub async fn sign_in_totp_with_invite(
+    instance: &Instance,
+    ticket: &Ticket,
+    code: &Secret,
+    invite_code: Option<&str>,
+) -> Result<SignInResult> {
     let mut body = json!({ "ticket": ticket.expose_secret(), "code": code.expose_secret().trim() });
+    with_invite(&mut body, invite_code);
     let sent = post_with_captcha(instance, "/auth/login/mfa/totp", &body).await;
     wipe(&mut body, &["code", "ticket"]);
     let (raw, captcha_failed) = sent?;

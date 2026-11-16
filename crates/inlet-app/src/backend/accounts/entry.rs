@@ -36,11 +36,6 @@ fn next_flow() -> u64 {
 // Deviation: Fluxer keeps a `device_proof` from an earlier sign-in on the device and
 // sends it with `identify`, so a known device is asked for a CAPTCHA later. Inlet keeps
 // nothing but the keychain entry on disk, so it sends none and may be asked sooner.
-// Deviation: Fluxer sends the 6-digit email code as soon as the sixth digit is typed;
-// Inlet waits for Enter or the button.
-// Deviation: Fluxer's invite login page sends the invite code with the sign-in so the
-// instance joins the server at once. Inlet signs in first and asks about the invite link
-// again afterwards, which costs one click.
 // Deviation: a new address (sign-up), passkeys and single sign-on are not part of this
 // form yet; the browser sign-in covers passkeys and single sign-on.
 
@@ -134,6 +129,8 @@ pub(in crate::backend) struct Entry {
     mfa: Option<p::Ticket>,
     /// The ticket and poll of the new-IP wait.
     ip: Option<(p::Ticket, AbortHandle)>,
+    /// Stops the CAPTCHA solve of this flow's requests when the person leaves it.
+    cancel: p::altcha::SolveCancel,
 }
 
 impl Entry {
@@ -145,6 +142,10 @@ impl Entry {
 
     fn start_over(&mut self) {
         self.flow = next_flow();
+        // A solve that is running stops at once, so no CPU goes on working for a form
+        // the person has left. The next request gets a fresh handle.
+        self.cancel.cancel();
+        self.cancel = p::altcha::SolveCancel::new();
         self.identify = None;
         self.mfa = None;
         self.stop_wait();
@@ -153,6 +154,7 @@ impl Entry {
 
 impl Drop for Entry {
     fn drop(&mut self) {
+        self.cancel.cancel();
         self.stop_wait();
     }
 }
@@ -224,6 +226,9 @@ pub enum Cmd {
     Back,
     /// The person left the sign-in screen or changed the instance: forget all of it.
     Leave,
+    /// The sign-in starts from this invite code: the sign-in requests carry it, so the
+    /// instance joins the server (`None`: no invite). Sent before `Start`.
+    Invite(Option<String>),
 }
 
 /// What the UI hears from the in-app sign-in.
@@ -361,6 +366,7 @@ pub(super) fn handle(b: &mut Backend, cmd: Cmd) {
             }
         }
         Cmd::Leave => b.entry_leave(),
+        Cmd::Invite(code) => b.entry_invite = code.filter(|c| !c.is_empty()),
     }
 }
 
@@ -373,6 +379,7 @@ impl Backend {
     pub(super) fn entry_leave(&mut self) {
         self.entry = None;
         self.entry_starting = None;
+        self.entry_invite = None;
     }
 
     fn identity(&self) -> p::Identity {
@@ -392,7 +399,7 @@ impl Backend {
             return self.entry_say(Ev::Lost);
         };
         let (flow, instance) = (entry.flow, entry.instance.clone());
-        let fut = work(instance.clone());
+        let fut = p::altcha::with_solve_cancel(entry.cancel.clone(), work(instance.clone()));
         let internal = self.internal.clone();
         self.spawn_guarded(what, None, async move {
             let what = fut.await;
@@ -464,8 +471,15 @@ impl Backend {
     }
 
     fn entry_password(&mut self, identifier: String, password: p::Secret) {
+        let invite = self.entry_invite.clone();
         self.entry_task("entry password", move |instance| async move {
-            let result = p::sign_in_password(&instance, &identifier, &password).await;
+            let result = p::sign_in_password_with_invite(
+                &instance,
+                &identifier,
+                &password,
+                invite.as_deref(),
+            )
+            .await;
             drop(password);
             Outcome::SignedIn(result, Field::Password)
         });
@@ -488,8 +502,11 @@ impl Backend {
         let Some(ticket) = self.entry.as_ref().and_then(|e| e.identify.clone()) else {
             return self.entry_say(Ev::Lost);
         };
+        let invite = self.entry_invite.clone();
         self.entry_task("entry code", move |instance| async move {
-            let result = p::verify_email_code(&instance, &ticket, &code).await;
+            let result =
+                p::verify_email_code_with_invite(&instance, &ticket, &code, invite.as_deref())
+                    .await;
             drop(code);
             Outcome::SignedIn(result, Field::Code)
         });
@@ -505,8 +522,10 @@ impl Backend {
         kept.extend(code.expose_secret().chars().filter(|c| !c.is_whitespace()));
         let cleaned = p::Secret::new(kept);
         drop(code);
+        let invite = self.entry_invite.clone();
         self.entry_task("entry mfa", move |instance| async move {
-            let result = p::sign_in_totp(&instance, &ticket, &cleaned).await;
+            let result =
+                p::sign_in_totp_with_invite(&instance, &ticket, &cleaned, invite.as_deref()).await;
             drop(cleaned);
             Outcome::SignedIn(result, Field::Code)
         });
@@ -617,6 +636,7 @@ impl Backend {
                         identify: None,
                         mfa: None,
                         ip: None,
+                        cancel: p::altcha::SolveCancel::new(),
                     });
                     self.entry_say(Ev::Started(info));
                 }

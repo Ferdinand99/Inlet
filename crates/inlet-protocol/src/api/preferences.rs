@@ -293,6 +293,7 @@ fn share_error(e: &Error) -> Error {
         Error::Url(s) => Error::Url(s.clone()),
         Error::UnsupportedApiVersion(v) => Error::UnsupportedApiVersion(*v),
         Error::Captcha(s) => Error::Captcha(s.clone()),
+        Error::Cancelled => Error::Cancelled,
     }
 }
 

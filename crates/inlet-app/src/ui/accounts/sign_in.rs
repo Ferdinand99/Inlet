@@ -114,6 +114,29 @@ impl Inlet {
         cx.notify();
     }
 
+    /// The emailed code is sent as soon as its sixth digit is typed or pasted (a second
+    /// factor code is not: its length varies, and Fluxer waits for Enter there too).
+    pub(crate) fn submit_code_when_complete(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sign_in.flow.step != Step::Code || self.sign_in.flow.busy() {
+            return;
+        }
+        let digits = self
+            .sign_in
+            .code_input
+            .read(cx)
+            .text()
+            .chars()
+            .filter(char::is_ascii_digit)
+            .count();
+        if digits >= 6 {
+            self.submit_sign_in(window, cx);
+        }
+    }
+
     /// Sends what the step on screen asks for. A password or a code is read here, put
     /// into a secret and cleared from its field at once.
     fn submit_entry_step(&mut self, _window: &mut Window, cx: &mut Context<Self>) {

@@ -120,6 +120,10 @@ pub enum InputEvent {
     Submit,
 }
 
+/// The text of an input changed by typing or pasting. A separate event from
+/// [`InputEvent`], whose subscribers treat every event as a submit.
+pub struct InputChanged;
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: Content,
@@ -137,6 +141,7 @@ pub struct TextInput {
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
+impl EventEmitter<InputChanged> for TextInput {}
 
 impl TextInput {
     pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
@@ -549,6 +554,7 @@ impl EntityInputHandler for TextInput {
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.selection_reversed = false;
         self.marked_range.take();
+        cx.emit(InputChanged);
         cx.notify();
     }
 

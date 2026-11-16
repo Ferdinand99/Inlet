@@ -725,3 +725,157 @@ async fn a_language_that_is_not_a_plain_tag_is_not_sent() {
         .unwrap();
     assert!(login.headers.get("Accept-Language").is_none());
 }
+
+#[tokio::test]
+async fn a_sign_in_from_an_invite_sends_the_invite_code_with_each_step() {
+    let (server, instance) = common::instance().await;
+    Mock::given(path("/api/v1/auth/login"))
+        .and(body_json(
+            json!({"login": "ana", "password": "correct horse", "invite_code": "abc123"}),
+        ))
+        .respond_with(token_response("tok-invite"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/api/v1/auth/login/mfa/totp"))
+        .and(body_json(
+            json!({"ticket": "t", "code": "123456", "invite_code": "abc123"}),
+        ))
+        .respond_with(token_response("tok-invite"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/api/v1/auth/email-code/verify"))
+        .and(body_json(
+            json!({"ticket": "t", "code": "123456", "consent": false, "invite_code": "abc123"}),
+        ))
+        .respond_with(token_response("tok-invite"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let ticket = inlet_protocol::Ticket::for_tests("t");
+    let results = [
+        inlet_protocol::sign_in_password_with_invite(
+            &instance,
+            "ana",
+            &Secret::new("correct horse"),
+            Some("abc123"),
+        )
+        .await
+        .unwrap(),
+        inlet_protocol::sign_in_totp_with_invite(
+            &instance,
+            &ticket,
+            &Secret::new("123456"),
+            Some("abc123"),
+        )
+        .await
+        .unwrap(),
+        inlet_protocol::verify_email_code_with_invite(
+            &instance,
+            &ticket,
+            &Secret::new("123456"),
+            Some("abc123"),
+        )
+        .await
+        .unwrap(),
+    ];
+    for r in results {
+        assert!(matches!(r, SignInResult::Ok(_)), "{r:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_sign_in_without_an_invite_sends_no_invite_field() {
+    let (server, instance) = common::instance().await;
+    Mock::given(path("/api/v1/auth/login"))
+        .and(body_json(
+            json!({"login": "ana", "password": "correct horse"}),
+        ))
+        .respond_with(token_response("tok-plain"))
+        .expect(2)
+        .mount(&server)
+        .await;
+    for invite in [None, Some("")] {
+        let r = inlet_protocol::sign_in_password_with_invite(
+            &instance,
+            "ana",
+            &Secret::new("correct horse"),
+            invite,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(r, SignInResult::Ok(_)), "{r:?}");
+    }
+}
+
+/// A challenge nobody can solve: the workers run until they are stopped.
+fn unsolvable() -> serde_json::Value {
+    let mut c = altcha::make_test_challenge(1, 1);
+    c["parameters"]["keyPrefix"] = json!("0123456789abcdef0123456789abcdef");
+    c
+}
+
+#[tokio::test]
+async fn cancelling_a_sign_in_stops_the_captcha_work_and_frees_the_solver() {
+    let (server, instance) = common::instance().await;
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "code": "CAPTCHA_REQUIRED", "message": "Captcha required",
+            "captcha_provider": "altcha", "altcha_challenge": unsolvable()
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let cancel = altcha::SolveCancel::new();
+    let started = std::time::Instant::now();
+    let work = tokio::spawn({
+        let cancel = cancel.clone();
+        async move {
+            altcha::with_solve_cancel(
+                cancel,
+                sign_in_password(&instance, "ana", &Secret::new("correct horse")),
+            )
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    cancel.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(3), work)
+        .await
+        .expect("the sign-in ends at once")
+        .unwrap();
+    assert!(
+        matches!(result, Err(inlet_protocol::Error::Cancelled)),
+        "{result:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    // The workers stopped: the one solver slot is free for the next solve.
+    let token = altcha::solve(altcha::make_test_challenge(50, 10), Duration::from_secs(10))
+        .await
+        .expect("the solver is free again");
+    assert!(altcha::verify_test_token(&token));
+}
+
+#[tokio::test]
+async fn a_sign_in_already_cancelled_does_not_start_to_solve() {
+    let (server, instance) = common::instance().await;
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "code": "CAPTCHA_REQUIRED", "message": "Captcha required",
+            "captcha_provider": "altcha", "altcha_challenge": unsolvable()
+        })))
+        .mount(&server)
+        .await;
+    let cancel = altcha::SolveCancel::new();
+    cancel.cancel();
+    let result = altcha::with_solve_cancel(
+        cancel,
+        sign_in_password(&instance, "ana", &Secret::new("correct horse")),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(inlet_protocol::Error::Cancelled)),
+        "{result:?}"
+    );
+}

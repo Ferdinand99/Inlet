@@ -43,7 +43,7 @@ impl Inlet {
     }
 
     /// Opens the sign-in screen for the instance an invite is on, and looks it up.
-    fn sign_in_for_invite(
+    pub(super) fn sign_in_for_invite(
         &mut self,
         origin: String,
         code: String,
@@ -55,6 +55,9 @@ impl Inlet {
         };
         self.overlays.link_prompt = None;
         self.begin_add_account(window, cx);
+        // The sign-in requests carry the invite, so the instance joins the server.
+        self.backend
+            .send(Cmd::Entry(entry::Cmd::Invite(Some(code.clone()))));
         self.sign_in.invite = Some((origin, code));
         self.sign_in.mode = SignInMode::Password;
         self.sign_in

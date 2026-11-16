@@ -188,7 +188,8 @@ pub use api::threads::{
 pub use api::SearchOutcome;
 pub use auth::{
     identify, poll_ip_authorization, resend_ip_authorization, send_email_code, sign_in_password,
-    sign_in_totp, verify_email_code, CodePurpose, CodeSent, Handoff, HandoffStatus, Identified,
+    sign_in_password_with_invite, sign_in_totp, sign_in_totp_with_invite, verify_email_code,
+    verify_email_code_with_invite, CodePurpose, CodeSent, Handoff, HandoffStatus, Identified,
     IpAuthorization, MfaMethod, Session, SignInMethod, SignInResult, SignedIn, Ticket,
 };
 pub use error::{ApiError, Error, Result};

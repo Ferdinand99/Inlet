@@ -1220,3 +1220,109 @@ async fn the_address_of_the_new_network_email_is_cleaned_before_it_is_shown() {
         _ => panic!("no new network step"),
     }
 }
+
+// ---------- an invite, and stopping the CAPTCHA work ----------
+
+#[tokio::test]
+async fn a_sign_in_that_starts_from_an_invite_carries_the_code_with_every_step() {
+    let server = instance(classic()).await;
+    Mock::given(path("/api/v1/auth/login"))
+        .and(body_json(
+            json!({"login": "ana@example.org", "password": "correct horse",
+                   "invite_code": "abc123"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "mfa": true, "ticket": "mfa-inv", "allowed_methods": ["totp"],
+            "totp": true, "webauthn": false, "backup_codes": false
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/api/v1/auth/login/mfa/totp"))
+        .and(body_json(
+            json!({"ticket": "mfa-inv", "code": "123456", "invite_code": "abc123"}),
+        ))
+        .respond_with(token_response())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (mut b, mut rx, mut irx, _store) = backend();
+    handle(&mut b, Cmd::Invite(Some("abc123".into())));
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    handle(
+        &mut b,
+        Cmd::Mfa {
+            code: p::Secret::new("123456"),
+        },
+    );
+    until_signed_in(&mut b, &mut irx, &mut rx).await;
+}
+
+#[tokio::test]
+async fn a_sign_in_without_an_invite_sends_no_invite_code() {
+    let server = instance(classic()).await;
+    Mock::given(path("/api/v1/auth/login"))
+        .and(body_json(
+            json!({"login": "ana@example.org", "password": "correct horse"}),
+        ))
+        .respond_with(token_response())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (mut b, mut rx, mut irx, _store) = backend();
+    // An invite that was left behind by an earlier sign-in is forgotten with it.
+    handle(&mut b, Cmd::Invite(Some("old".into())));
+    handle(&mut b, Cmd::Leave);
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    until_signed_in(&mut b, &mut irx, &mut rx).await;
+}
+
+#[tokio::test]
+async fn leaving_while_the_captcha_is_solved_stops_the_work_and_frees_the_solver() {
+    let server = instance(classic()).await;
+    let mut challenge = p::altcha::make_test_challenge(1, 1);
+    challenge["parameters"]["keyPrefix"] = json!("0123456789abcdef0123456789abcdef");
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "code": "CAPTCHA_REQUIRED", "message": "Captcha required",
+            "captcha_provider": "altcha", "altcha_challenge": challenge
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    logout_route().expect(0).mount(&server).await;
+    let (mut b, mut rx, mut irx, _store) = backend();
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    // The solve is running (the challenge came back once); the person goes back.
+    wait_for_requests(&server, "/api/v1/auth/login", 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    handle(&mut b, Cmd::Back);
+    // The workers stop, so the one solver slot is free again within moments.
+    let token = p::altcha::solve(
+        p::altcha::make_test_challenge(40, 10),
+        Duration::from_secs(10),
+    )
+    .await
+    .expect("the solver is free again");
+    assert!(p::altcha::verify_test_token(&token));
+    while let Ok(Some(msg)) = timeout(Duration::from_millis(300), irx.recv()).await {
+        b.internal(msg);
+    }
+    while let Ok(ev) = rx.try_recv() {
+        assert!(
+            !matches!(
+                ev,
+                Event::Accounts(AccountsEv::SignedIn { .. } | AccountsEv::Entry(_))
+            ),
+            "a cancelled sign-in said something"
+        );
+    }
+    assert_eq!(count(&server, "/api/v1/auth/login").await, 1);
+}
