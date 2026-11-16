@@ -81,9 +81,7 @@ impl SettingsTab for AdvancedTab {
         .flatten();
 
         let items = registry::search(&typed, true);
-        let mut col = page(t!("settings-advanced-title")).child(div().py_3().child(
-            crate::ui::widgets::field(t!("settings-advanced-search"), input),
-        ));
+        let mut col = page(t!("settings-advanced-title")).child(div().py_3().child(input));
         if items.is_empty() {
             col = col.child(note(t!("settings-advanced-none")));
         }
@@ -174,15 +172,16 @@ impl AdvancedTab {
             Control::CopyId => {
                 if let Some(id) = me {
                     let copy = id.to_owned();
-                    row = row.child(self.action_row(
-                        item,
-                        description,
-                        button("settings-copy-id", id.to_owned(), false).on_click(cx.listener(
-                            move |_, _, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
-                            },
-                        )),
-                    ));
+                    row = row.child(
+                        self.action_row(
+                            item,
+                            description,
+                            button("settings-copy-id", t!("settings-adv-copy-id-button"), false)
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                                })),
+                        ),
+                    );
                 } else {
                     return div().into_any_element();
                 }

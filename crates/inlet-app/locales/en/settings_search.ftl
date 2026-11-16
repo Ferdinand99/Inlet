@@ -72,6 +72,7 @@ settings-adv-diagnostics-kw = diagnostics, bug report, crash report, version, su
 settings-adv-diagnostics-copied = Copied
 
 settings-adv-copy-id = Copy your user ID
+settings-adv-copy-id-button = Copy ID
 settings-adv-copy-id-desc = Copy the ID of the account you are signed in to
 settings-adv-copy-id-kw = user id, identifier, snowflake
 

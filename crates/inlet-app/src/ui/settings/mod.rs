@@ -151,8 +151,11 @@ impl SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.selected;
+        let typed = self.search.read(cx).text().trim().to_owned();
+        let searching = !typed.is_empty();
         let list = self.tabs.iter().enumerate().map(|(ix, tab)| {
-            let active = ix == selected;
+            // While the search shows its results, no tab is the open one.
+            let active = ix == selected && !searching;
             div()
                 .id(SharedString::from(format!("settings-tab-{}", tab.id())))
                 .px_2()
@@ -176,8 +179,7 @@ impl Render for SettingsView {
                 }))
         });
         let list: Vec<_> = list.collect();
-        let typed = self.search.read(cx).text().trim().to_owned();
-        let content = if typed.is_empty() {
+        let content = if !searching {
             self.tabs
                 .get_mut(selected)
                 .map(|tab| tab.render(cx))

@@ -579,7 +579,12 @@ pub fn search(query: &str, only_advanced: bool) -> Vec<&'static Item> {
             (s > 0).then_some((s, w.label, item))
         })
         .collect();
-    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    if words.is_empty() {
+        // No query: by category, each in the order of the list.
+        hits.sort_by_key(|(_, _, item)| item.category);
+    } else {
+        hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    }
     hits.into_iter().map(|(_, _, item)| item).collect()
 }
 
@@ -623,6 +628,28 @@ mod tests {
         assert_eq!(ids("  ACTION   Bar ", true), ids("action bar", true));
         // Nothing found.
         assert!(ids("qqqqq", false).is_empty());
+    }
+
+    #[test]
+    fn without_a_query_the_advanced_list_is_in_category_order() {
+        let cats: Vec<_> = search("", true).iter().map(|i| i.category).collect();
+        let mut sorted = cats.clone();
+        sorted.sort();
+        assert_eq!(cats, sorted);
+        // Inside a category the list keeps its own order: developer mode, diagnostics, ID.
+        let developer: Vec<_> = search("", true)
+            .iter()
+            .filter(|i| i.category == Category::Developer)
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(
+            developer,
+            [
+                "advanced-developer-mode",
+                "advanced-diagnostics",
+                "advanced-copy-id"
+            ]
+        );
     }
 
     #[test]
