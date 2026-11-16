@@ -9,6 +9,10 @@
 #   scripts/docker-build.sh --exec scripts/soak.sh 24h            a day in real time (the night run)
 #   scripts/docker-build.sh --exec scripts/soak.sh 24h 30m        a day played in 30 minutes (48 times faster)
 #
+# The settings below reach the script only through INLET_PASS_ENV, which names the
+# variables docker-build.sh passes into the container, for example
+#   INLET_PASS_ENV="SOAK_PHASES SOAK_RATE" SOAK_RATE=1 scripts/docker-build.sh --exec scripts/soak.sh 24h
+#
 # Set INLET_CPUS=2 INLET_MEMORY=4g INLET_EXPORT_ALWAYS=1 for the night run: the samples
 # and logs are handed back in target/build-out/soak (without INLET_EXPORT_ALWAYS only
 # after a run that passed). The summary goes to stderr; the exit status is 0 when every
@@ -26,6 +30,12 @@
 #   startup  five starts of the app, time to the first frame
 #   app      the long run
 #
+# SOAK_RATE says how busy the recording is (default 24). The message windows hold up to
+# 500 messages each and take days to fill at a lively 1, so 24 fills them within
+# six hours: what a full set of 30 windows weighs, and that it stays there.
+# SOAK_STEADY_H is the virtual hour the growth check starts at (default 15). At rate 24 the
+# windows take about twelve hours to fill, so the memory is flat only after that; at
+# SOAK_RATE=60 they fill by hour 6 and SOAK_STEADY_H=6 holds.
 # Other settings: SOAK_SAMPLE_SECS (seconds between memory samples; default a 120th of
 # the run, between 5 and 60), SOAK_NAV_MS (milliseconds between two channel switches,
 # default 5000, divided by the speed-up for a faster run, at least 250), SOAK_SEED.
@@ -53,6 +63,8 @@ speed=$(awk -v v="$virtual_secs" -v w="$wall_secs" 'BEGIN { printf "%.4f", v / w
 hours=$(awk -v v="$virtual_secs" 'BEGIN { printf "%.4f", v / 3600 }')
 phases="${SOAK_PHASES:-tests startup app}"
 seed="${SOAK_SEED:-1}"
+rate="${SOAK_RATE:-24}"
+steady="${SOAK_STEADY_H:-15}"
 nav_ms=$(awk -v n="${SOAK_NAV_MS:-5000}" -v s="$speed" 'BEGIN { x = n / (s > 1 ? s : 1); if (x < 250) x = 250; printf "%d", x }')
 sample=${SOAK_SAMPLE_SECS:-$(( wall_secs / 120 < 5 ? 5 : (wall_secs / 120 > 60 ? 60 : wall_secs / 120) ))}
 
@@ -82,7 +94,7 @@ fi
 if [[ " $phases " == *" tests "* ]]; then
   say "phase tests"
   INLET_SOAK_SCROLL_PAGES="${INLET_SOAK_SCROLL_PAGES:-100}" \
-  INLET_SOAK_TEST_HOURS="$(awk -v h="$hours" 'BEGIN { printf "%d", h < 1 ? 1 : h }')" \
+  INLET_SOAK_TEST_RATE="$rate" INLET_SOAK_TEST_STEADY_HOUR="$steady" INLET_SOAK_TEST_HOURS="$(awk -v h="$hours" 'BEGIN { printf "%d", h < 1 ? 1 : h }')" \
     CARGO_PROFILE_CI_OPT_LEVEL=3 cargo test --profile ci --locked -p inlet --features demo --lib soak -- --nocapture --include-ignored --test-threads=1 \
     2>&1 | tee "$out/tests.log" >&2
   if [ "${PIPESTATUS[0]}" -ne 0 ]; then failed="$failed tests"; fi
@@ -106,18 +118,26 @@ sleep 2
 trap 'kill "$xvfb" 2>/dev/null; [ -n "${app:-}" ] && kill "$app" 2>/dev/null' EXIT
 
 # ---- Phase: startup ---------------------------------------------------------------------
+# Memory of a process as "total X MiB (anon Y, file Z, shmem W)", read from its status.
+rss_parts() {
+  awk '/^VmRSS:/ { t = $2 } /^RssAnon:/ { a = $2 } /^RssFile:/ { f = $2 } /^RssShmem:/ { s = $2 } END { printf "%d MiB (anon %d, file %d, shmem %d)", t / 1024, a / 1024, f / 1024, s / 1024 }' "/proc/$1/status"
+}
+
 first_frames() { # label, then the variables the app gets
   local label="$1"; shift
-  local times=() i ms
+  local times=() i ms idle=""
   for i in 1 2 3 4 5; do
     local cfg; cfg=$(mktemp -d)
-    env XDG_CONFIG_HOME="$cfg" INLET_DEMO=1 "$@" RUST_LOG=warn "$bin" 2> "$out/startup-$label-$i.log" &
+    env XDG_CONFIG_HOME="$cfg" "$@" RUST_LOG=warn "$bin" 2> "$out/startup-$label-$i.log" &
     local pid=$!
     local waited=0
     until grep -q 'soak: first frame' "$out/startup-$label-$i.log" 2>/dev/null || [ "$waited" -ge 200 ]; do
       sleep 0.1; waited=$((waited + 1))
     done
     ms=$(sed -n 's/.*first frame \([0-9]*\) ms after the process started.*/\1/p' "$out/startup-$label-$i.log" | head -1)
+    # Left to settle, then its memory (the last run's is the one reported).
+    sleep 4
+    kill -0 "$pid" 2>/dev/null && idle=$(rss_parts "$pid")
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
     rm -rf "$cfg"
     [ -n "$ms" ] && times+=("$ms")
@@ -132,13 +152,15 @@ first_frames() { # label, then the variables the app gets
   median=$(printf '%s\n' "$sorted" | awk '{ a[NR] = $1 } END { print a[int((NR + 1) / 2)] }')
   worst=$(printf '%s\n' "$sorted" | tail -1)
   note "startup $label: first frame after $(printf '%s ' "${times[@]}")ms; median $median ms, worst $worst ms"
+  [ -n "$idle" ] && note "  idle 5 s later: $idle"
   if [ "$median" -ge 1000 ]; then failed="$failed startup-$label"; note "  over the 1000 ms target"; fi
 }
 if [[ " $phases " == *" startup "* ]]; then
   say "phase startup"
   note "--- startup (to the first frame, from the start of the process; Xvfb with software rendering)"
-  first_frames demo INLET_SOAK_STARTUP=1
-  first_frames soak INLET_SOAK=1 INLET_SOAK_HOURS=0
+  first_frames sign-in INLET_SOAK_STARTUP=1
+  first_frames demo INLET_DEMO=1 INLET_SOAK_STARTUP=1
+  first_frames soak INLET_DEMO=1 INLET_SOAK=1 INLET_SOAK_HOURS=0
 fi
 
 # ---- Phase: app -------------------------------------------------------------------------
@@ -146,9 +168,9 @@ if [[ " $phases " == *" app "* ]]; then
   say "phase app"
   cfg=$(mktemp -d)
   csv="$out/samples.csv"
-  echo "wall_s,virtual_h,rss_kb,hwm_kb,threads,cpu_s" > "$csv"
+  echo "wall_s,virtual_h,rss_kb,hwm_kb,threads,cpu_s,anon_kb,file_kb" > "$csv"
   env XDG_CONFIG_HOME="$cfg" RUST_LOG=warn INLET_DEMO=1 INLET_DEMO_LIVE_SECS=1000000000 \
-    INLET_SOAK=1 INLET_SOAK_HOURS="$hours" INLET_SOAK_SPEED="$speed" INLET_SOAK_SEED="$seed" \
+    INLET_SOAK=1 INLET_SOAK_HOURS="$hours" INLET_SOAK_SPEED="$speed" INLET_SOAK_SEED="$seed" INLET_SOAK_RATE="$rate" \
     INLET_SOAK_NAV_MS="$nav_ms" INLET_SOAK_LOG_SECS="$(( sample * 5 ))" \
     "$bin" 2> "$out/app.log" &
   app=$!
@@ -165,10 +187,12 @@ if [[ " $phases " == *" app "* ]]; then
     if ! kill -0 "$app" 2>/dev/null; then ended="exited"; break; fi
     rss=$(awk '/^VmRSS:/ { print $2 }' "/proc/$app/status")
     hwm=$(awk '/^VmHWM:/ { print $2 }' "/proc/$app/status")
+    anon=$(awk '/^RssAnon:/ { print $2 }' "/proc/$app/status")
+    file=$(awk '/^RssFile:/ { print $2 }' "/proc/$app/status")
     thr=$(awk '/^Threads:/ { print $2 }' "/proc/$app/status")
     cpu=$(awk -v c="$clk" '{ printf "%.1f", ($14 + $15) / c }' "/proc/$app/stat")
     vh=$(awk -v e="$el" -v s="$speed" 'BEGIN { printf "%.3f", e * s / 3600 }')
-    echo "$el,$vh,$rss,$hwm,$thr,$cpu" >> "$csv"
+    echo "$el,$vh,$rss,$hwm,$thr,$cpu,$anon,$file" >> "$csv"
     [ "$el" -ge "$wall_secs" ] && break
     sleep "$sample"
   done
@@ -188,13 +212,13 @@ if [[ " $phases " == *" app "* ]]; then
   note "--- app: $(( $(wc -l < "$csv") - 1 )) samples, recording $hours h in $wall_secs s"
   # Peak, the level at the sixth virtual hour, the highest after it, and the slope after
   # it (least squares, KiB per virtual hour).
-  verdict=$(awk -F, -v hours="$hours" '
+  verdict=$(awk -F, -v hours="$hours" -v steady="$steady" '
     NR == 1 { next }
-    { n++; h[n] = $2; r[n] = $3; if ($4 > peak) peak = $4; if ($3 > top) top = $3 }
+    { n++; h[n] = $2; r[n] = $3; if ($4 > peak) peak = $4; if ($7 > apeak) apeak = $7; if ($3 > top) top = $3 }
     END {
       if (n < 3) { print "NOSAMPLES"; exit }
       base = 0; m = 0
-      for (i = 1; i <= n; i++) if (h[i] >= 6) {
+      for (i = 1; i <= n; i++) if (h[i] >= steady) {
         if (!m) { base = r[i]; baseh = h[i] }
         m++; x[m] = h[i]; y[m] = r[i]; if (r[i] > after) after = r[i]
       }
@@ -205,19 +229,19 @@ if [[ " $phases " == *" app "* ]]; then
         for (i = 1; i <= m; i++) { num += (x[i] - mx) * (y[i] - my); den += (x[i] - mx) ^ 2 }
         if (den > 0) slope = num / den
       }
-      printf "peak_kb=%d final_kb=%d base_kb=%d base_h=%.1f after_max_kb=%d slope_kb_h=%.1f post6=%d\n", peak, r[n], base, baseh, after, slope, m
+      printf "anon_peak_kb=%d peak_kb=%d final_kb=%d base_kb=%d base_h=%.1f after_max_kb=%d slope_kb_h=%.1f post6=%d\n", apeak, peak, r[n], base, baseh, after, slope, m
     }' "$csv")
   note "$verdict"
   if [ "$verdict" = NOSAMPLES ]; then
     failed="$failed app-nosamples"
   else
     eval "$verdict"
-    note "peak resident $(( peak_kb / 1024 )) MiB (target: under 150 MiB), at the end $(( final_kb / 1024 )) MiB"
+    note "peak resident $(( peak_kb / 1024 )) MiB (target: under 150 MiB; of it at most $(( anon_peak_kb / 1024 )) MiB anonymous, the rest is shared libraries and the like), at the end $(( final_kb / 1024 )) MiB"
     if [ "$peak_kb" -ge 153600 ]; then failed="$failed app-over-150MiB"; note "  over the target"; fi
     if [ "$post6" -ge 4 ]; then
-      note "after virtual hour 6: $(( base_kb / 1024 )) MiB at hour $base_h, highest $(( after_max_kb / 1024 )) MiB, slope $slope_kb_h KiB per hour"
+      note "after virtual hour $steady: $(( base_kb / 1024 )) MiB at hour $base_h, highest $(( after_max_kb / 1024 )) MiB, slope $slope_kb_h KiB per hour"
       if [ "$(( after_max_kb - base_kb ))" -gt 8192 ] || awk -v s="$slope_kb_h" 'BEGIN { exit !(s > 256) }'; then
-        failed="$failed app-growth"; note "  memory grows after hour 6"
+        failed="$failed app-growth"; note "  memory grows after hour $steady"
       fi
     else
       note "the run is shorter than 6 virtual hours (or has too few samples): the growth check is skipped"

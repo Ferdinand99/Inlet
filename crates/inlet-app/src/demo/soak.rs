@@ -22,6 +22,7 @@
 //! - `INLET_SOAK_NAV_MS`: real time between two channel switches (default 5000).
 //! - `INLET_SOAK_LOG_SECS`: real time between two lines of numbers on stderr (default 60).
 //! - `INLET_SOAK_SEED`: the recording's seed (default 1).
+//! - `INLET_SOAK_RATE`: how busy the recording is (default 1; 24 fills the message windows in hours).
 //! - `INLET_SOAK_STARTUP`: also without `INLET_SOAK`, prints the time to the first frame.
 //!
 //! The numbers (`soak: ...` lines on stderr) are what `scripts/soak.sh` reads, next to
@@ -69,6 +70,7 @@ pub struct Config {
     pub speed: f64,
     pub nav_ms: u64,
     pub log_secs: u64,
+    pub rate: f64,
 }
 
 impl Config {
@@ -88,6 +90,7 @@ impl Config {
             speed: num("INLET_SOAK_SPEED", 1.).max(0.01),
             nav_ms: num("INLET_SOAK_NAV_MS", 5000.).max(100.) as u64,
             log_secs: num("INLET_SOAK_LOG_SECS", 60.).max(1.) as u64,
+            rate: num("INLET_SOAK_RATE", 1.),
         })
     }
 
@@ -95,6 +98,7 @@ impl Config {
         Plan {
             seed: self.seed,
             duration_ms: (self.hours * 3_600_000.) as u64,
+            rate: self.rate,
         }
     }
 }
@@ -289,6 +293,7 @@ pub fn start(
         let t0 = tokio::time::Instant::now();
         let mut seq = vec![0u64; senders.len()];
         let mut played = 0u64;
+        let mut ended = vec![false; senders.len()];
         for mut frame in frames(plan) {
             let due = t0 + Duration::from_secs_f64(frame.at_ms as f64 / 1000. / speed);
             tokio::time::sleep_until(due).await;
@@ -300,6 +305,7 @@ pub fn start(
                 replay_server.push_live(m);
             }
             seq[frame.account] += 1;
+            // A forwarder that has ended costs its own account's events only: the others go on.
             let sent = senders[frame.account]
                 .send(p::GatewayEvent::Dispatch {
                     seq: seq[frame.account],
@@ -307,7 +313,14 @@ pub fn start(
                 })
                 .await;
             if sent.is_err() {
-                return;
+                if !ended[frame.account] {
+                    ended[frame.account] = true;
+                    eprintln!(
+                        "soak: the gateway of account {} has ended; its events are dropped",
+                        frame.account
+                    );
+                }
+                continue;
             }
             played += 1;
         }
@@ -439,7 +452,10 @@ pub fn attach(handle: WindowHandle<Inlet>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let started = Instant::now();
         loop {
+            let asked = Instant::now();
             cx.background_executor().timer(every).await;
+            // How much later than asked the tick ran: the UI thread being behind shows here.
+            let late = asked.elapsed().saturating_sub(every);
             let alive = handle.update(cx, |this, _, cx| {
                 let (windows, messages, bytes, members) = match &this.account {
                     Some(account) => {
@@ -457,10 +473,11 @@ pub fn attach(handle: WindowHandle<Inlet>, cx: &mut App) {
                     None => (0, 0, 0, 0),
                 };
                 eprintln!(
-                    "soak: up_s={} rss_kb={} hwm_kb={} windows={windows} window_messages={messages} window_bytes={bytes} members={members}",
+                    "soak: up_s={} rss_kb={} hwm_kb={} windows={windows} window_messages={messages} window_bytes={bytes} members={members} late_ms={}",
                     started.elapsed().as_secs(),
                     proc_kb("VmRSS").unwrap_or(0),
                     proc_kb("VmHWM").unwrap_or(0),
+                    late.as_millis(),
                 );
             });
             if alive.is_err() {

@@ -5,7 +5,10 @@
 //! data, and no benchmark library: each case runs its closure many times and prints the
 //! median time of a batch.
 //!
-//!     scripts/docker-build.sh bench -p inlet --bench state --locked
+//!     INLET_PASS_ENV=CARGO_PROFILE_CI_OPT_LEVEL CARGO_PROFILE_CI_OPT_LEVEL=3 \
+//!         scripts/docker-build.sh bench --profile ci -p inlet --bench state --locked
+//!
+//! (The ci profile, because the dev-dependencies cannot go in a release-like build.)
 //!
 //! Run without `--bench` (as `cargo test --all-targets` does) each case runs once, to
 //! check that it still works.

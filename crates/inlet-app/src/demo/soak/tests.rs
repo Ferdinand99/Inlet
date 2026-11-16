@@ -3,7 +3,9 @@
 //! (`#[ignore]`, run by `scripts/soak.sh`): a day of gateway traffic through the account
 //! state, and scrolling back through the whole 5,000-message channel.
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -25,6 +27,34 @@ use crate::backend::{accounts, messages as msgs, Event, Ui};
 use crate::demo::rendered_page;
 use crate::model::Names;
 
+/// Counts the bytes the program holds, to tell what the data weighs from what the
+/// allocator keeps around (the long test prints both). It wraps the system allocator for
+/// the whole test binary of the crate and changes nothing else.
+struct Counting;
+
+static LIVE: AtomicIsize = AtomicIsize::new(0);
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        LIVE.fetch_add(layout.size() as isize, Ordering::Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE.fetch_sub(layout.size() as isize, Ordering::Relaxed);
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        LIVE.fetch_add(
+            new_size as isize - layout.size() as isize,
+            Ordering::Relaxed,
+        );
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOC: Counting = Counting;
+
 fn names() -> SharedNames {
     Arc::new(Mutex::new(Names::default()))
 }
@@ -44,6 +74,7 @@ fn the_recording_is_the_same_every_time_and_every_frame_parses() {
     let plan = Plan {
         seed: 7,
         duration_ms: 5 * 60 * 60 * 1000,
+        rate: 1.,
     };
     let a: Vec<Frame> = frames(plan).collect();
     let b: Vec<Frame> = frames(plan).collect();
@@ -364,8 +395,9 @@ fn slope_kb_per_hour(samples: &[(u64, u64)]) -> f64 {
 /// it must not grow.
 ///
 /// The app's own part (the views, the images) is measured by `scripts/soak.sh`, which
-/// runs the whole app. `INLET_SOAK_TEST_HOURS` and `INLET_SOAK_TEST_SPEED` change the
-/// length (default 24 hours) and the speed (default 4000 times).
+/// runs the whole app. `INLET_SOAK_TEST_STEADY_HOUR` is the hour the growth check starts at
+/// (15: at the default rate the windows take about twelve hours to fill). `INLET_SOAK_TEST_HOURS` and `INLET_SOAK_TEST_SPEED` change the
+/// length (default 24 hours) and the speed (default 150 times, about ten minutes; faster and the replay outruns the test, whose queue then holds a backlog).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "plays a day of traffic; run by scripts/soak.sh"]
 async fn soak_24h_replay_memory_is_flat() {
@@ -378,9 +410,10 @@ async fn soak_24h_replay_memory_is_flat() {
     let cfg = Config {
         seed: 1,
         hours: env("INLET_SOAK_TEST_HOURS", 24.),
-        speed: env("INLET_SOAK_TEST_SPEED", 4000.),
+        speed: env("INLET_SOAK_TEST_SPEED", 150.),
         nav_ms: 5000,
         log_secs: 60,
+        rate: env("INLET_SOAK_TEST_RATE", 24.),
     };
     let data = data();
     let (tx, mut rx) = futures::channel::mpsc::unbounded();
@@ -400,6 +433,7 @@ async fn soak_24h_replay_memory_is_flat() {
     let (_, long) = archive();
 
     let mut samples: Vec<(u64, u64)> = Vec::new();
+    let mut details: Vec<String> = Vec::new();
     let mut hour_seen = -1i64;
     let mut events = 0u64;
     let mut opened = 0usize;
@@ -412,12 +446,29 @@ async fn soak_24h_replay_memory_is_flat() {
                     if hour > hour_seen {
                         hour_seen = hour;
                         samples.push((hour as u64, proc_kb("VmRSS").unwrap_or(0)));
+                        // What the state holds, to tell a leak from a cache filling up.
+                        let users = (0..recording::POOL)
+                            .filter(|n| {
+                                inlet_state::UserId::parse(&recording::pool_user(0, *n))
+                                    .is_some_and(|u| fg.user(u).is_some())
+                            })
+                            .count();
+                        let names_len = names.lock().unwrap().users.len();
+                        let bg_members: usize = background.values().map(|s| s.member_total()).sum();
+                        details.push(format!(
+                            "heap {} MiB, users {users}, members {}, presences {}, read states {}, windows {}, names {names_len}, background members {bg_members}",
+                            LIVE.load(Ordering::Relaxed) / 1_048_576,
+                            fg.member_total(),
+                            fg.presences().len(),
+                            fg.read_states().len(),
+                            fg.message_windows().len(),
+                        ));
                     }
                 }
                 fg.apply(&dispatch);
                 events += 1;
                 // Somebody opens another channel now and then.
-                if events.is_multiple_of(150) {
+                if events.is_multiple_of(30) {
                     let (ch, id) = &open[opened % open.len()];
                     opened += 1;
                     fg.begin_load(*ch);
@@ -466,8 +517,8 @@ async fn soak_24h_replay_memory_is_flat() {
     check_windows(&fg, "after the day");
 
     eprintln!("soak test: {events} events on the first account");
-    for (h, kb) in &samples {
-        eprintln!("soak test: hour {h:>2}: {} MiB", kb / 1024);
+    for ((h, kb), what) in samples.iter().zip(&details) {
+        eprintln!("soak test: hour {h:>2}: {} MiB; {what}", kb / 1024);
     }
     let want_hours = cfg.hours as u64;
     assert!(
@@ -475,13 +526,14 @@ async fn soak_24h_replay_memory_is_flat() {
         "the replay stopped early: samples for {} of {want_hours} hours",
         samples.len()
     );
-    let steady: Vec<(u64, u64)> = samples.iter().copied().filter(|s| s.0 >= 6).collect();
+    let from = env("INLET_SOAK_TEST_STEADY_HOUR", 15.) as u64;
+    let steady: Vec<(u64, u64)> = samples.iter().copied().filter(|s| s.0 >= from).collect();
     if steady.len() >= 4 {
         let base = steady[0].1;
         let max = steady.iter().map(|s| s.1).max().unwrap();
         let slope = slope_kb_per_hour(&steady);
         eprintln!(
-            "soak test: after hour 6: {} MiB at hour {}, peak {} MiB, slope {:.0} KiB/h",
+            "soak test: after hour {from}: {} MiB at hour {}, peak {} MiB, slope {:.0} KiB/h",
             base / 1024,
             steady[0].0,
             max / 1024,
@@ -489,13 +541,13 @@ async fn soak_24h_replay_memory_is_flat() {
         );
         assert!(
             max <= base + 16 * 1024,
-            "memory grew after hour 6: {} MiB to {} MiB",
+            "memory grew after hour {from}: {} MiB to {} MiB",
             base / 1024,
             max / 1024
         );
         assert!(
             slope < 512.,
-            "memory grows by {slope:.0} KiB an hour after hour 6"
+            "memory grows by {slope:.0} KiB an hour after hour {from}"
         );
     }
     let peak = samples.iter().map(|s| s.1).max().unwrap_or(0);

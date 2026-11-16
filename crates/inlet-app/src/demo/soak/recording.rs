@@ -28,8 +28,10 @@ pub const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 pub const BIG_HISTORY: usize = 5_000;
 /// Distance between two history messages.
 const HISTORY_STEP_MS: i64 = 90_000;
-/// People that can write in an account's guilds.
-pub const POOL: u64 = 3_000;
+/// People that can write in an account's guilds. Small enough that the caches they fill
+/// (users, members, names) are full within a few virtual hours, so a long run shows growth
+/// that is not a cache filling up.
+pub const POOL: u64 = 400;
 /// Members a guild's READY carries (the rest of `member_count` is not sent).
 const READY_MEMBERS: u64 = 60;
 
@@ -448,6 +450,9 @@ pub struct Plan {
     pub seed: u64,
     /// Virtual length of the recording.
     pub duration_ms: u64,
+    /// How busy it is, 1 for a lively day. The message windows (500 messages each) take
+    /// days to fill at 1; 24 fills them in hours, which shows what a full set weighs.
+    pub rate: f64,
 }
 
 /// Events per minute at the busiest, for the first account and for the others.
@@ -543,7 +548,9 @@ impl Frames {
             } else {
                 BACKGROUND_BUSY
             };
-            let events = busy * day / 100 + u64::from(self.rng.chance(busy * day % 100));
+            let want = busy as f64 * self.plan.rate * day as f64 / 100.;
+            let events =
+                want.floor() as u64 + u64::from(self.rng.below(100) < (want.fract() * 100.) as u64);
             // A fresh READY now and then (a dropped connection and a new Identify).
             if minute > 0 && base.is_multiple_of(READY_EVERY_MS) {
                 out.push(Frame {

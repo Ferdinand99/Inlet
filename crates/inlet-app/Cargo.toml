@@ -35,10 +35,17 @@ path = "tests/layout_metrics.rs"
 required-features = ["demo"]
 
 # What a gateway event costs on the UI thread (no benchmark library):
-# scripts/docker-build.sh bench -p inlet --bench state --locked
+# CARGO_PROFILE_CI_OPT_LEVEL=3 scripts/docker-build.sh bench --profile ci -p inlet --bench state --locked
+# (the ci profile, because the dev-dependencies cannot go in the release-like bench profile)
 [[bench]]
 name = "state"
 path = "benches/state.rs"
+harness = false
+
+# What a message costs in a window, in heap bytes (a counting allocator).
+[[bench]]
+name = "windows"
+path = "benches/windows.rs"
 harness = false
 
 [dependencies]
