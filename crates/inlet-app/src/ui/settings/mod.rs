@@ -110,7 +110,17 @@ impl Render for SettingsView {
                     .bg(theme::bg_app())
                     .children(list),
             )
-            .child(div().flex_1().h_full().p_8().child(content))
+            .child(
+                // A long tab scrolls instead of running off the window.
+                div()
+                    .id("settings-content")
+                    .flex_1()
+                    .h_full()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_8()
+                    .child(content),
+            )
     }
 }
 
