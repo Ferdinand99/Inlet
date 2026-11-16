@@ -18,7 +18,10 @@ fn folders_come_from_ready_and_follow_settings_updates() {
     ]});
     let mut s = AccountState::from_ready_at(&ready_from(v), JOINED_MS as i64);
     assert_eq!(s.settings().guild_folders().len(), 1);
-    assert_eq!(s.settings().guild_folders()[0].name.as_deref(), Some("Work"));
+    assert_eq!(
+        s.settings().guild_folders()[0].name.as_deref(),
+        Some("Work")
+    );
 
     let c = s.apply(&d(
         "USER_SETTINGS_UPDATE",

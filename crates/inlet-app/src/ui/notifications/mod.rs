@@ -23,7 +23,7 @@ pub mod alerts;
 pub mod badge;
 mod reading;
 pub mod settings;
-mod unread;
+pub(crate) mod unread;
 mod writes;
 
 use gpui::{actions, div, prelude::*, px, AnyElement, App, Context, KeyBinding};

@@ -425,6 +425,8 @@ struct RealActive {
     restart_timer: Option<AbortHandle>,
     /// Notification settings writes still running; aborted when the session ends.
     settings_writes: Vec<AbortHandle>,
+    /// The guild order and membership commands of this account (see `settings`).
+    ops: settings::SharedOps,
 }
 
 /// A new sign-in waiting for "Continue".

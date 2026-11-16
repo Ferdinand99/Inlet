@@ -977,6 +977,7 @@ impl Backend {
             policy,
             restart_timer: None,
             settings_writes: Vec::new(),
+            ops: Default::default(),
         }));
         Some(key)
     }
@@ -1078,6 +1079,7 @@ impl Backend {
             policy,
             restart_timer: None,
             settings_writes: Vec::new(),
+            ops: Default::default(),
         });
     }
 

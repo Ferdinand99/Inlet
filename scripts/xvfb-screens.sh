@@ -163,6 +163,12 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# The rail with folders, the banner with voice participants, the server menu, an invite.
+scene 50-rail-folders rail-folders c-general
+scene 51-guild-banner guild-banner c-general
+scene 52-guild-menu guild-menu c-general
+scene 53-invite-accept invite-accept c-general
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no

@@ -36,6 +36,28 @@ pub enum Icon {
     CheckSquare,
     /// Settings (`gear`).
     Gear,
+    /// Link channel (`link`).
+    Link,
+    Check,
+    Copy,
+    /// Add (`plus`, bold).
+    Plus,
+    Star,
+    /// Explore (`compass`).
+    Compass,
+    /// The folder icons of the guild rail.
+    Folder,
+    Heart,
+    Bookmark,
+    GameController,
+    Shield,
+    MusicNote,
+    Users,
+    /// A muted microphone, a deafened listener, camera and screen share, in voice channels.
+    MicrophoneSlash,
+    SpeakerSlash,
+    VideoCamera,
+    MonitorPlay,
 }
 
 impl Icon {
@@ -56,6 +78,23 @@ impl Icon {
             Icon::BellSlash => include_bytes!("../assets/icons/bell-slash.svg"),
             Icon::CheckSquare => include_bytes!("../assets/icons/check-square.svg"),
             Icon::Gear => include_bytes!("../assets/icons/gear.svg"),
+            Icon::Link => include_bytes!("../assets/icons/link.svg"),
+            Icon::Check => include_bytes!("../assets/icons/check.svg"),
+            Icon::Copy => include_bytes!("../assets/icons/copy.svg"),
+            Icon::Plus => include_bytes!("../assets/icons/plus.svg"),
+            Icon::Star => include_bytes!("../assets/icons/star.svg"),
+            Icon::Compass => include_bytes!("../assets/icons/compass.svg"),
+            Icon::Folder => include_bytes!("../assets/icons/folder.svg"),
+            Icon::Heart => include_bytes!("../assets/icons/heart.svg"),
+            Icon::Bookmark => include_bytes!("../assets/icons/bookmark-simple.svg"),
+            Icon::GameController => include_bytes!("../assets/icons/game-controller.svg"),
+            Icon::Shield => include_bytes!("../assets/icons/shield.svg"),
+            Icon::MusicNote => include_bytes!("../assets/icons/music-note.svg"),
+            Icon::Users => include_bytes!("../assets/icons/users.svg"),
+            Icon::MicrophoneSlash => include_bytes!("../assets/icons/microphone-slash.svg"),
+            Icon::SpeakerSlash => include_bytes!("../assets/icons/speaker-slash.svg"),
+            Icon::VideoCamera => include_bytes!("../assets/icons/video-camera.svg"),
+            Icon::MonitorPlay => include_bytes!("../assets/icons/monitor-play.svg"),
         }
     }
 

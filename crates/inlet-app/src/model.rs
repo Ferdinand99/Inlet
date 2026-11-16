@@ -53,6 +53,8 @@ pub enum ChannelKind {
     Forum,
     /// A media channel: a forum shown as a grid.
     Media,
+    /// A link channel: it opens a web address (or an invite) instead of a chat.
+    Link,
     Other,
 }
 

@@ -118,9 +118,12 @@ impl Inlet {
         &mut self,
         event: backend::settings::Ev,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        match event {}
+        match event {
+            backend::settings::Ev::Folders(ev) => self.on_folders_event(ev, cx),
+            backend::settings::Ev::Guild(ev) => self.on_guild_event(ev, cx),
+        }
     }
 
     /// Opens the settings view over the window, at the tab `tab` if given.
