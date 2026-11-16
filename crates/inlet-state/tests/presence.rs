@@ -197,3 +197,14 @@ fn display_text_keeps_the_joiners_of_emoji_sequences_only() {
     assert_eq!(clean_display_text("a \u{FE0F}\u{202E}\u{200B}b"), "a b");
     assert_eq!(clean_display_text("\u{200D}\u{FE0F} "), " ");
 }
+
+#[test]
+fn display_text_keeps_a_zero_width_non_joiner_inside_a_word() {
+    use inlet_state::presence::clean_display_text;
+    // A Persian word needs it; at the edges it is stray.
+    assert_eq!(
+        clean_display_text("\u{0645}\u{200C}\u{062F}"),
+        "\u{0645}\u{200C}\u{062F}"
+    );
+    assert_eq!(clean_display_text("\u{200C}a\u{200C}"), "a");
+}

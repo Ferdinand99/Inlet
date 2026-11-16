@@ -187,9 +187,10 @@ pub fn is_visible(c: char) -> bool {
 /// A custom status text for display: only what draws something, plus the join controls
 /// an emoji sequence needs. A zero-width joiner stays between two visible characters
 /// (a family or a profession emoji) and a variation selector stays after the character
-/// it styles (a red heart); one that stands alone goes, as Fluxer's `normalizeString`
-/// removes stray join controls. Control, direction and zero-width characters go; spaces
-/// stay. Not trimmed and not cut.
+/// it styles (a red heart); one that stands alone goes, as Fluxer removes stray join
+/// controls (`STRAY_JOIN_CONTROLS_REGEX`). A zero-width non-joiner between two visible
+/// characters stays too: words in Persian and Indic scripts need it. Control, direction
+/// and other zero-width characters go; spaces stay. Not trimmed and not cut.
 pub fn clean_display_text(text: &str) -> String {
     #[derive(Clone, Copy, PartialEq)]
     enum Last {
@@ -208,7 +209,7 @@ pub fn clean_display_text(text: &str) -> String {
             out.push(c);
             last = Last::Base;
         } else if c == ' '
-            || (c == '\u{200D}'
+            || (matches!(c, '\u{200D}' | '\u{200C}')
                 && last != Last::Apart
                 && chars.peek().is_some_and(|next| is_visible(*next)))
         {
