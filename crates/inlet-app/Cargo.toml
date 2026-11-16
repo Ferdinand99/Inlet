@@ -34,6 +34,13 @@ name = "layout_metrics"
 path = "tests/layout_metrics.rs"
 required-features = ["demo"]
 
+# What a gateway event costs on the UI thread (no benchmark library):
+# scripts/docker-build.sh bench -p inlet --bench state --locked
+[[bench]]
+name = "state"
+path = "benches/state.rs"
+harness = false
+
 [dependencies]
 inlet-editor = { path = "../inlet-editor" }
 inlet-emoji = { path = "../inlet-emoji" }

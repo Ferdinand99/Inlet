@@ -501,6 +501,9 @@ pub fn attach(
         // Waits for the demo account, as a link Inlet was started with does.
         let _ = handle.update(cx, |this, _, cx| this.offer_deep_link(link, cx));
     }
+    // The soak and the first-frame measurement (demo builds, when asked for).
+    #[cfg(feature = "demo")]
+    crate::demo::soak::attach(handle, cx);
 }
 
 /// `opened_hidden`: the window was opened hidden for a login start (Windows, macOS).
