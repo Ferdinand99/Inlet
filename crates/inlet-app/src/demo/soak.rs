@@ -19,7 +19,7 @@
 //! - `INLET_SOAK_HOURS`: hours of recording (default 24).
 //! - `INLET_SOAK_SPEED`: how many times faster than real time the recording plays
 //!   (default 1; 48 plays a day in 30 minutes).
-//! - `INLET_SOAK_NAV_MS`: real time between two channel switches (default 5000).
+//! - `INLET_SOAK_NAV_MS`: real time between two channel switches (default 5000; 0: none).
 //! - `INLET_SOAK_LOG_SECS`: real time between two lines of numbers on stderr (default 60).
 //! - `INLET_SOAK_SEED`: the recording's seed (default 1).
 //! - `INLET_SOAK_RATE`: how busy the recording is (default 1; 24 fills the message windows in hours).
@@ -32,8 +32,9 @@ mod recording;
 #[cfg(test)]
 mod tests;
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -88,7 +89,10 @@ impl Config {
             seed: num("INLET_SOAK_SEED", 1.) as u64,
             hours: num("INLET_SOAK_HOURS", 24.),
             speed: num("INLET_SOAK_SPEED", 1.).max(0.01),
-            nav_ms: num("INLET_SOAK_NAV_MS", 5000.).max(100.) as u64,
+            nav_ms: match num("INLET_SOAK_NAV_MS", 5000.) {
+                0. => 0,
+                ms => ms.max(100.) as u64,
+            },
             log_secs: num("INLET_SOAK_LOG_SECS", 60.).max(1.) as u64,
             rate: num("INLET_SOAK_RATE", 1.),
         })
@@ -333,6 +337,39 @@ pub fn start(
 
 // ---- Measuring --------------------------------------------------------------------------
 
+/// Counts the bytes the program holds, so a log can tell what the data weighs from what
+/// the allocator keeps around. It wraps the system allocator in demo builds (which are
+/// never shipped) and changes nothing else.
+struct Counting;
+
+static LIVE: AtomicIsize = AtomicIsize::new(0);
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        LIVE.fetch_add(layout.size() as isize, Ordering::Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE.fetch_sub(layout.size() as isize, Ordering::Relaxed);
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        LIVE.fetch_add(
+            new_size as isize - layout.size() as isize,
+            Ordering::Relaxed,
+        );
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOC: Counting = Counting;
+
+/// Bytes the program has allocated and not freed.
+pub fn heap_bytes() -> isize {
+    LIVE.load(Ordering::Relaxed)
+}
+
 /// A number from `/proc/self/status` in kB (`VmRSS`, `VmHWM`).
 pub fn proc_kb(key: &str) -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -409,43 +446,46 @@ pub fn attach(handle: WindowHandle<Inlet>, cx: &mut App) {
         .find(|(_, c)| c.history >= recording::BIG_HISTORY)
         .map(|(g, c)| (g.id.clone(), c.id.clone()));
     let nav = Duration::from_millis(cfg.nav_ms);
-    cx.spawn(async move |cx| {
-        let mut step = 0usize;
-        let mut dwell = 0u32;
-        loop {
-            cx.background_executor().timer(nav).await;
-            let alive = handle.update(cx, |this, window, cx| {
-                if this.account.is_none() || open.is_empty() {
-                    return;
-                }
-                // On the long channel: older pages, one per tick (the app's own pager
-                // allows one a second).
-                if dwell > 0 {
-                    dwell -= 1;
-                    this.load_older(cx);
-                    return;
-                }
-                step += 1;
-                let (guild, channel) = match &archive {
-                    Some(a) if step.is_multiple_of(ARCHIVE_EVERY) => {
-                        dwell = ARCHIVE_PAGES;
-                        a.clone()
+    // INLET_SOAK_NAV_MS=0: nobody switches channels.
+    if cfg.nav_ms > 0 {
+        cx.spawn(async move |cx| {
+            let mut step = 0usize;
+            let mut dwell = 0u32;
+            loop {
+                cx.background_executor().timer(nav).await;
+                let alive = handle.update(cx, |this, window, cx| {
+                    if this.account.is_none() || open.is_empty() {
+                        return;
                     }
-                    _ => open[(step * 7 + step / open.len()) % open.len()].clone(),
-                };
-                if this.selected_guild.as_deref() == Some(guild.as_str()) {
-                    this.select_channel(channel, window, cx);
-                } else {
-                    this.demo_channel = Some(channel);
-                    this.select_guild(Some(guild), cx);
+                    // On the long channel: older pages, one per tick (the app's own pager
+                    // allows one a second).
+                    if dwell > 0 {
+                        dwell -= 1;
+                        this.load_older(cx);
+                        return;
+                    }
+                    step += 1;
+                    let (guild, channel) = match &archive {
+                        Some(a) if step.is_multiple_of(ARCHIVE_EVERY) => {
+                            dwell = ARCHIVE_PAGES;
+                            a.clone()
+                        }
+                        _ => open[(step * 7 + step / open.len()) % open.len()].clone(),
+                    };
+                    if this.selected_guild.as_deref() == Some(guild.as_str()) {
+                        this.select_channel(channel, window, cx);
+                    } else {
+                        this.demo_channel = Some(channel);
+                        this.select_guild(Some(guild), cx);
+                    }
+                });
+                if alive.is_err() {
+                    return;
                 }
-            });
-            if alive.is_err() {
-                return;
             }
-        }
-    })
-    .detach();
+        })
+        .detach();
+    }
 
     // Numbers, so a log shows what grew.
     let every = Duration::from_secs(cfg.log_secs);
@@ -473,10 +513,11 @@ pub fn attach(handle: WindowHandle<Inlet>, cx: &mut App) {
                     None => (0, 0, 0, 0),
                 };
                 eprintln!(
-                    "soak: up_s={} rss_kb={} hwm_kb={} windows={windows} window_messages={messages} window_bytes={bytes} members={members} late_ms={}",
+                    "soak: up_s={} rss_kb={} hwm_kb={} heap_kb={} windows={windows} window_messages={messages} window_bytes={bytes} members={members} late_ms={}",
                     started.elapsed().as_secs(),
                     proc_kb("VmRSS").unwrap_or(0),
                     proc_kb("VmHWM").unwrap_or(0),
+                    heap_bytes() / 1024,
                     late.as_millis(),
                 );
             });

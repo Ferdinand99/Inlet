@@ -38,7 +38,8 @@
 # SOAK_RATE=60 they fill by hour 6 and SOAK_STEADY_H=6 holds.
 # Other settings: SOAK_SAMPLE_SECS (seconds between memory samples; default a 120th of
 # the run, between 5 and 60), SOAK_NAV_MS (milliseconds between two channel switches,
-# default 5000, divided by the speed-up for a faster run, at least 250), SOAK_SEED.
+# default 5000, divided by the speed-up for a faster run, at least 250; 0 = nobody switches
+# channels), SOAK_SEED, SOAK_OUT (the folder name under target/build-out, default soak).
 #
 # The binary is copied out of the shared build cache before the run starts and the
 # build slot is given back then, so a night run does not keep other builds waiting.
@@ -65,12 +66,12 @@ phases="${SOAK_PHASES:-tests startup app}"
 seed="${SOAK_SEED:-1}"
 rate="${SOAK_RATE:-24}"
 steady="${SOAK_STEADY_H:-15}"
-nav_ms=$(awk -v n="${SOAK_NAV_MS:-5000}" -v s="$speed" 'BEGIN { x = n / (s > 1 ? s : 1); if (x < 250) x = 250; printf "%d", x }')
+nav_ms=$(awk -v n="${SOAK_NAV_MS:-5000}" -v s="$speed" 'BEGIN { x = n / (s > 1 ? s : 1); if (n > 0 && x < 250) x = 250; printf "%d", x }')
 sample=${SOAK_SAMPLE_SECS:-$(( wall_secs / 120 < 5 ? 5 : (wall_secs / 120 > 60 ? 60 : wall_secs / 120) ))}
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-out="/out/soak"
+out="/out/${SOAK_OUT:-soak}"
 mkdir -p "$out" /tmp/soak
 say() { echo "soak: $*" >&2; }
 failed=""

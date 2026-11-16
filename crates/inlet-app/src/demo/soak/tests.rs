@@ -3,9 +3,7 @@
 //! (`#[ignore]`, run by `scripts/soak.sh`): a day of gateway traffic through the account
 //! state, and scrolling back through the whole 5,000-message channel.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -26,34 +24,6 @@ use crate::backend::messages::parse::SharedNames;
 use crate::backend::{accounts, messages as msgs, Event, Ui};
 use crate::demo::rendered_page;
 use crate::model::Names;
-
-/// Counts the bytes the program holds, to tell what the data weighs from what the
-/// allocator keeps around (the long test prints both). It wraps the system allocator for
-/// the whole test binary of the crate and changes nothing else.
-struct Counting;
-
-static LIVE: AtomicIsize = AtomicIsize::new(0);
-
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        LIVE.fetch_add(layout.size() as isize, Ordering::Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        LIVE.fetch_sub(layout.size() as isize, Ordering::Relaxed);
-        unsafe { System.dealloc(ptr, layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        LIVE.fetch_add(
-            new_size as isize - layout.size() as isize,
-            Ordering::Relaxed,
-        );
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: Counting = Counting;
 
 fn names() -> SharedNames {
     Arc::new(Mutex::new(Names::default()))
@@ -457,7 +427,7 @@ async fn soak_24h_replay_memory_is_flat() {
                         let bg_members: usize = background.values().map(|s| s.member_total()).sum();
                         details.push(format!(
                             "heap {} MiB, users {users}, members {}, presences {}, read states {}, windows {}, names {names_len}, background members {bg_members}",
-                            LIVE.load(Ordering::Relaxed) / 1_048_576,
+                            super::heap_bytes() / 1_048_576,
                             fg.member_total(),
                             fg.presences().len(),
                             fg.read_states().len(),
