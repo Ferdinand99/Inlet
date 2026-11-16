@@ -243,6 +243,10 @@ Run-Demo "65-settings-accounts" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "360
 Run-Demo "66-chat-light" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "chat-cozy"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "light" } 10
 Run-Demo "67-chat-coal" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "chat-cozy"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "coal" } 10
 
+# The Advanced settings tab, and the search across the settings with some words.
+Run-Demo "130-settings-advanced" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "advanced"; INLET_DEMO_THEME = "dark" } 10
+Run-Demo "131-settings-search" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "search:message"; INLET_DEMO_THEME = "dark" } 10
+
 # A demo that quit before its screenshot crashed: fail the job, the pictures are not
 # worth checking.
 if ($script:Failed.Count -gt 0) {

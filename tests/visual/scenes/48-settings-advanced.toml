@@ -1,0 +1,10 @@
+# The Advanced settings tab: the searchable list of advanced settings, grouped by category.
+name = "settings-advanced"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "default"
+guild = "g1"
+channel = "c-general"
+settings = "advanced"

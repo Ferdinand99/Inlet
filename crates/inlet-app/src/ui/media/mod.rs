@@ -212,7 +212,11 @@ impl Inlet {
         #[cfg(feature = "demo")]
         self.media.demo_note_frame(window.is_window_active());
         let stage = Stage {
-            active: window.is_window_active(),
+            // Fluxer's "stay fully interactive when unfocused": animations go on.
+            active: window.is_window_active()
+                || self
+                    .settings_values()
+                    .flag(inlet_state::flags::Flag::StayInteractiveUnfocused),
             idle: self.media.last_input.elapsed() >= IDLE_AFTER,
             reduce_motion: cx.reduce_motion(),
             layer_open: self.layer_open(),

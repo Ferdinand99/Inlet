@@ -11,10 +11,12 @@
 //! (`"appearance"`, `"media"`), so the window draws right before the server has
 //! answered. The server's snapshot replaces them when it comes.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gpui::{App, AppContext, Global};
 use inlet_protocol as p;
+use inlet_state::flags::Flag;
 use inlet_state::settings::Display;
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +45,8 @@ struct LocalCopy {
     /// The theme goes to the account and follows it (Fluxer's "sync theme across
     /// devices"); off keeps this computer on its own theme.
     sync_theme: bool,
+    /// The switches this computer keeps for itself, when they are not at their default.
+    switches: BTreeMap<String, bool>,
 }
 
 impl Default for LocalCopy {
@@ -61,6 +65,11 @@ impl LocalCopy {
             compact_group_spacing: v.compact_group_spacing,
             compact_avatars: v.compact_avatars,
             sync_theme: true,
+            switches: Flag::ALL
+                .iter()
+                .filter(|f| !f.is_synced() && v.flag(**f) != f.default_value())
+                .map(|f| (f.def().key.to_owned(), v.flag(*f)))
+                .collect(),
         }
     }
 
@@ -75,6 +84,12 @@ impl LocalCopy {
         v.group_spacing = self.group_spacing.min(64);
         v.compact_group_spacing = self.compact_group_spacing.min(64);
         v.compact_avatars = self.compact_avatars;
+        for (key, on) in &self.switches {
+            // A switch of a newer version, or a synced one, is not kept here.
+            if let Some(flag) = Flag::from_key(key).filter(|f| !f.is_synced()) {
+                v.apply(&Change::Flag(flag, *on));
+            }
+        }
         v
     }
 }
@@ -168,6 +183,12 @@ pub fn generation(cx: &App) -> u64 {
 /// A change from a tab: shown at once, kept, and sent to the server. Returns the number
 /// of the command that carries it.
 pub fn change(cx: &mut App, change: Change) -> u64 {
+    if change.is_local() {
+        // Only this computer's: nothing is sent and nothing waits for the server.
+        store(cx).tracker.set_local(change);
+        apply(cx);
+        return 0;
+    }
     let sends = !(matches!(change, Change::Theme(_)) && !store(cx).sync_theme);
     let seq = store(cx).tracker.edit(change);
     apply(cx);
@@ -474,12 +495,25 @@ pub(crate) mod tests {
             compact_group_spacing: 250,
             compact_avatars: true,
             sync_theme: true,
+            switches: BTreeMap::from([
+                ("hide_blocked_messages".to_owned(), true),
+                ("action_bar".to_owned(), false),
+                ("no_such_switch".to_owned(), true),
+            ]),
         };
         let v = odd.values();
         assert_eq!(v.theme, Pref::Dark);
         assert!(v.compact);
         assert_eq!(v.font_size, 48);
         assert_eq!(v.group_spacing, 64);
+        assert!(
+            v.flag(Flag::HideBlockedMessages),
+            "a local switch is read back"
+        );
+        assert!(
+            v.flag(Flag::ActionBar),
+            "a synced switch is not taken from the file, and an unknown one is dropped"
+        );
         assert_eq!(LocalCopy::default().values(), Values::default());
     }
 

@@ -7,6 +7,7 @@
 
 pub mod controls;
 pub mod profile;
+pub mod registry;
 pub mod store;
 pub mod sync;
 pub mod tabs;
@@ -15,12 +16,14 @@ use gpui::{
     div, prelude::*, px, AnyElement, Context, Entity, FontWeight, Global, SharedString, WeakEntity,
     Window,
 };
+use inlet_state::flags::Flag;
 use inlet_state::settings::Display;
 
 use crate::app::Inlet;
 use crate::backend::settings::account::Ev;
 use crate::backend::settings::Ev as SettingsEv;
 use crate::desktop::Layer;
+use crate::text_input::TextInput;
 use crate::theme;
 use crate::ui::widgets::button;
 use sync::Values;
@@ -33,20 +36,108 @@ pub trait SettingsTab {
     fn title(&self) -> SharedString;
     /// The tab's content.
     fn render(&mut self, cx: &mut Context<SettingsView>) -> AnyElement;
+    /// The search opened this tab for the setting `id` (of [`registry`]): the tab may
+    /// bring it into view.
+    fn focus_item(&mut self, _id: &str, _cx: &mut Context<SettingsView>) {}
 }
 
 /// The settings view with its tabs.
 pub struct SettingsView {
     tabs: Vec<Box<dyn SettingsTab>>,
     selected: usize,
+    /// The search across all tabs.
+    search: Entity<TextInput>,
 }
 
 impl SettingsView {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| TextInput::new(t!("settings-search-placeholder"), cx));
+        // The results follow what is typed.
+        cx.observe(&search, |_, _, cx| cx.notify()).detach();
         Self {
             tabs: tabs::all(),
             selected: 0,
+            search,
         }
+    }
+
+    /// Opens the tab of the setting `id`, and has the tab bring the setting into view.
+    fn open_item(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        let Some(item) = registry::ITEMS.iter().find(|i| i.id == id) else {
+            return;
+        };
+        self.select(item.tab);
+        let selected = self.selected;
+        if let Some(tab) = self.tabs.get_mut(selected) {
+            tab.focus_item(id, cx);
+        }
+        self.search.update(cx, |s, cx| s.clear(cx));
+        cx.notify();
+    }
+
+    /// The results of the search, as rows to click; none when nothing is typed.
+    fn search_results(&mut self, typed: &str, cx: &mut Context<Self>) -> AnyElement {
+        let hits = registry::search(typed, false);
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .max_w(px(controls::PAGE_WIDTH))
+            .gap_1()
+            .child(
+                div()
+                    .text_size(px(20.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text_strong())
+                    .child(t!("settings-search-placeholder")),
+            );
+        if hits.is_empty() {
+            col = col.child(
+                div()
+                    .py_2()
+                    .text_color(theme::text_muted())
+                    .child(t!("settings-search-none")),
+            );
+        }
+        for item in hits {
+            let tab = self
+                .tabs
+                .iter()
+                .find(|t| t.id() == item.tab)
+                .map(|t| t.title())
+                .unwrap_or_default();
+            let id = item.id;
+            col = col.child(
+                div()
+                    .id(SharedString::from(format!("settings-found-{id}")))
+                    .flex()
+                    .flex_col()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::hover_bg()))
+                    .child(
+                        div()
+                            .text_color(theme::text_strong())
+                            .font_weight(FontWeight::MEDIUM)
+                            .child((item.label)()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(theme::text_muted())
+                            .child((item.description)()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(theme::text_tertiary())
+                            .child(t!("settings-search-in-tab", tab = tab.to_string())),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_item(id, cx))),
+            );
+        }
+        col.into_any_element()
     }
 
     /// Opens the tab with this ID, if there is one.
@@ -54,12 +145,6 @@ impl SettingsView {
         if let Some(ix) = self.tabs.iter().position(|t| t.id() == id) {
             self.selected = ix;
         }
-    }
-}
-
-impl Default for SettingsView {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -85,15 +170,22 @@ impl Render for SettingsView {
                 .child(tab.title())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.selected = ix;
+                    // Picking a tab ends a search.
+                    this.search.update(cx, |s, cx| s.clear(cx));
                     cx.notify();
                 }))
         });
         let list: Vec<_> = list.collect();
-        let content = self
-            .tabs
-            .get_mut(selected)
-            .map(|tab| tab.render(cx))
-            .unwrap_or_else(|| div().into_any_element());
+        let typed = self.search.read(cx).text().trim().to_owned();
+        let content = if typed.is_empty() {
+            self.tabs
+                .get_mut(selected)
+                .map(|tab| tab.render(cx))
+                .unwrap_or_else(|| div().into_any_element())
+        } else {
+            self.search_results(&typed, cx)
+        };
+        let search = self.search.clone();
         div()
             .size_full()
             .flex()
@@ -109,6 +201,7 @@ impl Render for SettingsView {
                     .gap(px(2.))
                     .p_2()
                     .bg(theme::bg_app())
+                    .child(div().pb_2().child(search))
                     .children(list),
             )
             .child(
@@ -261,6 +354,9 @@ impl Inlet {
         }
         let spoilers_moved = self.chat.view.spoilers != now.render_spoilers;
         self.chat.view.spoilers = now.render_spoilers;
+        let hide_blocked = now.flag(Flag::HideBlockedMessages);
+        let blocked_moved = self.chat.view.hide_blocked != hide_blocked;
+        self.chat.view.hide_blocked = hide_blocked;
         self.media.images.animations().borrow_mut().prefs =
             crate::ui::media::animation_budget::MotionPrefs::of_settings(&now);
         let sizes_moved = before.as_ref().is_none_or(|b| {
@@ -273,7 +369,7 @@ impl Inlet {
                 || b.render_embeds != now.render_embeds
                 || b.render_reactions != now.render_reactions
         });
-        if compact_moved || sizes_moved || spoilers_moved {
+        if compact_moved || sizes_moved || spoilers_moved || blocked_moved {
             // The rows are built again from the new settings and measured again.
             self.refresh_rows_from_scratch(cx);
         }
@@ -282,9 +378,18 @@ impl Inlet {
     /// Opens the settings view over the window, at the tab `tab` if given.
     pub(crate) fn open_settings(&mut self, tab: Option<&str>, cx: &mut Context<Self>) {
         cx.set_global(AppHandle(cx.weak_entity()));
-        let view = cx.new(|_| {
-            let mut view = SettingsView::new();
+        let view = cx.new(|cx| {
+            let mut view = SettingsView::new(cx);
             if let Some(tab) = tab {
+                // A demo scene may open the search with some words: `search:words`.
+                #[cfg(feature = "demo")]
+                if let Some(words) = tab.strip_prefix("search:") {
+                    view.search
+                        .update(cx, |s, cx| s.set_text(words.to_owned(), cx));
+                } else {
+                    view.select(tab);
+                }
+                #[cfg(not(feature = "demo"))]
                 view.select(tab);
             }
             view
@@ -391,6 +496,92 @@ mod tests {
         });
         cx.update(|_, cx| {
             store::change(cx, Change::FontSize(16));
+        });
+    }
+}
+
+#[cfg(test)]
+mod flag_tests {
+    use inlet_protocol::Ready;
+    use inlet_state::{AccountState, ChannelId, MessagesPage};
+    use serde_json::json;
+
+    use crate::ui::chat::messages::{MessageView, Row};
+
+    fn msg(id: u64, author: &str) -> inlet_protocol::Message {
+        serde_json::from_value(json!({
+            "id": (id << 22).to_string(), "channel_id": "100", "type": 0,
+            "content": format!("m{id}"), "timestamp": "2026-01-01T10:00:00+00:00",
+            "author": {"id": author, "username": format!("u{author}")}
+        }))
+        .unwrap()
+    }
+
+    /// With "hide messages from blocked users" the blocked person's messages are left out
+    /// of the list, not folded into a line; with it off they fold, as before.
+    #[test]
+    fn hiding_blocked_messages_leaves_them_out_instead_of_folding_them() {
+        let ready: Ready = serde_json::from_value(json!({
+            "session_id": "s", "user": {"id": "1", "username": "me"},
+            "guilds": [], "users": [],
+            "private_channels": [{"id": "100", "type": 3,
+                "recipients": [{"id": "2", "username": "u2"}, {"id": "3", "username": "u3"}]}],
+            "relationships": [{"id": "3", "type": 2}],
+            "read_states": [], "user_guild_settings": []
+        }))
+        .unwrap();
+        let mut state = AccountState::from_ready_at(&ready, 1);
+        let ch = ChannelId(100);
+        let _ = state.begin_load(ch);
+        let page: Vec<_> = [(1, "2"), (2, "3"), (3, "3"), (4, "2"), (5, "3")]
+            .into_iter()
+            .map(|(i, a)| msg(i, a))
+            .rev()
+            .collect();
+        let _ = state.apply_messages(ch, MessagesPage::latest(page, 50));
+        let shape = |rows: &[Row]| -> Vec<String> {
+            rows.iter()
+                .filter_map(|r| match r {
+                    Row::Message(m) => Some(format!("m{}", m.id.0 >> 22)),
+                    Row::Blocked { count, .. } => Some(format!("blocked {count}")),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut view = MessageView::default();
+        assert_eq!(
+            shape(&view.build_rows(&state, ch)),
+            ["m1", "blocked 2", "m4", "blocked 1"],
+            "folded by default"
+        );
+        view.hide_blocked = true;
+        assert_eq!(shape(&view.build_rows(&state, ch)), ["m1", "m4"]);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use gpui::{AppContext, TestAppContext};
+
+    use super::SettingsView;
+
+    /// Opening a result of the search goes to the setting's tab and ends the search; the
+    /// Advanced tab is then narrowed to that setting.
+    #[gpui::test]
+    fn a_search_result_opens_the_tab_of_the_setting_and_clears_the_search(cx: &mut TestAppContext) {
+        let view = cx.new(SettingsView::new);
+        cx.update(|cx| {
+            view.update(cx, |v, cx| {
+                v.search.update(cx, |s, cx| s.set_text("action bar", cx));
+                assert_eq!(v.tabs[v.selected].id(), "my-profile");
+                v.open_item("advanced-action-bar", cx);
+                assert_eq!(v.tabs[v.selected].id(), "advanced");
+                assert_eq!(v.search.read(cx).text(), "", "the search ended");
+            });
+            view.update(cx, |v, cx| {
+                v.open_item("appearance-theme", cx);
+                assert_eq!(v.tabs[v.selected].id(), "appearance");
+            });
         });
     }
 }

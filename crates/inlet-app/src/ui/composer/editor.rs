@@ -27,6 +27,7 @@ use gpui::{
 use inlet_editor::actions::{Down, Submit, Up};
 use inlet_editor::{Editor, EditorEvent, EditorStyle, Trigger};
 use inlet_protocol as p;
+use inlet_state::flags::Flag;
 use inlet_state::{AccountState, ChannelId, GuildId};
 
 use super::attachments::{Attachments, InFlight};
@@ -578,7 +579,17 @@ impl ComposerView {
             in_guild: guild.is_some(),
             rights: self.rights(),
         };
-        let (section, rows) = autocomplete::candidates(&trigger, &src);
+        let (section, mut rows) = autocomplete::candidates(&trigger, &src);
+        if section == Section::Emoji {
+            // Fluxer's "Expression autocomplete": the person picks what the colon offers.
+            let shown = crate::ui::settings::store::values(cx);
+            rows.retain(|row| {
+                shown.flag(match row.pick {
+                    Pick::Token(..) => Flag::AutocompleteCustomEmojis,
+                    Pick::Text(_) => Flag::AutocompleteDefaultEmojis,
+                })
+            });
+        }
         let selected = match &self.autocomplete {
             Some(open) if open.start == range.start && open.section == section => {
                 open.selected.min(rows.len().saturating_sub(1))

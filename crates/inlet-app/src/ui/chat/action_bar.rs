@@ -22,6 +22,7 @@ use inlet_protocol as p;
 use inlet_protocol::permissions::{
     ADMINISTRATOR, MANAGE_MESSAGES, READ_MESSAGE_HISTORY, VIEW_CHANNEL,
 };
+use inlet_state::flags::Flag;
 use inlet_state::{AccountState, ChannelId, MessageId, Permissions, UserId};
 
 use super::context_menu::Overlay;
@@ -297,6 +298,18 @@ pub fn menu_actions(f: &Facts) -> Vec<Action> {
     out
 }
 
+/// What a double click on the message does: edit the account's own message, reply to
+/// someone else's, as far as the rights go (Fluxer's "double-click a message to edit or
+/// reply").
+pub fn double_click_action(f: &Facts) -> Option<Action> {
+    let menu = menu_actions(f);
+    if f.own {
+        menu.contains(&Action::Edit).then_some(Action::Edit)
+    } else {
+        menu.contains(&Action::Reply).then_some(Action::Reply)
+    }
+}
+
 /// The menu's groups: a line goes between two actions of different groups.
 pub fn group_of(a: Action) -> u8 {
     match a {
@@ -368,6 +381,15 @@ impl Inlet {
         if !self.chat.actions.shows_bar(id) {
             return None;
         }
+        // The settings of the bar (Fluxer's "Message action bar"): off hides it (the menu on
+        // a right click stays), "only the more button" drops the rest, quick reactions
+        // can be left out.
+        let settings = self.settings_values();
+        if !settings.flag(Flag::ActionBar) {
+            return None;
+        }
+        let only_more = settings.flag(Flag::ActionBarOnlyMore);
+        let quick_reactions = settings.flag(Flag::ActionBarQuickReactions);
         let ch = ChannelId::parse(&row.message.channel_id)?;
         let facts = self.action_facts(ch, id, cx)?;
         let mut bar = div()
@@ -394,8 +416,12 @@ impl Inlet {
                 this.chat.actions.hover_bar(id, *hovered);
                 cx.notify();
             }));
-        let actions = bar_actions(&facts);
-        if actions.contains(&Action::AddReaction) {
+        let actions = if only_more {
+            Vec::new()
+        } else {
+            bar_actions(&facts)
+        };
+        if quick_reactions && actions.contains(&Action::AddReaction) {
             for (i, glyph) in reactions::QUICK.iter().enumerate() {
                 let emoji = p::Emoji::unicode(*glyph);
                 bar = bar.child(
@@ -429,6 +455,24 @@ impl Inlet {
                 })),
         );
         Some(bar.into_any_element())
+    }
+
+    /// A double click on a message (when the setting is on): the account's own message is
+    /// edited, someone else's is replied to, as far as the rights go.
+    pub(crate) fn double_click_message(
+        &mut self,
+        ch: ChannelId,
+        id: MessageId,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(facts) = self.action_facts(ch, id, cx) else {
+            return;
+        };
+        if let Some(action) = double_click_action(&facts) {
+            self.run_action(action, ch, id, false, at, window, cx);
+        }
     }
 
     /// Runs an action on message `id`, after checking the rights again. `shift` skips
@@ -807,6 +851,22 @@ mod tests {
         };
         assert!(!menu_actions(&off).contains(&Action::CopyId));
         assert!(menu_actions(&off).contains(&Action::CopyLink));
+    }
+
+    #[test]
+    fn a_double_click_edits_your_own_message_and_replies_to_another() {
+        let state = state(MEMBER, 0);
+        let mine = facts(&state, 100, true);
+        assert_eq!(double_click_action(&mine), Some(Action::Edit));
+        let theirs = facts(&state, 100, false);
+        assert_eq!(double_click_action(&theirs), Some(Action::Reply));
+        // Without the right to write, a double click does nothing; a message that cannot
+        // be edited (a system message, an old one) is not edited by it either.
+        let muted = facts(&self::state(READER, 0), 100, false);
+        assert_eq!(double_click_action(&muted), None);
+        let mut locked = facts(&state, 100, true);
+        locked.editable = false;
+        assert_eq!(double_click_action(&locked), None);
     }
 
     #[test]

@@ -174,11 +174,6 @@ settings-privacy-sensitive-servers-hint = Media in channels that are not marked 
 ## Advanced
 
 settings-advanced-title = Advanced
-settings-advanced-developer = DEVELOPER
-settings-advanced-developer-mode = Developer mode
-settings-advanced-developer-note = Adds Copy ID to the menus of messages and people.
-settings-advanced-id = YOUR USER ID
-settings-advanced-copy-id = Copy ID
 
 ## Accounts
 

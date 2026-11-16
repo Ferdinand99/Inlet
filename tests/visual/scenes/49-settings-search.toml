@@ -1,0 +1,10 @@
+# The search across all settings tabs, with a few words typed in.
+name = "settings-search"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "default"
+guild = "g1"
+channel = "c-general"
+settings = "search:message"

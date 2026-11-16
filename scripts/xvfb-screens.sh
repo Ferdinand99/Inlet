@@ -207,6 +207,10 @@ INLET_DEMO_THEME=coal scene 67-chat-coal chat-cozy c-general
 # its place, the topic and the status line give way first.
 scene 80-header-search-long-name search-results c-rules
 
+# 11c. The Advanced settings tab, and the search across the settings with some words.
+settings_tab 130-settings-advanced advanced dark
+settings_tab 131-settings-search search:message dark
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no

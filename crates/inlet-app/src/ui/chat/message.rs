@@ -356,6 +356,9 @@ impl Inlet {
             && m.author_avatar
                 .as_ref()
                 .is_some_and(|a| a.hash.starts_with("a_"));
+        let double_click = self
+            .settings_values()
+            .flag(inlet_state::flags::Flag::DoubleClickActions);
         let hover_id = m.id.clone();
         let on_hover = cx.listener(move |this, hovered: &bool, _, cx| {
             let animated = animated_avatar.then_some(hover_id.as_str());
@@ -395,6 +398,14 @@ impl Inlet {
                                 this.open_message_menu(ch, id, e.position, window, cx)
                             }),
                         )
+                    })
+                    // Fluxer's "double-click a message to edit or reply".
+                    .when_some(channel.filter(|_| double_click), |d, ch| {
+                        d.on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                            if e.click_count() == 2 {
+                                this.double_click_message(ch, id, e.position(), window, cx);
+                            }
+                        }))
                     })
                     // The bar is drawn over the row's edge, so the content does not move.
                     .children(bar.map(|bar| {

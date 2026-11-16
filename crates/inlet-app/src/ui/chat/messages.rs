@@ -450,6 +450,9 @@ pub struct MessageView {
     /// When spoilers show without a click: 0 always, 1 never, 2 in channels the account
     /// moderates (the account's spoiler setting).
     pub spoilers: u8,
+    /// Messages of blocked people are left out altogether, not folded into a line
+    /// (Fluxer's "hide messages from blocked users").
+    pub hide_blocked: bool,
     /// The open channel's newest page has landed.
     loaded: bool,
     newest_retries: u8,
@@ -789,6 +792,7 @@ impl MessageView {
         Self {
             compact: starts_compact(),
             spoilers: 1,
+            hide_blocked: false,
             ..Self::default()
         }
     }
@@ -949,6 +953,10 @@ impl MessageView {
                 // Fluxer folds messages from blocked people into one line per run.
                 let blocked = is_regular(m.kind)
                     && UserId::parse(&m.author.id).is_some_and(|a| state.is_blocked(a));
+                if blocked && self.hide_blocked {
+                    prev = Some((m, ms, day));
+                    continue;
+                }
                 if blocked {
                     let at = *run.get_or_insert_with(|| {
                         rows.push(Row::Blocked {

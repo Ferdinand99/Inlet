@@ -42,6 +42,7 @@ use gpui::{
     Svg, UniformListScrollHandle, Window,
 };
 use inlet_protocol as p;
+use inlet_state::flags::Flag;
 use inlet_state::{ChannelId, GuildId, MessageId};
 
 use super::editor::ComposerView;
@@ -337,6 +338,8 @@ impl ComposerView {
     /// 22 px icons. Only the main composer has them.
     pub(super) fn render_picker_buttons(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let buttons = self.pickers?;
+        // Fluxer's "Message input buttons": the person picks which of them show.
+        let shown = crate::ui::settings::store::values(cx);
         let button = |id: &'static str, icon: PickerIcon, action: Box<dyn gpui::Action>| {
             div()
                 .id(id)
@@ -361,23 +364,27 @@ impl ComposerView {
                 .items_center()
                 .gap(px(2.))
                 .my(px(-5.))
-                .when(buttons.gif, |d| {
+                .when(buttons.gif && shown.flag(Flag::InputGifButton), |d| {
                     d.child(button(
                         "composer-gif-button",
                         PickerIcon::Gif,
                         Box::new(ToggleGifPicker),
                     ))
                 })
-                .child(button(
-                    "composer-sticker-button",
-                    PickerIcon::Sticker,
-                    Box::new(ToggleStickerPicker),
-                ))
-                .child(button(
-                    "composer-emoji-button",
-                    PickerIcon::Smiley,
-                    Box::new(ToggleEmojiPicker),
-                ))
+                .when(shown.flag(Flag::InputStickersButton), |d| {
+                    d.child(button(
+                        "composer-sticker-button",
+                        PickerIcon::Sticker,
+                        Box::new(ToggleStickerPicker),
+                    ))
+                })
+                .when(shown.flag(Flag::InputEmojiButton), |d| {
+                    d.child(button(
+                        "composer-emoji-button",
+                        PickerIcon::Smiley,
+                        Box::new(ToggleEmojiPicker),
+                    ))
+                })
                 .into_any_element(),
         )
     }

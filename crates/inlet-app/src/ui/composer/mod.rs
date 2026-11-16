@@ -223,10 +223,20 @@ impl Inlet {
     ) {
         match event {
             ComposerEvent::Send(message) => {
+                // Sent to the open channel: Fluxer's "scroll to the bottom when sending".
+                let here = inlet_state::ChannelId::parse(&message.channel_id)
+                    .is_some_and(|c| Some(c) == self.open_channel_id());
                 // The row shows "sending" at once; the backend reports the outcome to it.
                 let cmd = begin_send(&mut self.chat.view, message);
                 self.refresh_rows(cx);
                 self.backend.send(cmd);
+                if here
+                    && self
+                        .settings_values()
+                        .flag(inlet_state::flags::Flag::ScrollToBottomOnSend)
+                {
+                    self.jump_to_present(cx);
+                }
             }
             ComposerEvent::Upload(upload) => {
                 let cmd = begin_upload(&mut self.chat.view, upload);

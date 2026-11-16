@@ -24,7 +24,7 @@ pub fn all() -> Vec<Box<dyn SettingsTab>> {
         Box::new(notifications::NotificationsTab),
         Box::new(desktop::DesktopTab),
         Box::new(keybinds::KeybindsTab),
-        Box::new(advanced::AdvancedTab),
+        Box::new(advanced::AdvancedTab::default()),
         Box::new(accounts::AccountsTab),
     ]
 }

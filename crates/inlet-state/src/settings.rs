@@ -44,6 +44,8 @@ pub struct Display {
     pub show_avatars_in_compact_mode: Option<bool>,
     /// Text smileys become emoji when a message is sent (`chat_input`).
     pub convert_emoticons: Option<bool>,
+    /// The on/off switches the preferences name (see [`crate::flags`]).
+    pub flags: crate::flags::Read,
 }
 
 impl Display {
@@ -62,6 +64,7 @@ impl Display {
             compact_message_group_spacing: a.and_then(|a| a.compact_message_group_spacing),
             show_avatars_in_compact_mode: a.and_then(|a| a.show_user_avatars_in_compact_mode),
             convert_emoticons: prefs.chat_input.as_ref().and_then(|c| c.convert_emoticons),
+            flags: crate::flags::Read::of(prefs),
         }
     }
 }

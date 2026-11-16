@@ -9,6 +9,7 @@ use std::time::Duration;
 use inlet_protocol as p;
 use inlet_protocol::api::preferences::Preferences;
 use inlet_protocol::proto::preferences::AccessibilitySettings;
+use inlet_state::flags::Flag;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender as TokioSender};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -72,26 +73,47 @@ pub enum Change {
     CompactAvatars(bool),
     /// Text smileys become emoji when a message is sent.
     ConvertEmoticons(bool),
+    /// One of the on/off switches of [`inlet_state::flags`]: synced, or only on this
+    /// computer.
+    Flag(Flag, bool),
 }
 
-/// What kind of setting a change is (the newest change of a kind replaces the older).
-pub type Kind = std::mem::Discriminant<Change>;
+/// What kind of setting a change is (the newest change of a kind replaces the older): the
+/// variant, and for a switch which one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Kind {
+    tag: std::mem::Discriminant<Change>,
+    switch: Option<Flag>,
+}
 
 impl Change {
     pub fn kind(&self) -> Kind {
-        std::mem::discriminant(self)
+        Kind {
+            tag: std::mem::discriminant(self),
+            switch: match self {
+                Change::Flag(f, _) => Some(*f),
+                _ => None,
+            },
+        }
     }
 
-    /// Whether the change goes into the synced preferences (else the user settings).
+    /// Whether the change goes into the synced preferences (else the user settings, or
+    /// nowhere: see [`Change::is_local`]).
     pub fn is_preference(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Change::FontSize(_)
-                | Change::GroupSpacing(_)
-                | Change::CompactGroupSpacing(_)
-                | Change::CompactAvatars(_)
-                | Change::ConvertEmoticons(_)
-        )
+            | Change::GroupSpacing(_)
+            | Change::CompactGroupSpacing(_)
+            | Change::CompactAvatars(_)
+            | Change::ConvertEmoticons(_) => true,
+            Change::Flag(f, _) => f.is_synced(),
+            _ => false,
+        }
+    }
+
+    /// The change is only for this computer: it is kept in `settings.json` and never sent.
+    pub fn is_local(&self) -> bool {
+        matches!(self, Change::Flag(f, _) if !f.is_synced())
     }
 
     /// Puts the change into a settings update.
@@ -129,7 +151,8 @@ impl Change {
             | Change::GroupSpacing(_)
             | Change::CompactGroupSpacing(_)
             | Change::CompactAvatars(_)
-            | Change::ConvertEmoticons(_) => {}
+            | Change::ConvertEmoticons(_)
+            | Change::Flag(..) => {}
         }
     }
 
@@ -153,6 +176,7 @@ impl Change {
                     .get_or_insert_with(Default::default)
                     .convert_emoticons = Some(on);
             }
+            Change::Flag(flag, on) => flag.write(prefs, on),
             _ => {}
         }
     }
