@@ -11,7 +11,8 @@ publish = false
 [features]
 # Built-in sample data, started with INLET_DEMO=1. Only for screenshots and UI checks;
 # off in normal builds. Also builds `inlet-visual`, the screenshot comparison tool, and
-# the layout tests.
+# the layout tests. Demo builds also count the heap in a wrapper around the system allocator
+# (one atomic add per allocation) for the soak; they are never shipped.
 demo = ["dep:toml", "dep:image-webp"]
 # Trust the private test instance's CA (REST, gateway and media). Debug builds only:
 # inlet-protocol refuses it in a release build.

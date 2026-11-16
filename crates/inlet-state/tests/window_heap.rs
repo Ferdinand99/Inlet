@@ -175,6 +175,9 @@ fn the_byte_budget_of_a_window_is_the_heap_it_takes() {
     ] {
         let (n, approx, heap) = fill(kind);
         let ratio = heap as f64 / approx as f64;
+        // The budget is within about 16 % of the heap today (plain messages measure 1.16: part of
+        // it is the state's own user cache). The limit is wider than that so a compiler or
+        // `serde_json` update cannot trip it; a budget that is off by a factor again still does.
         println!(
             "{kind:?}: {n} messages, budget {approx} B, heap {heap} B, heap/budget {ratio:.2}"
         );
@@ -183,7 +186,7 @@ fn the_byte_budget_of_a_window_is_the_heap_it_takes() {
             "{kind:?}: neither cap limited the window ({n} messages, {approx} bytes)"
         );
         assert!(
-            (0.8..=1.2).contains(&ratio),
+            (0.8..=1.25).contains(&ratio),
             "{kind:?}: the budget counts {approx} bytes, the heap is {heap} ({ratio:.2} times)"
         );
     }

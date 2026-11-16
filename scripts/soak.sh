@@ -31,11 +31,13 @@
 #   app      the long run
 #
 # SOAK_RATE says how busy the recording is (default 24). The message windows hold up to
-# 500 messages each and take days to fill at a lively 1, so 24 fills them within
-# six hours: what a full set of 30 windows weighs, and that it stays there.
-# SOAK_STEADY_H is the virtual hour the growth check starts at (default 15). At rate 24 the
-# windows take about twelve hours to fill, so the memory is flat only after that; at
-# SOAK_RATE=60 they fill by hour 6 and SOAK_STEADY_H=6 holds.
+# 500 messages each and take days to fill at a lively 1, so a busy rate is what shows what a
+# full set of 30 windows weighs, and that it stays there.
+# SOAK_STEADY_H is the virtual hour the growth check starts at (default 15). Measured (a day
+# in 30 minutes): at rate 24 the heap is flat from about hour 12; at SOAK_RATE=60 the heap
+# is flat from about hour 9 and the resident size from about hour 14, so
+# SOAK_RATE=60 SOAK_STEADY_H=6 does NOT hold (the quietest channels fill last, and the
+# resident size lags the heap). The default of 15 is the one that passes.
 # Other settings: SOAK_SAMPLE_SECS (seconds between memory samples; default a 120th of
 # the run, between 5 and 60), SOAK_NAV_MS (milliseconds between two channel switches,
 # default 5000, divided by the speed-up for a faster run, at least 250; 0 = nobody switches

@@ -229,6 +229,39 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn the_heap_of_json_counts_text_entries_and_tables() {
+        assert_eq!(heap_value(&json!(null)), 0);
+        assert_eq!(heap_value(&json!(7)), 0);
+        assert_eq!(heap_value(&json!("12345")), 5);
+        let empty = json!({});
+        assert_eq!(heap_map(empty.as_object().unwrap()), 0);
+        // One entry: a vector of 4 entries (hash, key, value), an index table of 4 slots (a
+        // word and a control byte each) with its 16-byte tail, the key. The sizes are the
+        // types' own: a `Value` takes what the build of `serde_json` makes it.
+        let value = std::mem::size_of::<Value>();
+        let entry = 8 + std::mem::size_of::<String>() + value;
+        let one = json!({"ab": 1});
+        assert_eq!(
+            heap_map(one.as_object().unwrap()),
+            4 * entry + 4 * 9 + 16 + 2
+        );
+        // A string value adds its text; five entries grow the vector to 8 and the table to 8.
+        let five = json!({"a": "xyz", "b": 1, "c": 2, "d": 3, "e": 4});
+        assert_eq!(
+            heap_map(five.as_object().unwrap()),
+            8 * entry + 8 * 9 + 16 + 5 + 3
+        );
+        // An array holds its elements (a `Value` each) and what they own.
+        assert_eq!(heap_value(&json!(["ab", 1])), 2 * value + 2);
+        // Nested objects add up.
+        let nested = json!({"k": {"ab": 1}});
+        assert_eq!(
+            heap_map(nested.as_object().unwrap()),
+            (4 * entry + 4 * 9 + 16 + 1) + (4 * entry + 4 * 9 + 16 + 2)
+        );
+    }
+
+    #[test]
     fn caps_trim_strings_and_extra_but_keep_overwrites() {
         let mut s = "aé".repeat(10);
         truncate(&mut s, 2);
