@@ -84,7 +84,25 @@ jobs:
           # The component references of the workspace crates are file URLs of the build
           # directory; make them the same everywhere (every reference is rewritten the
           # same way, so the links between components stay intact).
-          sed "s|file://$PWD|file:///workspace|g" crates/inlet-app/inlet.cdx.json > "sbom/inlet-$PLATFORM.cdx.json"
+          sed "s|file://$PWD|file:///workspace|g" crates/inlet-app/inlet.cdx.json > full.cdx.json
+          # cargo metadata unifies features over the dev-dependencies too, so the generator
+          # also lists crates that only a test build uses (gpui's test support pulls in
+          # proptest, for one). The SBOM describes the shipped binary: keep the crates of
+          # the normal dependency tree of the app for this target, and the links between
+          # them.
+          cargo tree --locked -e normal --target "$TARGET" -p inlet --prefix none \
+            | awk '{ v = $2; sub(/^v/, "", v); print $1 " " v }' | sort -u > shipped.txt
+          wc -l shipped.txt
+          jq --rawfile shipped shipped.txt '
+            ($shipped | split("\n") | map(select(length > 0) | {(.): true}) | add) as $keep
+            | .components |= map(select($keep[.name + " " + (.version // "")] // false))
+            | ([.components[]."bom-ref" // empty] + [.metadata.component."bom-ref"]
+               | map({(.): true}) | add) as $refs
+            | .dependencies |= map(
+                select($refs[.ref] // false)
+                | .dependsOn |= ((. // []) | map(select($refs[.] // false))))
+          ' full.cdx.json > "sbom/inlet-$PLATFORM.cdx.json"
+          rm full.cdx.json shipped.txt
           ls -l sbom
           # The generator must not have changed the lock file.
           git diff --exit-code Cargo.lock
@@ -100,6 +118,7 @@ jobs:
             and .specVersion == "1.5"
             and .metadata.component.name == "inlet"
             and (.components | length) > 100
+            and all(.components[]; .name != "proptest" and .name != "wiremock")
           ' "$file" > /dev/null
           # No path of the build machine in the file.
           if grep -Eq '/home/runner|/Users/runner|D:\\a|/__w/' "$file"; then

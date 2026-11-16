@@ -8,7 +8,7 @@
 #                                                          THIRD-PARTY-NOTICES with the texts of
 #                                                          the bundled fonts, icons and Twemoji,
 #                                                          and the same two files inside every
-#                                                          .tar.gz in it
+#                                                          .tar.gz and .zip in it
 #
 # THIRD-PARTY-NOTICES holds the full text of the licence of every bundled font (SIL OFL
 # 1.1, IBM Plex), icon (MIT, Phosphor) and emoji drawing (CC-BY-4.0, Twemoji); it is made
@@ -42,10 +42,13 @@ check_dir() {
   local dir=$1
   [ -s "$dir/LICENSE" ] || fail "$dir/LICENSE is missing or empty"
   check_notices "$dir/THIRD-PARTY-NOTICES"
-  local archive listing
-  for archive in "$dir"/*.tar.gz; do
+  local archive listing member inner
+  for archive in "$dir"/*.tar.gz "$dir"/*.zip; do
     [ -e "$archive" ] || continue
-    listing=$(tar -tzf "$archive")
+    case "$archive" in
+      *.zip) listing=$(unzip -Z1 "$archive") ;;
+      *) listing=$(tar -tzf "$archive") ;;
+    esac
     for name in LICENSE THIRD-PARTY-NOTICES; do
       # Entries look like "LICENSE" or "./LICENSE" (or sit inside one top folder).
       if ! printf '%s\n' "$listing" | grep -Eq "^(\./)?([^/]+/)?$name\$"; then
@@ -53,9 +56,13 @@ check_dir() {
       fi
     done
     # The notices inside the archive are the ones that were checked above.
-    local inner
+    member=$(printf '%s\n' "$listing" | grep -E '(^|/)THIRD-PARTY-NOTICES$' | head -n 1 || true)
+    [ -n "$member" ] || continue
     inner=$(mktemp)
-    tar -xzOf "$archive" "$(printf '%s\n' "$listing" | grep -E '(^|/)THIRD-PARTY-NOTICES$' | head -n 1)" > "$inner"
+    case "$archive" in
+      *.zip) unzip -p "$archive" "$member" > "$inner" ;;
+      *) tar -xzOf "$archive" "$member" > "$inner" ;;
+    esac
     if ! cmp -s "$inner" "$dir/THIRD-PARTY-NOTICES"; then
       fail "THIRD-PARTY-NOTICES inside $archive differs from the one next to it"
     fi

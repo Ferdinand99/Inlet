@@ -2,7 +2,9 @@ name: Audit
 
 # cargo-audit checks Cargo.lock against the RustSec advisory database on pull requests,
 # on pushes to v0 and main, and every day (a new advisory can appear without any change
-# to the repository). A known vulnerability fails the job. An unmaintained, unsound or
+# to the repository). The daily run is a scheduled run, and scheduled runs use the
+# default branch, which is v0; main, the release branch, is audited when it is pushed
+# to. A known vulnerability fails the job. An unmaintained, unsound or
 # yanked crate is a warning: it shows as an annotation and in the job summary.
 #
 # How this differs from the cargo-deny job in build.yml, which also reads the advisory
@@ -68,12 +70,13 @@ jobs:
           set +e
           cargo audit --file Cargo.lock --json > audit-main.json
           main=$?
-          cargo audit --file crates/inlet-media/fuzz/Cargo.lock --json > audit-fuzz.json
+          # The advisory database is fetched once; the other runs reuse it.
+          cargo audit --no-fetch --file crates/inlet-media/fuzz/Cargo.lock --json > audit-fuzz.json
           fuzz=$?
           set -e
           # The same results in readable form, in the log.
-          cargo audit --file Cargo.lock || true
-          cargo audit --file crates/inlet-media/fuzz/Cargo.lock || true
+          cargo audit --no-fetch --file Cargo.lock || true
+          cargo audit --no-fetch --file crates/inlet-media/fuzz/Cargo.lock || true
           echo "main=$main" >> "$GITHUB_OUTPUT"
           echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
 
@@ -93,6 +96,7 @@ jobs:
             jq -r --arg lock "$f" '
               (.warnings // {}) | to_entries[] | .key as $kind | .value[]
               | "\($lock)\t\($kind)\t\(.package.name) \(.package.version)\t\(.advisory.id // "-") \(.advisory.title // "")"
+              | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")
             ' "audit-$f.json" > "warnings-$f.tsv" || true
             while IFS=$'\t' read -r lock kind crate advisory; do
               [ -n "$kind" ] || continue
