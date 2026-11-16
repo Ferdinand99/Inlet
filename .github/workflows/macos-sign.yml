@@ -3,8 +3,7 @@ name: macOS signing
 # Reusable workflow: signs, notarises and staples an Inlet.app that an earlier
 # job built, then wraps it in a DMG that is signed, notarised and stapled too.
 #
-# Callers: release.yml (tags v*, and the branch main when release-please.yml
-# calls it) and macos-sign-check.yml (manual, main only).
+# Callers: release.yml (tags v*) and macos-sign-check.yml (manual, main only).
 # The job runs in the protected environment "release": every run waits for
 # approval, and only tags v* and the branch main may use it. Nothing here
 # compiles code; the app arrives as an artifact from a job without secrets.
