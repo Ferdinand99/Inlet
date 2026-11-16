@@ -98,7 +98,7 @@ impl AccountState {
             typing: Typing::default(),
             relationships: Relationships::from_ready(&r.relationships(), &r.pinned_dms()),
             threads: Threads::default(),
-            settings: Settings::default(),
+            settings: Settings::from_ready(r),
             voice: Voice::default(),
             now_ms,
             member_total: 0,
@@ -508,7 +508,18 @@ impl AccountState {
                 }
                 c.merge(self.settings.apply(d));
             }
-            Dispatch::VoiceStateUpdate(_) => c.merge(self.voice.apply(d)),
+            Dispatch::VoiceStateUpdate(v) => {
+                // The state's member names the person in a guild's channel list.
+                if let (Some(g), Some(m)) = (
+                    v.guild_id.as_deref().and_then(GuildId::parse),
+                    v.member.as_ref(),
+                ) {
+                    if v.channel_id.is_some() && self.guilds.contains_key(&g) {
+                        self.upsert_member(g, m, MemberSource::Attached, &mut c);
+                    }
+                }
+                c.merge(self.voice.apply(d));
+            }
             Dispatch::ThreadCreate(_)
             | Dispatch::ThreadUpdate(_)
             | Dispatch::ThreadDelete(_)
@@ -1025,6 +1036,16 @@ impl AccountState {
         self.member_total
     }
 
+    /// The guild order and folders from the account settings.
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Who is in which voice channel.
+    pub fn voice(&self) -> &Voice {
+        &self.voice
+    }
+
     /// Notification settings.
     pub fn guild_settings(&self) -> &GuildSettings {
         &self.guild_settings
@@ -1279,6 +1300,12 @@ impl AccountState {
                 x
             })
             .collect();
+        // Who is in voice now.
+        let states = g.voice_states();
+        if !states.is_empty() || !self.voice.is_empty() {
+            self.voice.replace_guild(id, &states);
+            c.voice = true;
+        }
         // A re-ingest can change the default level, the member count and the join time.
         c.pill(id);
         self.refresh_guild(id, c);
@@ -1477,6 +1504,8 @@ impl AccountState {
         let Some(guild) = self.guilds.remove(&g) else {
             return;
         };
+        self.voice.drop_guild(g);
+        c.voice = true;
         self.member_total = self.member_total.saturating_sub(guild.members.others_len());
         for ch in &guild.channels {
             self.forget_channel(*ch, false, c);
