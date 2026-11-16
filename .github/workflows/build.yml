@@ -303,10 +303,33 @@ jobs:
             exit 1
           fi
 
+      # Setup.exe (per user, no admin rights, Start menu shortcut) and the portable zip,
+      # built with Velopack at a pinned version. Not signed. packages/velopack/ holds the
+      # files an update feed needs later.
+      - name: Build the Setup and portable packages
+        shell: bash
+        run: packaging/windows/build-packages.sh dist/inlet.exe packages
+
+      # Installs the Setup silently on the runner, runs the installed app and removes it.
+      - name: Smoke test the Setup
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem packages -Filter 'inlet-*-windows-x86_64-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no setup file in packages/' }
+          $version = [regex]::Match($setup.Name, '^inlet-(.+)-windows-x86_64-setup\.exe$').Groups[1].Value
+          packaging/windows/smoke-test.ps1 -Setup $setup.FullName -Version $version
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: inlet-windows-x86_64
           path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: inlet-windows-x86_64-packages
+          path: packages/
           if-no-files-found: error
           retention-days: 7
 
@@ -803,7 +826,8 @@ jobs:
             libxcb1-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
-            libzstd-dev
+            libzstd-dev \
+            squashfs-tools xvfb
 
       - name: Install the pinned Rust toolchain
         run: |
@@ -837,12 +861,24 @@ jobs:
             echo "dist/inlet contains demo code"
             exit 1
           fi
-          tar -czf dist/inlet-linux-x86_64.tar.gz -C dist inlet THIRD-PARTY-NOTICES LICENSE
+
+      # The AppImage (Velopack's Linux package, built at a pinned version) and the
+      # tarball. packages/velopack/ holds the files an update feed needs later.
+      - name: Build the AppImage and the tarball
+        run: packaging/linux/build-packages.sh dist/inlet packages
+
+      # Starts the AppImage under Xvfb and checks its version and contents.
+      - name: Smoke test the AppImage
+        run: |
+          appimage=$(ls packages/inlet-*-linux-x86_64.AppImage)
+          version=${appimage#packages/inlet-}
+          version=${version%-linux-x86_64.AppImage}
+          packaging/linux/smoke-test.sh "$appimage" "$version"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: inlet-linux-x86_64
-          path: dist/inlet-linux-x86_64.tar.gz
+          path: packages/
           if-no-files-found: error
           retention-days: 7
 
