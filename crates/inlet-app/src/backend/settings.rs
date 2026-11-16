@@ -14,6 +14,7 @@ pub mod guilds;
 pub struct Ops {
     pub folders: folders::Queue,
     pub invites: guilds::InviteGate,
+    pub leaving: guilds::LeaveGate,
 }
 
 /// The shared handle of an account's [`Ops`].

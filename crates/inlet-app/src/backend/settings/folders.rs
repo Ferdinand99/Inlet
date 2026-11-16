@@ -48,6 +48,13 @@ impl Queue {
         !std::mem::replace(&mut self.running, true)
     }
 
+    /// The worker is gone (it ended, was aborted or panicked): nothing runs, and what
+    /// waited belonged to a session that is over.
+    pub fn stop(&mut self) {
+        self.pending = None;
+        self.running = false;
+    }
+
     /// The worker asks for the next list. `None` ends the worker.
     pub fn next(&mut self) -> Option<Vec<GuildFolder>> {
         let next = self.pending.take();
@@ -103,6 +110,21 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     }
 }
 
+/// Marks the queue as having no worker when the worker's task ends, however it ends (a
+/// finished queue, the session ending, an abort or a panic), so a later save starts a
+/// new one.
+struct WorkerGuard(Arc<Mutex<Ops>>);
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .folders
+            .stop();
+    }
+}
+
 async fn worker(
     client: p::Client,
     gen: u64,
@@ -110,6 +132,7 @@ async fn worker(
     internal: tokio::sync::mpsc::UnboundedSender<Internal>,
     ops: Arc<Mutex<Ops>>,
 ) {
+    let _guard = WorkerGuard(ops.clone());
     loop {
         let next = ops.lock().unwrap_or_else(|e| e.into_inner()).folders.next();
         let Some(folders) = next else {
@@ -177,5 +200,10 @@ mod tests {
         // A new change starts a new worker.
         assert!(queue.offer(list(1)));
         assert!(!queue.offer(list(2)));
+        // A worker that is gone (the session ended) leaves nothing wedged: what waited
+        // is dropped, and the next change starts a worker again.
+        queue.stop();
+        assert_eq!(queue.next(), None);
+        assert!(queue.offer(list(3)));
     }
 }

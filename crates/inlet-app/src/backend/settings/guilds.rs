@@ -10,6 +10,8 @@
 //! invite request a second per account ([`InviteGate`]) and one leave at a time, each
 //! started by a click.
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use inlet_protocol as p;
@@ -89,6 +91,42 @@ impl InviteGate {
         }
         self.last = Some(now);
         true
+    }
+}
+
+/// The guilds being left right now: one request per guild at a time, and few at once.
+#[derive(Debug, Default)]
+pub struct LeaveGate {
+    open: HashSet<String>,
+}
+
+impl LeaveGate {
+    /// Most leaves in flight at once.
+    pub const MAX: usize = 4;
+
+    /// Whether leaving `guild` may start now; records it when it may.
+    pub fn begin(&mut self, guild: &str) -> bool {
+        self.open.len() < Self::MAX && self.open.insert(guild.to_owned())
+    }
+
+    pub fn end(&mut self, guild: &str) {
+        self.open.remove(guild);
+    }
+}
+
+/// Frees a guild's leave when its task ends, however it ends.
+struct LeaveGuard {
+    ops: Arc<Mutex<super::Ops>>,
+    guild: String,
+}
+
+impl Drop for LeaveGuard {
+    fn drop(&mut self) {
+        self.ops
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .leaving
+            .end(&self.guild);
     }
 }
 
@@ -195,17 +233,37 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
         ),
         None => return refuse(&backend.events, &cmd, t!("invite-not-connected")),
     };
-    if !matches!(cmd, Cmd::Leave { .. })
-        && !ops
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .invites
-            .admit(Instant::now())
-    {
-        return refuse(&events, &cmd, t!("invite-too-fast"));
-    }
+    // Invites: one request a second. Leaving: one at a time for a guild.
+    let leave_guard = match &cmd {
+        Cmd::Leave { guild_id } => {
+            let began = ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .leaving
+                .begin(guild_id);
+            if !began {
+                return refuse(&events, &cmd, t!("invite-too-fast"));
+            }
+            Some(LeaveGuard {
+                ops: ops.clone(),
+                guild: guild_id.clone(),
+            })
+        }
+        _ => {
+            let admitted = ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .invites
+                .admit(Instant::now());
+            if !admitted {
+                return refuse(&events, &cmd, t!("invite-too-fast"));
+            }
+            None
+        }
+    };
     let internal = backend.internal.clone();
     let task = backend.spawn_guarded("guild membership", None, async move {
+        let _leave = leave_guard;
         match cmd {
             Cmd::PreviewInvite { code } => {
                 let result = match client.invite(&code).await {
@@ -263,6 +321,20 @@ mod tests {
             }
         }
         assert!((10..=11).contains(&sent), "{sent} requests");
+    }
+
+    #[test]
+    fn a_guild_is_left_once_at_a_time() {
+        let mut gate = LeaveGate::default();
+        assert!(gate.begin("1"));
+        assert!(!gate.begin("1"), "the same guild twice");
+        for id in ["2", "3", "4"] {
+            assert!(gate.begin(id));
+        }
+        assert!(!gate.begin("5"), "no more than {} at once", LeaveGate::MAX);
+        gate.end("1");
+        assert!(gate.begin("5"));
+        assert!(!gate.begin("1"), "still four open");
     }
 
     #[test]
