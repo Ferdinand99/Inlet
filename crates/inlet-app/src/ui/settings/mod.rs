@@ -153,9 +153,22 @@ pub(crate) fn close_later(cx: &mut Context<SettingsView>) {
     .detach();
 }
 
+/// A question that waits for an answer: a change of who may send DMs, and whether it
+/// applies to the communities already joined too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DmQuestion {
+    /// About bots (else members).
+    pub bots: bool,
+    /// The change allows messages (else blocks them).
+    pub allow: bool,
+}
+
 /// The settings domain's view state.
 #[derive(Default)]
 pub struct State {
+    /// The Privacy tab asks whether a change of who may send DMs also applies to the
+    /// communities already joined.
+    pub dm_question: Option<DmQuestion>,
     /// The open settings view, if any.
     pub view: Option<Entity<SettingsView>>,
     /// The account's own profile, as the My profile tab edits it.
@@ -171,7 +184,7 @@ impl Inlet {
     pub(crate) fn on_settings_event(
         &mut self,
         event: SettingsEv,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let SettingsEv::Account(event) = event;
@@ -180,19 +193,15 @@ impl Inlet {
                 store::answer_settings(cx, &settings, through);
             }
             Ev::PrefsSaved { through, prefs } => {
-                let a = prefs.get().accessibility.as_ref();
-                let display = Display {
-                    font_size: a.and_then(|a| a.font_size),
-                    message_group_spacing: a.and_then(|a| a.message_group_spacing),
-                };
+                let display = Display::of_preferences(prefs.get());
                 store::answer_preferences(cx, display, through);
             }
             Ev::SaveFailed {
                 through,
                 preferences,
             } => store::failed(cx, through, preferences),
-            Ev::Profile(own) => self.on_own_profile(*own, false, cx),
-            Ev::ProfileSaved(own) => self.on_own_profile(*own, true, cx),
+            Ev::Profile(own) => self.on_own_profile(*own, false, window, cx),
+            Ev::ProfileSaved(own) => self.on_own_profile(*own, true, window, cx),
             Ev::ProfileFailed(reason) => self.on_profile_failed(reason, false, cx),
             Ev::ProfileSaveFailed(reason) => self.on_profile_failed(reason, true, cx),
         }
@@ -251,14 +260,17 @@ impl Inlet {
         if compact_moved {
             self.chat.view.compact = now.compact;
         }
-        let show_spoilers = now.render_spoilers == 0;
-        let spoilers_moved = self.chat.view.show_spoilers != show_spoilers;
-        self.chat.view.show_spoilers = show_spoilers;
+        let spoilers_moved = self.chat.view.spoilers != now.render_spoilers;
+        self.chat.view.spoilers = now.render_spoilers;
         self.media.images.animations().borrow_mut().prefs =
             crate::ui::media::animation_budget::MotionPrefs::of_settings(&now);
         let sizes_moved = before.as_ref().is_none_or(|b| {
             b.font_size != now.font_size
                 || b.group_spacing != now.group_spacing
+                || b.compact_group_spacing != now.compact_group_spacing
+                || b.compact_avatars != now.compact_avatars
+                || b.inline_embed_media != now.inline_embed_media
+                || b.inline_attachment_media != now.inline_attachment_media
                 || b.render_embeds != now.render_embeds
                 || b.render_reactions != now.render_reactions
         });
@@ -353,7 +365,7 @@ mod tests {
         };
         let before = height(cx);
         cx.read_entity(&inlet, |i, _| {
-            assert!(!i.chat.view.compact && !i.chat.view.show_spoilers);
+            assert!(!i.chat.view.compact && i.chat.view.spoilers == 1);
         });
 
         cx.update(|_, cx| store::change(cx, Change::FontSize(24)));
@@ -375,7 +387,7 @@ mod tests {
         cx.run_until_parked();
         cx.read_entity(&inlet, |i, _| {
             assert!(i.chat.view.compact, "the display mode follows");
-            assert!(i.chat.view.show_spoilers, "spoilers show without a click");
+            assert_eq!(i.chat.view.spoilers, 0, "spoilers show without a click");
             assert_eq!(i.settings_values().font_size, 24);
         });
         cx.update(|_, cx| {

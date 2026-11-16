@@ -447,8 +447,9 @@ pub struct MessageView {
     next_request: u64,
     /// Compact mode: no avatars, the time before the name, no space between groups.
     pub compact: bool,
-    /// Spoilers are shown without a click (the account's "always show" setting).
-    pub show_spoilers: bool,
+    /// When spoilers show without a click: 0 always, 1 never, 2 in channels the account
+    /// moderates (the account's spoiler setting).
+    pub spoilers: u8,
     /// The open channel's newest page has landed.
     loaded: bool,
     newest_retries: u8,
@@ -787,7 +788,7 @@ impl MessageView {
     pub fn new() -> Self {
         Self {
             compact: starts_compact(),
-            show_spoilers: false,
+            spoilers: 1,
             ..Self::default()
         }
     }
@@ -899,6 +900,9 @@ impl MessageView {
         if !self.detached {
             self.detached_new = 0;
         }
+        // Spoilers that show by themselves: always, or where the account moderates.
+        let spoilers_shown = self.spoilers == 0
+            || (self.spoilers == 2 && super::action_bar::Perms::of(state, ch).moderates());
         let me = state.me_id();
         // Whether the last row is this account's message (pending rows group under it).
         let mut last_mine = false;
@@ -982,7 +986,7 @@ impl MessageView {
                     grouped,
                     mention: mentions_me(state, ch, m),
                     jumped: self.is_highlighted(id, now),
-                    revealed: self.show_spoilers || self.revealed.contains(&id),
+                    revealed: spoilers_shown || self.revealed.contains(&id),
                     name_color: name_color(state, guild, m),
                     tag: tag(channel, m, &c.shown),
                     reply: reply_of(m, &c.shown),

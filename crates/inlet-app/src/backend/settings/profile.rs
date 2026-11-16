@@ -19,9 +19,11 @@ pub const MAX_IMAGE_BYTES: u64 = p::api::profiles::MAX_IMAGE_BYTES as u64;
 pub const MAX_NAME_CHARS: usize = 32;
 /// Longest pronouns text, in characters.
 pub const MAX_PRONOUNS_CHARS: usize = 40;
-/// Longest bio the tab lets the person type (Fluxer's default limit is 320; an instance
-/// may allow more, and the server checks).
+/// The bio limit of an account with no rule of its own (Fluxer's default; the instance
+/// and the account's plan may raise it, [`OwnProfile::max_bio`] has the real one).
 pub const MAX_BIO_CHARS: usize = 320;
+/// What this app lets a bio grow to, whatever the instance allows.
+pub const MAX_BIO_CEILING: usize = 4096;
 /// The most of a bio read back and kept.
 const MAX_BIO_READ: usize = 4096;
 
@@ -42,6 +44,10 @@ pub struct ProfileSave {
     pub name: Option<String>,
     pub pronouns: Option<String>,
     pub bio: Option<String>,
+    /// The bio limit of the account: longer text is cut (0: only the ceiling applies).
+    pub max_bio: usize,
+    /// The accent colour, `0xRRGGBB`; `Some(None)` clears it.
+    pub accent: Option<Option<u32>>,
     pub avatar: ImageChange,
     pub banner: ImageChange,
 }
@@ -59,6 +65,13 @@ pub struct OwnProfile {
     pub pronouns: String,
     /// The bio as written (markdown).
     pub bio: String,
+    /// The most characters the account's bio may have (Fluxer's rule: the instance's
+    /// limit for the account's plan).
+    pub max_bio: usize,
+    /// The accent colour, `0xRRGGBB`.
+    pub accent: Option<u32>,
+    /// The account may have a banner (the instance's `feature_animated_banner`).
+    pub can_upload_banner: bool,
 }
 
 /// A failed profile request: the protocol's error, or a sentence of our own (a picture
@@ -102,12 +115,43 @@ pub(in crate::backend) fn reason(
 pub async fn load(client: &p::Client) -> Result<OwnProfile, ProfileError> {
     let me = client.me().await?;
     let full = client.user_profile(&me.id, None, false).await?;
-    Ok(own_profile(&full))
+    Ok(own_profile(&full, &limits_of(client, &me.traits())))
+}
+
+/// What the account's plan allows on a profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub max_bio: usize,
+    pub banner: bool,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_bio: MAX_BIO_CHARS,
+            banner: false,
+        }
+    }
+}
+
+/// The limits for an account with `traits` on the client's instance, as Fluxer's client
+/// resolves them (`max_bio_length`, `feature_animated_banner`).
+fn limits_of(client: &p::Client, traits: &[String]) -> Limits {
+    let discovery = client.instance().discovery();
+    Limits {
+        max_bio: discovery
+            .resolve_limit(p::limits::MAX_BIO_LENGTH, traits)
+            .map_or(MAX_BIO_CHARS, |n| (n as usize).clamp(1, MAX_BIO_CEILING)),
+        banner: discovery
+            .resolve_limit("feature_animated_banner", traits)
+            .unwrap_or(0)
+            != 0,
+    }
 }
 
 /// The profile as the tab edits it: texts without control characters (a bio keeps its
 /// line breaks), cut to what a profile may hold.
-pub fn own_profile(full: &p::FullUserProfile) -> OwnProfile {
+pub fn own_profile(full: &p::FullUserProfile, limits: &Limits) -> OwnProfile {
     let clean = |s: Option<&str>, max: usize, multiline: bool| -> String {
         s.map(|t| {
             t.chars()
@@ -138,6 +182,12 @@ pub fn own_profile(full: &p::FullUserProfile) -> OwnProfile {
         .trim()
         .to_owned(),
         bio: clean(full.user_profile.bio.as_deref(), MAX_BIO_READ, true),
+        max_bio: limits.max_bio,
+        accent: full
+            .user_profile
+            .accent_color
+            .map(|c| (c & 0xFF_FF_FF) as u32),
+        can_upload_banner: limits.banner,
     }
 }
 
@@ -165,6 +215,9 @@ pub fn demo_saved(save: ProfileSave) -> OwnProfile {
     if let Some(bio) = save.bio {
         p.bio = bio;
     }
+    if let Some(accent) = save.accent {
+        p.accent = accent;
+    }
     p
 }
 
@@ -173,7 +226,7 @@ pub async fn save(client: &p::Client, save: ProfileSave) -> Result<OwnProfile, P
     let edit = edit_of(save).await?;
     let me = client.edit_profile(&edit).await?;
     let full = client.user_profile(&me.id, None, false).await?;
-    Ok(own_profile(&full))
+    Ok(own_profile(&full, &limits_of(client, &me.traits())))
 }
 
 /// The protocol's edit for what the tab asked: text cut to its limit (empty text clears
@@ -188,10 +241,17 @@ pub async fn edit_of(save: ProfileSave) -> Result<p::ProfileEdit, ProfileError> 
     Ok(p::ProfileEdit {
         global_name: text(save.name, MAX_NAME_CHARS),
         pronouns: text(save.pronouns, MAX_PRONOUNS_CHARS),
-        bio: text(save.bio, MAX_BIO_READ),
+        bio: text(
+            save.bio,
+            if save.max_bio == 0 {
+                MAX_BIO_CEILING
+            } else {
+                save.max_bio.min(MAX_BIO_CEILING)
+            },
+        ),
         avatar: image(save.avatar).await?,
         banner: image(save.banner).await?,
-        accent_color: None,
+        accent_color: save.accent,
     })
 }
 
@@ -255,6 +315,9 @@ pub fn demo_profile() -> OwnProfile {
         avatar: None,
         banner: None,
         pronouns: "they/them".into(),
-        bio: "Tests Inlet against a demo instance.".into(),
+        bio: "Tests Inlet against a demo instance.\nA second line.".into(),
+        max_bio: MAX_BIO_CHARS,
+        accent: Some(0x413cdd),
+        can_upload_banner: false,
     }
 }

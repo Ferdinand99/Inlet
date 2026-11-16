@@ -482,6 +482,7 @@ async fn the_own_profile_is_read_with_its_texts_cleaned() {
             "user_profile": {"bio": "a\u{200B}b\nc", "pronouns": "x\ny"}
         }))
         .unwrap(),
+        &profile::Limits::default(),
     );
     assert_eq!(
         joined.name, "\u{1F469}\u{200D}\u{1F4BB}\u{200C}x",
@@ -493,4 +494,34 @@ async fn the_own_profile_is_read_with_its_texts_cleaned() {
     assert_eq!(own.pronouns, "she/her");
     assert_eq!(own.banner.as_deref(), Some("bannerhash"));
     assert_eq!(own.avatar.as_ref().map(|a| a.hash.as_str()), Some("abc123"));
+}
+
+#[test]
+fn the_bio_limit_and_the_banner_follow_the_account_plan() {
+    // Fluxer's client resolves `max_bio_length` and `feature_animated_banner` for the
+    // account's traits; a premium account may write more and have a banner.
+    let discovery: p::Discovery = serde_json::from_value(discovery("https://x.example")).unwrap();
+    let mut with_rules = discovery.clone();
+    with_rules.limits = json!({"version": 2, "rules": [
+        {"filters": {"traits": ["premium"]},
+         "overrides": {"max_bio_length": 1024, "feature_animated_banner": 1}}
+    ]});
+    let free: Vec<String> = Vec::new();
+    let premium = vec!["premium".to_string()];
+    assert_eq!(
+        with_rules.resolve_limit(p::limits::MAX_BIO_LENGTH, &free),
+        Some(320)
+    );
+    assert_eq!(
+        with_rules.resolve_limit(p::limits::MAX_BIO_LENGTH, &premium),
+        Some(1024)
+    );
+    assert_eq!(
+        with_rules.resolve_limit("feature_animated_banner", &free),
+        None
+    );
+    assert_eq!(
+        with_rules.resolve_limit("feature_animated_banner", &premium),
+        Some(1)
+    );
 }

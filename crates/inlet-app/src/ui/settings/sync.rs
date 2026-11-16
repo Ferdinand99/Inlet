@@ -26,11 +26,30 @@ use inlet_state::settings::Display;
 use crate::backend::settings::write::Change;
 use crate::theme::Pref;
 
-/// Message font sizes the settings offer, in pixels.
-pub const FONT_SIZES: std::ops::RangeInclusive<u8> = 12..=24;
-/// Group spacings the settings offer, in pixels, in steps of [`SPACING_STEP`].
-pub const GROUP_SPACINGS: std::ops::RangeInclusive<u8> = 0..=32;
-pub const SPACING_STEP: u8 = 4;
+/// Message font sizes Fluxer offers, in pixels. It snaps any other value to the nearest
+/// of these and writes it back, so Inlet offers exactly these.
+pub const FONT_SIZES: [u8; 7] = [12, 14, 15, 16, 18, 20, 24];
+/// Spaces between message groups Fluxer offers, in pixels, with the same rule.
+pub const GROUP_SPACINGS: [u8; 5] = [0, 4, 8, 16, 24];
+
+/// The entry of `list` nearest to `value`.
+pub fn nearest(list: &[u8], value: u8) -> u8 {
+    list.iter()
+        .copied()
+        .min_by_key(|v| v.abs_diff(value))
+        .unwrap_or(value)
+}
+
+/// The entry of `list` one step from `value` (which is first snapped to the list),
+/// stopping at the ends. `direction` is -1 or 1.
+pub fn step(list: &[u8], value: u8, direction: i32) -> u8 {
+    let at = list
+        .iter()
+        .position(|v| *v == nearest(list, value))
+        .unwrap_or(0) as i32;
+    let to = (at + direction.signum()).clamp(0, list.len() as i32 - 1);
+    list[to as usize]
+}
 
 /// Who may send a friend request: the flags of Fluxer's `friend_source_flags`.
 pub mod friend_sources {
@@ -55,8 +74,20 @@ pub struct Values {
     pub developer_mode: bool,
     pub dms_from_members: bool,
     pub friend_sources: u8,
+    pub inline_embed_media: bool,
+    pub inline_attachment_media: bool,
+    pub bot_dms_from_members: bool,
+    pub call_flags: u8,
+    pub group_dm_flags: u8,
+    pub profile_privacy: u8,
+    pub sensitive_friends: u8,
+    pub sensitive_others: u8,
+    pub sensitive_servers: u8,
     pub font_size: u8,
     pub group_spacing: u8,
+    pub compact_group_spacing: u8,
+    pub compact_avatars: bool,
+    pub convert_emoticons: bool,
 }
 
 impl Default for Values {
@@ -73,8 +104,20 @@ impl Default for Values {
             developer_mode: false,
             dms_from_members: true,
             friend_sources: friend_sources::MUTUAL_FRIENDS | friend_sources::MUTUAL_SERVERS,
+            inline_embed_media: true,
+            inline_attachment_media: true,
+            bot_dms_from_members: true,
+            call_flags: 8,
+            group_dm_flags: 8,
+            profile_privacy: 0,
+            sensitive_friends: 0,
+            sensitive_others: 2,
+            sensitive_servers: 1,
             font_size: 16,
             group_spacing: 16,
+            compact_group_spacing: 0,
+            compact_avatars: false,
+            convert_emoticons: false,
         }
     }
 }
@@ -94,8 +137,43 @@ impl Values {
             Change::DeveloperMode(v) => self.developer_mode = v,
             Change::DmsFromMembers(v) => self.dms_from_members = v,
             Change::FriendSources(v) => self.friend_sources = v & 7,
+            Change::InlineEmbedMedia(v) => self.inline_embed_media = v,
+            Change::InlineAttachmentMedia(v) => self.inline_attachment_media = v,
+            Change::BotDmsFromMembers(v) => self.bot_dms_from_members = v,
+            Change::IncomingCalls(v) => self.call_flags = v & 63,
+            Change::GroupDmAdd(v) => self.group_dm_flags = v & 31,
+            Change::ProfilePrivacy(v) => self.profile_privacy = v.min(2),
+            Change::SensitiveFriends(v) => self.sensitive_friends = v.min(2),
+            Change::SensitiveOthers(v) => self.sensitive_others = v.min(2),
+            Change::SensitiveServers(v) => self.sensitive_servers = v.min(2),
             Change::FontSize(v) => self.font_size = v.clamp(8, 48),
             Change::GroupSpacing(v) => self.group_spacing = v.min(64),
+            Change::CompactGroupSpacing(v) => self.compact_group_spacing = v.min(64),
+            Change::CompactAvatars(v) => self.compact_avatars = v,
+            Change::ConvertEmoticons(v) => self.convert_emoticons = v,
+        }
+    }
+
+    /// Takes the values of the synced preferences.
+    pub fn apply_display(&mut self, d: &Display) {
+        let px = |v: Option<f64>, max: f64| {
+            v.filter(|px| px.is_finite())
+                .map(|px| px.round().clamp(0., max) as u8)
+        };
+        if let Some(n) = px(d.font_size, 48.) {
+            self.font_size = n.max(8);
+        }
+        if let Some(n) = px(d.message_group_spacing, 64.) {
+            self.group_spacing = n;
+        }
+        if let Some(n) = px(d.compact_message_group_spacing, 64.) {
+            self.compact_group_spacing = n;
+        }
+        if let Some(show) = d.show_avatars_in_compact_mode {
+            self.compact_avatars = show;
+        }
+        if let Some(on) = d.convert_emoticons {
+            self.convert_emoticons = on;
         }
     }
 
@@ -120,13 +198,32 @@ impl Values {
         if let Some(flags) = s.friend_source_flags() {
             v.friend_sources = (flags & 7) as u8;
         }
+        v.inline_embed_media = s.inline_embed_media;
+        v.inline_attachment_media = s.inline_attachment_media;
+        if let Some(restricted) = s.switch("bot_default_guilds_restricted") {
+            v.bot_dms_from_members = !restricted;
+        }
+        let number = |key: &str, max: u64| s.number(key).map(|n| n.min(max) as u8);
+        if let Some(n) = number("incoming_call_flags", 63) {
+            v.call_flags = n;
+        }
+        if let Some(n) = number("group_dm_add_permission_flags", 31) {
+            v.group_dm_flags = n;
+        }
+        if let Some(n) = number("profile_privacy", 2) {
+            v.profile_privacy = n;
+        }
+        if let Some(n) = number("sensitive_content_friend_dm_filter", 2) {
+            v.sensitive_friends = n;
+        }
+        if let Some(n) = number("sensitive_content_non_friend_dm_filter", 2) {
+            v.sensitive_others = n;
+        }
+        if let Some(n) = number("sensitive_content_guild_filter", 2) {
+            v.sensitive_servers = n;
+        }
         if let Some(d) = display {
-            if let Some(px) = d.font_size.filter(|px| px.is_finite()) {
-                v.font_size = px.round().clamp(8., 48.) as u8;
-            }
-            if let Some(px) = d.message_group_spacing.filter(|px| px.is_finite()) {
-                v.group_spacing = px.round().clamp(0., 64.) as u8;
-            }
+            v.apply_display(&d);
         }
         v
     }
@@ -309,7 +406,11 @@ pub(crate) mod tests {
         let seq = t.edit(Change::Theme(Pref::Light));
         assert_eq!(shown(&t), Pref::Light, "the click shows at once");
         t.gateway(snapshot("coal"));
-        assert_eq!(shown(&t), Pref::Light, "the click stays on top while it waits");
+        assert_eq!(
+            shown(&t),
+            Pref::Light,
+            "the click stays on top while it waits"
+        );
         t.answered(Some(snapshot("light")), seq, false);
         assert_eq!(shown(&t), Pref::Light, "still waiting for the echo");
         t.gateway(snapshot("light"));
@@ -325,7 +426,11 @@ pub(crate) mod tests {
         t.gateway(snapshot("coal"));
         assert_eq!(shown(&t), Pref::Light, "not settled before the answer");
         t.answered(Some(snapshot("light")), seq, false);
-        assert_eq!(shown(&t), Pref::Coal, "the update after the write is the newest");
+        assert_eq!(
+            shown(&t),
+            Pref::Coal,
+            "the update after the write is the newest"
+        );
 
         // The same, with the answer first.
         let mut t = Tracker::new(Values::default());
@@ -447,6 +552,7 @@ pub(crate) mod tests {
         let display = Display {
             font_size: Some(18.),
             message_group_spacing: Some(8.),
+            ..Display::default()
         };
         t.gateway(Values::from_server(
             &fluxer("dark", 3),
@@ -474,6 +580,7 @@ pub(crate) mod tests {
             Some(Display {
                 font_size: Some(500.),
                 message_group_spacing: Some(f64::NAN),
+                ..Display::default()
             }),
             &Values::default(),
         );
@@ -492,6 +599,43 @@ pub(crate) mod tests {
             ..Values::default()
         };
         assert_eq!(Values::from_server(&s, None, &base).theme, Pref::Coal);
+    }
+
+    #[test]
+    fn the_sizes_are_fluxers_lists_and_other_values_snap_to_them() {
+        assert_eq!(FONT_SIZES, [12, 14, 15, 16, 18, 20, 24]);
+        assert_eq!(GROUP_SPACINGS, [0, 4, 8, 16, 24]);
+        // A 13 px value written by another client shows as the nearest size.
+        assert_eq!(nearest(&FONT_SIZES, 13), 12);
+        assert_eq!(nearest(&FONT_SIZES, 17), 16);
+        assert_eq!(nearest(&FONT_SIZES, 40), 24);
+        assert_eq!(step(&FONT_SIZES, 16, 1), 18);
+        assert_eq!(step(&FONT_SIZES, 16, -1), 15);
+        assert_eq!(step(&FONT_SIZES, 24, 1), 24, "stops at the end");
+        assert_eq!(step(&GROUP_SPACINGS, 0, -1), 0);
+        assert_eq!(
+            step(&GROUP_SPACINGS, 10, 1),
+            16,
+            "10 snaps to 8 first, then steps"
+        );
+    }
+
+    #[test]
+    fn the_compact_display_has_its_own_spacing_and_avatars() {
+        let mut v = Values::default();
+        assert_eq!((v.group_spacing, v.compact_group_spacing), (16, 0));
+        v.apply(&Change::CompactGroupSpacing(8));
+        v.apply(&Change::CompactAvatars(true));
+        assert_eq!((v.group_spacing, v.compact_group_spacing), (16, 8));
+        assert!(v.compact_avatars);
+        let d = Display {
+            compact_message_group_spacing: Some(4.),
+            show_avatars_in_compact_mode: Some(false),
+            ..Display::default()
+        };
+        v.apply_display(&d);
+        assert_eq!(v.compact_group_spacing, 4);
+        assert!(!v.compact_avatars);
     }
 
     #[test]

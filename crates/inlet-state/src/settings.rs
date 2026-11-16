@@ -36,19 +36,33 @@ const KEPT_EXTRA: [&str; 13] = [
 pub struct Display {
     /// Message font size in pixels.
     pub font_size: Option<f64>,
-    /// Space above the first message of a group in pixels (cozy display).
+    /// Space above the first message of a group in pixels (comfy display).
     pub message_group_spacing: Option<f64>,
+    /// The same in the compact display.
+    pub compact_message_group_spacing: Option<f64>,
+    /// Avatars are shown in the compact display.
+    pub show_avatars_in_compact_mode: Option<bool>,
+    /// Text smileys become emoji when a message is sent (`chat_input`).
+    pub convert_emoticons: Option<bool>,
 }
 
 impl Display {
     /// What the synced preferences of `settings` say, if it carries a readable snapshot.
     pub fn of(settings: &UserSettings) -> Option<Display> {
         let prefs = settings.synced_preferences()?.ok()?;
-        let a = prefs.get().accessibility.as_ref();
-        Some(Display {
+        Some(Display::of_preferences(prefs.get()))
+    }
+
+    /// What the preferences say.
+    pub fn of_preferences(prefs: &inlet_protocol::api::preferences::Preferences) -> Display {
+        let a = prefs.accessibility.as_ref();
+        Display {
             font_size: a.and_then(|a| a.font_size),
             message_group_spacing: a.and_then(|a| a.message_group_spacing),
-        })
+            compact_message_group_spacing: a.and_then(|a| a.compact_message_group_spacing),
+            show_avatars_in_compact_mode: a.and_then(|a| a.show_user_avatars_in_compact_mode),
+            convert_emoticons: prefs.chat_input.as_ref().and_then(|c| c.convert_emoticons),
+        }
     }
 }
 

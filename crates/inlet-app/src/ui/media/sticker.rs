@@ -44,7 +44,7 @@ pub fn sticker_requests(
             .with_proxy_size(px),
         )
     };
-    let moving = (sticker.animated && prefs.allows(Motion::Sticker))
+    let moving = (sticker.animated && prefs.fetches_animation(Motion::Sticker))
         .then(|| request(true, 1.))
         .flatten();
     (moving, request(false, scale))
@@ -221,7 +221,8 @@ mod tests {
             .iter()
             .all(|u| u.starts_with("https://media.example.org/media/stickers/")));
 
-        // Animated stickers off: only the still is asked for.
+        // Animated stickers set to never animate: only the still is asked for. Set to
+        // animate on interaction, the animation is asked for too.
         let off = MotionPrefs {
             animate_stickers: false,
             ..MotionPrefs::default()
@@ -229,6 +230,13 @@ mod tests {
         let (moving, still) = sticker_requests(&proxy, &sticker("1002", true), &off, 1.);
         assert!(moving.is_none());
         assert!(still.is_some());
+        let hover = MotionPrefs {
+            stickers_on_hover: true,
+            ..off
+        };
+        assert!(sticker_requests(&proxy, &sticker("1002", true), &hover, 1.)
+            .0
+            .is_some());
         // A sticker ID that is not a snowflake asks for nothing.
         assert_eq!(
             sticker_requests(&proxy, &sticker("../1", true), &prefs, 1.),

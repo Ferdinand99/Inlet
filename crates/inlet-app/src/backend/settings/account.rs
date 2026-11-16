@@ -13,6 +13,14 @@ pub enum Cmd {
     /// Changes to settings. `seq` counts up with every command; the answer says how far
     /// it got ([`Ev::AccountSaved`], [`Ev::PrefsSaved`], [`Ev::SaveFailed`]).
     Save { seq: u64, changes: Vec<Change> },
+    /// The servers whose members (or, with `bots`, bots) may not send DMs: the whole
+    /// list, which replaces the account's. `seq` is the command of the change of the
+    /// default that it goes with.
+    SaveGuildDms {
+        seq: u64,
+        bots: bool,
+        guild_ids: Vec<String>,
+    },
     /// The account's own profile (account-wide), for the My profile tab.
     LoadProfile,
     /// Saves a profile edit, then reads the profile again.
@@ -56,7 +64,7 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
             Cmd::SaveProfile(save) => {
                 backend.emit(Ev::ProfileSaved(Box::new(profile::demo_saved(*save))));
             }
-            Cmd::Save { .. } => {}
+            Cmd::Save { .. } | Cmd::SaveGuildDms { .. } => {}
         }
         return;
     }
@@ -74,6 +82,10 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
                     }
                 }
             }
+            Cmd::SaveGuildDms { seq, .. } => backend.emit(Ev::SaveFailed {
+                through: seq,
+                preferences: false,
+            }),
             Cmd::LoadProfile => backend.emit(Ev::ProfileFailed(t!("settings-not-connected"))),
             Cmd::SaveProfile(_) => {
                 backend.emit(Ev::ProfileSaveFailed(t!("settings-not-connected")));
@@ -118,6 +130,14 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
                     }
                 });
             }
+        }
+        Cmd::SaveGuildDms {
+            seq,
+            bots,
+            guild_ids,
+        } => {
+            let tx = r.settings.sender(&client, &events, &internal, gen);
+            let _ = tx.send(Wish::guild_dms(seq, bots, guild_ids));
         }
         Cmd::LoadProfile => {
             backend.spawn_guarded("load profile", None, async move {

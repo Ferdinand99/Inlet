@@ -38,6 +38,11 @@ struct LocalCopy {
     compact: bool,
     font_size: u8,
     group_spacing: u8,
+    compact_group_spacing: u8,
+    compact_avatars: bool,
+    /// The theme goes to the account and follows it (Fluxer's "sync theme across
+    /// devices"); off keeps this computer on its own theme.
+    sync_theme: bool,
 }
 
 impl Default for LocalCopy {
@@ -53,6 +58,9 @@ impl LocalCopy {
             compact: v.compact,
             font_size: v.font_size,
             group_spacing: v.group_spacing,
+            compact_group_spacing: v.compact_group_spacing,
+            compact_avatars: v.compact_avatars,
+            sync_theme: true,
         }
     }
 
@@ -65,6 +73,8 @@ impl LocalCopy {
         v.compact = self.compact;
         v.font_size = self.font_size.clamp(8, 48);
         v.group_spacing = self.group_spacing.min(64);
+        v.compact_group_spacing = self.compact_group_spacing.min(64);
+        v.compact_avatars = self.compact_avatars;
         v
     }
 }
@@ -80,6 +90,8 @@ pub struct Store {
     applied: Option<Values>,
     /// What `settings.json` holds.
     saved: Option<Values>,
+    /// The theme goes to the account and follows it.
+    sync_theme: bool,
     /// The write of the local copy that waits for the clicks to stop.
     save_task: Option<gpui::Task<()>>,
 }
@@ -94,6 +106,7 @@ impl Store {
             generation: 1,
             applied: None,
             saved: None,
+            sync_theme: true,
             save_task: None,
         }
     }
@@ -107,11 +120,12 @@ pub fn init(cx: &mut App) {
     } else {
         prefs::settings_path()
     };
-    #[allow(unused_mut)]
-    let mut values = path
+    let local: LocalCopy = path
         .as_deref()
-        .map(|p| prefs::load_section::<LocalCopy>(p, APPEARANCE_KEY).values())
+        .map(|p| prefs::load_section::<LocalCopy>(p, APPEARANCE_KEY))
         .unwrap_or_default();
+    #[allow(unused_mut)]
+    let mut values = local.values();
     // The demo's scene files name a theme.
     #[cfg(feature = "demo")]
     if let Some(pref) = std::env::var("INLET_DEMO_THEME")
@@ -124,6 +138,7 @@ pub fn init(cx: &mut App) {
     // What was kept is what is shown: nothing to write back.
     switch_render_state(&values);
     let mut store = Store::new(values.clone(), path);
+    store.sync_theme = local.sync_theme;
     store.applied = Some(values.clone());
     store.saved = Some(values);
     cx.set_global(store);
@@ -150,14 +165,33 @@ pub fn generation(cx: &App) -> u64 {
     cx.try_global::<Store>().map_or(0, |s| s.generation)
 }
 
-/// A change from a tab: shown at once, kept, and sent to the server.
-pub fn change(cx: &mut App, change: Change) {
+/// A change from a tab: shown at once, kept, and sent to the server. Returns the number
+/// of the command that carries it.
+pub fn change(cx: &mut App, change: Change) -> u64 {
+    let sends = !(matches!(change, Change::Theme(_)) && !store(cx).sync_theme);
     let seq = store(cx).tracker.edit(change);
     apply(cx);
+    if !sends {
+        // This computer keeps its own theme: the edit stays, and nothing is sent.
+        return seq;
+    }
     if let Some(backend) = cx.try_global::<CurrentBackend>().map(|b| b.0.clone()) {
         backend.send(Cmd::Save {
             seq,
             changes: vec![change],
+        });
+    }
+    seq
+}
+
+/// The servers whose members (or, with `bots`, bots) may not send DMs: the whole list is
+/// written, after the change of the default it goes with (command `seq`).
+pub fn restrict_guilds(cx: &mut App, seq: u64, bots: bool, guild_ids: Vec<String>) {
+    if let Some(backend) = cx.try_global::<CurrentBackend>().map(|b| b.0.clone()) {
+        backend.send(Cmd::SaveGuildDms {
+            seq,
+            bots,
+            guild_ids,
         });
     }
 }
@@ -170,7 +204,10 @@ const ECHO_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 /// order they arrive. `display` is the synced preferences' font size and spacing.
 pub fn gateway_settings(cx: &mut App, settings: &p::UserSettings, display: Option<Display>) {
     let s = store(cx);
-    let values = Values::from_server(settings, display, s.tracker.confirmed());
+    let mut values = Values::from_server(settings, display, s.tracker.confirmed());
+    if !s.sync_theme {
+        values.theme = s.tracker.confirmed().theme;
+    }
     if s.tracker.gateway(values) {
         apply(cx);
     }
@@ -181,7 +218,10 @@ pub fn gateway_settings(cx: &mut App, settings: &p::UserSettings, display: Optio
 /// answer's own values) deciding what is shown.
 pub fn answer_settings(cx: &mut App, settings: &p::UserSettings, through: u64) {
     let s = store(cx);
-    let values = Values::from_server(settings, Display::of(settings), s.tracker.confirmed());
+    let mut values = Values::from_server(settings, Display::of(settings), s.tracker.confirmed());
+    if !s.sync_theme {
+        values.theme = s.tracker.confirmed().theme;
+    }
     if s.tracker.answered(Some(values), through, false) {
         apply(cx);
     }
@@ -192,12 +232,7 @@ pub fn answer_settings(cx: &mut App, settings: &p::UserSettings, through: u64) {
 pub fn answer_preferences(cx: &mut App, display: Display, through: u64) {
     let s = store(cx);
     let mut values = s.tracker.confirmed().clone();
-    if let Some(px) = display.font_size.filter(|px| px.is_finite()) {
-        values.font_size = px.round().clamp(8., 48.) as u8;
-    }
-    if let Some(px) = display.message_group_spacing.filter(|px| px.is_finite()) {
-        values.group_spacing = px.round().clamp(0., 64.) as u8;
-    }
+    values.apply_display(&display);
     if s.tracker.answered(Some(values), through, true) {
         apply(cx);
     }
@@ -217,6 +252,28 @@ fn expire_later(cx: &mut App, through: u64, preferences: bool) {
 fn expire(cx: &mut App, through: u64, preferences: bool) {
     if cx.has_global::<Store>() && store(cx).tracker.expire(through, preferences) {
         apply(cx);
+    }
+}
+
+/// Whether the theme goes to the account.
+pub fn sync_theme(cx: &App) -> bool {
+    cx.try_global::<Store>().is_none_or(|s| s.sync_theme)
+}
+
+/// Turns the sync of the theme with the account on or off. Turning it on sends the theme
+/// this computer has.
+pub fn set_sync_theme(cx: &mut App, on: bool) {
+    let s = store(cx);
+    if s.sync_theme == on {
+        return;
+    }
+    s.sync_theme = on;
+    s.applied = None;
+    s.saved = None;
+    let theme = s.tracker.values().theme;
+    apply(cx);
+    if on {
+        change(cx, Change::Theme(theme));
     }
 }
 
@@ -249,6 +306,8 @@ fn switch_render_state(v: &Values) {
     theme::apply(v.theme);
     theme::set_message_font_px(f32::from(v.font_size));
     theme::set_group_spacing(f32::from(v.group_spacing));
+    theme::set_compact_group_spacing(f32::from(v.compact_group_spacing));
+    theme::set_compact_avatars(v.compact_avatars);
 }
 
 /// How long after the last change the local copy is written.
@@ -262,7 +321,10 @@ fn write_local(cx: &mut App) {
         return;
     };
     let before = s.saved.replace(now.clone());
-    let local = LocalCopy::of(&now);
+    let local = LocalCopy {
+        sync_theme: s.sync_theme,
+        ..LocalCopy::of(&now)
+    };
     let motion = MotionPrefs::of_settings(&now);
     let local_changed = before.as_ref().map(LocalCopy::of) != Some(local.clone());
     let motion_changed = before.as_ref().map(MotionPrefs::of_settings) != Some(motion);
@@ -409,6 +471,9 @@ pub(crate) mod tests {
             compact: true,
             font_size: 200,
             group_spacing: 250,
+            compact_group_spacing: 250,
+            compact_avatars: true,
+            sync_theme: true,
         };
         let v = odd.values();
         assert_eq!(v.theme, Pref::Dark);

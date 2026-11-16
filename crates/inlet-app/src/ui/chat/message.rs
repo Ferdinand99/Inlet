@@ -27,11 +27,24 @@ pub const ROW_INSET: f32 = 16.;
 pub const AVATAR_COLUMN: f32 = 40.;
 /// Space between the avatar column and the text (16 | 40 | 12 | text).
 pub const AVATAR_GAP: f32 = 12.;
-/// Space above the first message of a group (`--message-group-spacing`, cozy only): the
-/// account's setting, 16 px by default.
+/// Space above the first message of a group in the cozy display
+/// (`--message-group-spacing`): the account's setting, 16 px by default.
 pub fn group_spacing() -> f32 {
     theme::group_spacing()
 }
+
+/// The same for the display in use: the compact display has a setting of its own (0 px by
+/// default).
+pub fn group_spacing_for(compact: bool) -> f32 {
+    if compact {
+        theme::compact_group_spacing()
+    } else {
+        theme::group_spacing()
+    }
+}
+
+/// Size of an avatar in the compact display, when it shows them.
+const COMPACT_AVATAR: f32 = 20.;
 /// Width of the time column in compact mode.
 const COMPACT_TIME_COLUMN: f32 = 64.;
 /// Group name for hover styles of a message row.
@@ -134,6 +147,16 @@ impl Inlet {
         if !row.meta.embeds_hidden && settings.render_embeds {
             for (i, e) in m.embeds.iter().enumerate() {
                 let id = format!("m{}-e{i}", m.id);
+                // Without media of links inline, an embed keeps its text.
+                let bare;
+                let e = if settings.inline_embed_media {
+                    e
+                } else if let Some(without) = e.without_media() {
+                    bare = without;
+                    &bare
+                } else {
+                    continue;
+                };
                 body = body.child(render_embed(self, &id, e, hidden, &ctx, cx));
             }
         }
@@ -207,6 +230,16 @@ impl Inlet {
         let tag = row.tag.map(render_tag);
         let body = self.message_body(row, cx);
         let main = if compact {
+            // The account may show a small avatar before the name in this display.
+            let avatar = (theme::compact_avatars() && !row.grouped).then(|| {
+                self.user_avatar(
+                    m.author_avatar.as_deref(),
+                    &m.author,
+                    COMPACT_AVATAR,
+                    false,
+                    cx,
+                )
+            });
             div()
                 .flex()
                 .flex_row()
@@ -229,6 +262,7 @@ impl Inlet {
                         .flex_none()
                         .items_center()
                         .gap_1()
+                        .children(avatar)
                         .children(tag)
                         .child(name),
                 )
@@ -338,7 +372,7 @@ impl Inlet {
         });
         div()
             .w_full()
-            .when(starts_group && !compact, |d| d.pt(px(group_spacing())))
+            .when(starts_group, |d| d.pt(px(group_spacing_for(compact))))
             .child(
                 row_frame(SharedString::from(format!("row-{}", m.id)), on_hover)
                     .debug_selector(|| "message-row".into())
@@ -486,7 +520,7 @@ impl Inlet {
         };
         div()
             .w_full()
-            .when(!row.grouped && !compact, |d| d.pt(px(group_spacing())))
+            .when(!row.grouped, |d| d.pt(px(group_spacing_for(compact))))
             .child(
                 div()
                     .w_full()

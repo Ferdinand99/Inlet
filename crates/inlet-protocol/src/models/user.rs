@@ -143,7 +143,37 @@ impl UserSettings {
     /// Who may send a friend request, as flags (1 mutual friends, 2 mutual servers,
     /// 4 anyone).
     pub fn friend_source_flags(&self) -> Option<u64> {
-        value_u64(self.extra.get("friend_source_flags")?)
+        self.number("friend_source_flags")
+    }
+
+    /// A whole number among the fields this crate does not name (the privacy flags and
+    /// filters), or `None` when the settings do not carry it.
+    pub fn number(&self, key: &str) -> Option<u64> {
+        value_u64(self.extra.get(key)?)
+    }
+
+    /// A switch among the fields this crate does not name, or `None` when the settings
+    /// do not carry it.
+    pub fn switch(&self, key: &str) -> Option<bool> {
+        self.extra.get(key)?.as_bool()
+    }
+
+    /// The IDs of a list among the fields this crate does not name (the communities with
+    /// their own DM setting), or `None` when the settings do not carry it.
+    pub fn id_list(&self, key: &str) -> Option<Vec<String>> {
+        match self.extra.get(key)? {
+            Value::Array(a) => Some(
+                a.iter()
+                    .filter_map(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Number(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            Value::Null => Some(Vec::new()),
+            _ => None,
+        }
     }
 
     /// Whether DMs from the members of new servers are restricted by default.
@@ -197,6 +227,35 @@ pub struct UserSettingsUpdate {
     /// Whether DMs from members of new servers are restricted by default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_guilds_restricted: Option<bool>,
+    /// The servers whose members may not send DMs (replaces the list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restricted_guilds: Option<Vec<String>>,
+    /// Whether DMs from bots of new servers are restricted by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bot_default_guilds_restricted: Option<bool>,
+    /// The servers whose bots may not send DMs (replaces the list).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bot_restricted_guilds: Option<Vec<String>>,
+    /// Who may call: flags (1 friends of friends, 2 server members, 4 everyone,
+    /// 8 friends only, 16 nobody, 32 silent for everyone).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incoming_call_flags: Option<u64>,
+    /// Who may add to group DMs: flags (1 friends of friends, 2 server members,
+    /// 4 everyone, 8 friends only, 16 nobody).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_dm_add_permission_flags: Option<u64>,
+    /// Who sees the full profile: 0 all servers, 1 small servers, 2 friends only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_privacy: Option<u64>,
+    /// Sensitive media in DMs from friends: 0 show, 1 blur, 2 block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensitive_content_friend_dm_filter: Option<u64>,
+    /// Sensitive media in DMs from others: 0 show, 1 blur, 2 block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensitive_content_non_friend_dm_filter: Option<u64>,
+    /// Sensitive media in server channels: 0 show, 1 blur, 2 block.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensitive_content_guild_filter: Option<u64>,
     /// Who may send a friend request: 1 mutual friends, 2 mutual servers, 4 anyone
     /// (add them up).
     #[serde(skip_serializing_if = "Option::is_none")]

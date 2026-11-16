@@ -220,6 +220,29 @@ pub const DEFAULT_GROUP_SPACING: f32 = 16.;
 thread_local! {
     static FONT_PX: Cell<f32> = const { Cell::new(DEFAULT_FONT_PX) };
     static GROUP_SPACING: Cell<f32> = const { Cell::new(DEFAULT_GROUP_SPACING) };
+    static COMPACT_SPACING: Cell<f32> = const { Cell::new(0.) };
+    static COMPACT_AVATARS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The space above the first message of a group in the compact display (0 by default).
+pub fn compact_group_spacing() -> f32 {
+    COMPACT_SPACING.with(Cell::get)
+}
+
+/// Sets the space above the first message of a group in the compact display.
+pub fn set_compact_group_spacing(px: f32) {
+    let px = if px.is_finite() { px } else { 0. };
+    COMPACT_SPACING.with(|c| c.set(px.clamp(0., 64.)));
+}
+
+/// Whether the compact display shows avatars.
+pub fn compact_avatars() -> bool {
+    COMPACT_AVATARS.with(Cell::get)
+}
+
+/// Shows or hides the avatars of the compact display.
+pub fn set_compact_avatars(show: bool) {
+    COMPACT_AVATARS.with(|c| c.set(show));
 }
 
 /// The font size of message text.

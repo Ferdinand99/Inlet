@@ -203,3 +203,31 @@ pub fn button_with_id(id: impl Into<ElementId>, label: impl Into<SharedString>) 
         .hover(|s| s.opacity(0.85))
         .child(label.into())
 }
+
+/// One of a few buttons side by side, of which one is selected.
+pub fn segment(id: &'static str, label: String, selected: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px_4()
+        .py(px(6.))
+        .rounded_md()
+        .cursor_pointer()
+        .border_1()
+        .border_color(if selected {
+            theme::brand()
+        } else {
+            theme::accent_border()
+        })
+        .bg(if selected {
+            theme::selected_bg()
+        } else {
+            theme::bg_textarea()
+        })
+        .text_color(if selected {
+            theme::text_strong()
+        } else {
+            theme::text_muted()
+        })
+        .hover(|s| s.opacity(0.85))
+        .child(label)
+}

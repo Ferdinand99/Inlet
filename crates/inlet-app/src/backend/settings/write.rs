@@ -42,11 +42,36 @@ pub enum Change {
     DmsFromMembers(bool),
     /// Who may send a friend request: 1 mutual friends, 2 mutual servers, 4 anyone.
     FriendSources(u8),
+    /// Show media of links inline (`inline_embed_media`).
+    InlineEmbedMedia(bool),
+    /// Show uploaded media inline (`inline_attachment_media`).
+    InlineAttachmentMedia(bool),
+    /// DMs from bots of servers, by default (the reverse of `bot_default_guilds_restricted`).
+    BotDmsFromMembers(bool),
+    /// Who may call: flags (1 friends of friends, 2 server members, 4 everyone, 8 friends
+    /// only, 16 nobody, 32 silent for everyone).
+    IncomingCalls(u8),
+    /// Who may add to group DMs: flags as for calls, without the silent one.
+    GroupDmAdd(u8),
+    /// Who sees the full profile: 0 all servers, 1 small servers, 2 friends only.
+    ProfilePrivacy(u8),
+    /// Sensitive media in DMs from friends: 0 show, 1 blur, 2 block.
+    SensitiveFriends(u8),
+    /// Sensitive media in DMs from others: 0 show, 1 blur, 2 block.
+    SensitiveOthers(u8),
+    /// Sensitive media in server channels: 0 show, 1 blur, 2 block.
+    SensitiveServers(u8),
     // Synced preferences.
     /// Message font size in pixels.
     FontSize(u8),
     /// Space above the first message of a group, in pixels.
     GroupSpacing(u8),
+    /// The same in the compact display.
+    CompactGroupSpacing(u8),
+    /// Avatars in the compact display.
+    CompactAvatars(bool),
+    /// Text smileys become emoji when a message is sent.
+    ConvertEmoticons(bool),
 }
 
 /// What kind of setting a change is (the newest change of a kind replaces the older).
@@ -59,7 +84,14 @@ impl Change {
 
     /// Whether the change goes into the synced preferences (else the user settings).
     pub fn is_preference(&self) -> bool {
-        matches!(self, Change::FontSize(_) | Change::GroupSpacing(_))
+        matches!(
+            self,
+            Change::FontSize(_)
+                | Change::GroupSpacing(_)
+                | Change::CompactGroupSpacing(_)
+                | Change::CompactAvatars(_)
+                | Change::ConvertEmoticons(_)
+        )
     }
 
     /// Puts the change into a settings update.
@@ -76,7 +108,28 @@ impl Change {
             Change::DeveloperMode(on) => u.developer_mode = Some(on),
             Change::DmsFromMembers(on) => u.default_guilds_restricted = Some(!on),
             Change::FriendSources(flags) => u.friend_source_flags = Some(u64::from(flags & 7)),
-            Change::FontSize(_) | Change::GroupSpacing(_) => {}
+            Change::InlineEmbedMedia(on) => u.inline_embed_media = Some(on),
+            Change::InlineAttachmentMedia(on) => u.inline_attachment_media = Some(on),
+            Change::BotDmsFromMembers(on) => u.bot_default_guilds_restricted = Some(!on),
+            Change::IncomingCalls(flags) => u.incoming_call_flags = Some(u64::from(flags & 63)),
+            Change::GroupDmAdd(flags) => {
+                u.group_dm_add_permission_flags = Some(u64::from(flags & 31));
+            }
+            Change::ProfilePrivacy(n) => u.profile_privacy = Some(u64::from(n.min(2))),
+            Change::SensitiveFriends(n) => {
+                u.sensitive_content_friend_dm_filter = Some(u64::from(n.min(2)));
+            }
+            Change::SensitiveOthers(n) => {
+                u.sensitive_content_non_friend_dm_filter = Some(u64::from(n.min(2)));
+            }
+            Change::SensitiveServers(n) => {
+                u.sensitive_content_guild_filter = Some(u64::from(n.min(2)));
+            }
+            Change::FontSize(_)
+            | Change::GroupSpacing(_)
+            | Change::CompactGroupSpacing(_)
+            | Change::CompactAvatars(_)
+            | Change::ConvertEmoticons(_) => {}
         }
     }
 
@@ -87,6 +140,18 @@ impl Change {
             Change::FontSize(px) => accessibility(prefs).font_size = Some(f64::from(px)),
             Change::GroupSpacing(px) => {
                 accessibility(prefs).message_group_spacing = Some(f64::from(px));
+            }
+            Change::CompactGroupSpacing(px) => {
+                accessibility(prefs).compact_message_group_spacing = Some(f64::from(px));
+            }
+            Change::CompactAvatars(show) => {
+                accessibility(prefs).show_user_avatars_in_compact_mode = Some(show);
+            }
+            Change::ConvertEmoticons(on) => {
+                prefs
+                    .chat_input
+                    .get_or_insert_with(Default::default)
+                    .convert_emoticons = Some(on);
             }
             _ => {}
         }
@@ -113,6 +178,17 @@ impl Wish {
         let mut update = p::UserSettingsUpdate::default();
         for c in changes.iter().filter(|c| !c.is_preference()) {
             c.write(&mut update);
+        }
+        Wish { update, through }
+    }
+
+    /// A wish for the list of servers whose members or bots may not send DMs.
+    pub fn guild_dms(through: u64, bots: bool, guild_ids: Vec<String>) -> Wish {
+        let mut update = p::UserSettingsUpdate::default();
+        if bots {
+            update.bot_restricted_guilds = Some(guild_ids);
+        } else {
+            update.restricted_guilds = Some(guild_ids);
         }
         Wish { update, through }
     }
@@ -147,6 +223,17 @@ impl Wish {
             render_spoilers,
             developer_mode,
             default_guilds_restricted,
+            restricted_guilds,
+            bot_default_guilds_restricted,
+            bot_restricted_guilds,
+            inline_embed_media,
+            inline_attachment_media,
+            incoming_call_flags,
+            group_dm_add_permission_flags,
+            profile_privacy,
+            sensitive_content_friend_dm_filter,
+            sensitive_content_non_friend_dm_filter,
+            sensitive_content_guild_filter,
             friend_source_flags
         );
         self.through = self.through.max(newer.through);
