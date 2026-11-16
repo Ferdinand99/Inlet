@@ -1587,6 +1587,55 @@
     }
    }
   },
+  "PATCH /users/@me/guilds/@me/settings": {
+   "documentedPath": "/users/@me/guilds/@me/settings",
+   "operationId": "update_dm_notification_settings",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "UserGuildSettingsUpdateRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "UserGuildSettingsResponse"
+     }
+    }
+   }
+  },
+  "PATCH /users/@me/guilds/{}/settings": {
+   "documentedPath": "/users/@me/guilds/{guild_id}/settings",
+   "operationId": "update_guild_settings_for_user",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "guild_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "UserGuildSettingsUpdateRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "UserGuildSettingsResponse"
+     }
+    }
+   }
+  },
   "PATCH /users/@me/memes/{}": {
    "documentedPath": "/users/@me/memes/{meme_id}",
    "operationId": "update_favorite_meme",
@@ -12674,6 +12723,322 @@
     "WEBAUTHN"
    ]
   },
+  "UserGuildSettingsResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "channel_overrides": {
+     "anyOf": [
+      {
+       "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+         "collapsed": {
+          "type": "boolean"
+         },
+         "flags": {
+          "$ref": "Int32Type"
+         },
+         "message_notifications": {
+          "$ref": "UserNotificationSettings"
+         },
+         "mute_config": {
+          "anyOf": [
+           {
+            "additionalProperties": false,
+            "properties": {
+             "end_time": {
+              "type": [
+               "null",
+               "string"
+              ]
+             },
+             "selected_time_window": {
+              "$ref": "Int32Type"
+             }
+            },
+            "required": [
+             "end_time",
+             "selected_time_window"
+            ],
+            "type": "object"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "muted": {
+          "type": "boolean"
+         },
+         "unread_badges": {
+          "anyOf": [
+           {
+            "$ref": "UserNotificationSettings"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         }
+        },
+        "required": [
+         "collapsed",
+         "message_notifications",
+         "mute_config",
+         "muted"
+        ],
+        "type": "object"
+       },
+       "propertyNames": {
+        "$ref": "SnowflakeStringType"
+       },
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "guild_id": {
+     "anyOf": [
+      {
+       "$ref": "SnowflakeStringType"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "hide_muted_channels": {
+     "type": "boolean"
+    },
+    "message_notifications": {
+     "$ref": "UserNotificationSettings"
+    },
+    "mobile_push": {
+     "type": "boolean"
+    },
+    "mute_config": {
+     "anyOf": [
+      {
+       "additionalProperties": false,
+       "properties": {
+        "end_time": {
+         "type": [
+          "null",
+          "string"
+         ]
+        },
+        "selected_time_window": {
+         "$ref": "Int32Type"
+        }
+       },
+       "required": [
+        "end_time",
+        "selected_time_window"
+       ],
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "muted": {
+     "type": "boolean"
+    },
+    "suppress_everyone": {
+     "type": "boolean"
+    },
+    "suppress_roles": {
+     "type": "boolean"
+    },
+    "unread_badges": {
+     "anyOf": [
+      {
+       "$ref": "UserNotificationSettings"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "version": {
+     "$ref": "Int32Type"
+    }
+   },
+   "required": [
+    "channel_overrides",
+    "guild_id",
+    "hide_muted_channels",
+    "message_notifications",
+    "mobile_push",
+    "mute_config",
+    "muted",
+    "suppress_everyone",
+    "suppress_roles",
+    "version"
+   ],
+   "type": "object"
+  },
+  "UserGuildSettingsUpdateRequest": {
+   "properties": {
+    "channel_overrides": {
+     "anyOf": [
+      {
+       "additionalProperties": {
+        "properties": {
+         "collapsed": {
+          "type": "boolean"
+         },
+         "flags": {
+          "$ref": "Int32Type"
+         },
+         "message_notifications": {
+          "$ref": "UserNotificationSettingsInput"
+         },
+         "mute_config": {
+          "anyOf": [
+           {
+            "properties": {
+             "end_time": {
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "maximum": 8640000000000000,
+                  "minimum": 0,
+                  "type": "integer"
+                 },
+                 {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?$",
+                  "type": "string"
+                 }
+                ]
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "selected_time_window": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+             }
+            },
+            "required": [
+             "selected_time_window"
+            ],
+            "type": "object"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "muted": {
+          "type": "boolean"
+         },
+         "unread_badges": {
+          "anyOf": [
+           {
+            "$ref": "UserNotificationSettingsInput"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         }
+        },
+        "required": [
+         "collapsed",
+         "message_notifications",
+         "muted"
+        ],
+        "type": "object"
+       },
+       "propertyNames": {
+        "$ref": "SnowflakeStringType"
+       },
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "hide_muted_channels": {
+     "type": "boolean"
+    },
+    "message_notifications": {
+     "$ref": "UserNotificationSettingsInput"
+    },
+    "mobile_push": {
+     "type": "boolean"
+    },
+    "mute_config": {
+     "anyOf": [
+      {
+       "properties": {
+        "end_time": {
+         "anyOf": [
+          {
+           "anyOf": [
+            {
+             "maximum": 8640000000000000,
+             "minimum": 0,
+             "type": "integer"
+            },
+            {
+             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?$",
+             "type": "string"
+            }
+           ]
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "selected_time_window": {
+         "maximum": 9007199254740991,
+         "minimum": -9007199254740991,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "selected_time_window"
+       ],
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "muted": {
+     "type": "boolean"
+    },
+    "suppress_everyone": {
+     "type": "boolean"
+    },
+    "suppress_roles": {
+     "type": "boolean"
+    },
+    "unread_badges": {
+     "anyOf": [
+      {
+       "$ref": "UserNotificationSettingsInput"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object"
+  },
   "UserNoteResponse": {
    "additionalProperties": false,
    "properties": {
@@ -12705,6 +13070,52 @@
     "$ref": "SnowflakeStringType"
    },
    "type": "object"
+  },
+  "UserNotificationSettings": {
+   "enum": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "format": "int32",
+   "type": "integer",
+   "x-enumDescriptions": [
+    "Do not receive any notifications",
+    "Inherit notification settings from parent",
+    "Only receive notifications for mentions",
+    "Receive notifications for all messages"
+   ],
+   "x-enumNames": [
+    "ALL_MESSAGES",
+    "INHERIT",
+    "NO_MESSAGES",
+    "ONLY_MENTIONS"
+   ]
+  },
+  "UserNotificationSettingsInput": {
+   "enum": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "format": "int32",
+   "maximum": 2147483647,
+   "minimum": 0,
+   "type": "integer",
+   "x-enumDescriptions": [
+    "Do not receive any notifications",
+    "Inherit notification settings from parent",
+    "Only receive notifications for mentions",
+    "Receive notifications for all messages"
+   ],
+   "x-enumNames": [
+    "ALL_MESSAGES",
+    "INHERIT",
+    "NO_MESSAGES",
+    "ONLY_MENTIONS"
+   ]
   },
   "UserPartialResponse": {
    "additionalProperties": false,

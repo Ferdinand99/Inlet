@@ -28,7 +28,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-PROTOCOL_SRC = REPO / "crates" / "inlet-protocol" / "src"
+CRATES = REPO / "crates"
+PROTOCOL_CRATE = "inlet-protocol"
 EXTRA_ROUTES = HERE / "routes-extra.txt"
 
 # The instances Inlet is tested against. Origins only; the API address comes from
@@ -176,24 +177,59 @@ def is_api_path(text):
     )
 
 
-def scan_source(src_dir=PROTOCOL_SRC):
-    """Returns (resolved, unresolved) from the production code of inlet-protocol.
+EXTERNAL_TEST_MOD = re.compile(
+    r"#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;"
+)
+CALL_TOKEN = re.compile(r"\brequest_json\s*\(")
 
-    `resolved` maps (METHOD, normalized path) to a sorted list of `file:line`.
+
+def test_only_files(files):
+    """Files that are only built for tests: `#[cfg(test)] mod name;` and what lies below."""
+    skip = set()
+    for f in files:
+        masked, _ = mask_rust(f.read_text(encoding="utf-8"))
+        names = EXTERNAL_TEST_MOD.findall(masked)
+        if not names:
+            continue
+        base = f.parent if f.name in ("mod.rs", "lib.rs", "main.rs") else f.parent / f.stem
+        for name in names:
+            skip.add(base / f"{name}.rs")
+            skip.update((base / name).rglob("*.rs"))
+    return skip
+
+
+def scan_source(src_dir, every_file=True):
+    """Returns (resolved, unresolved, suspect) from the production code below `src_dir`.
+
+    `resolved` maps (METHOD, normalized path) to a list of `file:line`.
     `unresolved` maps a normalized path literal whose method cannot be read off the
     call site (a path another function builds on) to `file:line`.
+    `suspect` lists `file:line: text` for strings that look like a path but that the
+    scanner cannot classify (no leading slash, or a variable in front).
+    With `every_file` false only files that call `request_json` are read: that is how
+    a crate other than the protocol crate reaches the API.
     """
-    resolved, unresolved = {}, {}
-    for file in sorted(src_dir.rglob("*.rs")):
+    resolved, unresolved, suspect = {}, {}, []
+    files = sorted(src_dir.rglob("*.rs"))
+    skip = test_only_files(files)
+    for file in files:
+        if file in skip:
+            continue
         src = file.read_text(encoding="utf-8")
         masked, strings = mask_rust(src)
         spans = test_spans(masked)
+        if not every_file:
+            live = list(masked)
+            for x, y in spans:
+                live[x:y] = " " * (y - x)
+            if not CALL_TOKEN.search("".join(live)):
+                continue
         rel = file.relative_to(REPO).as_posix()
-        lits = [
-            (a, b, s)
-            for (a, b, s) in strings
-            if is_api_path(s) and not any(x <= a < y for x, y in spans)
-        ]
+        strings = [(a, b, t) for (a, b, t) in strings if not any(x <= a < y for x, y in spans)]
+        lits = [(a, b, t) for (a, b, t) in strings if is_api_path(t)]
+        for a, _b, t in strings:
+            if looks_like_path(t):
+                suspect.append(f"{rel}:{src.count(chr(10), 0, a) + 1}: {t[:60]!r}")
         for idx, (a, b, text) in enumerate(lits):
             line = src.count("\n", 0, a) + 1
             where = f"{rel}:{line}"
@@ -207,7 +243,22 @@ def scan_source(src_dir=PROTOCOL_SRC):
                 unresolved.setdefault(path, where)
             else:
                 resolved.setdefault((method, path), []).append(where)
-    return resolved, unresolved
+    return resolved, unresolved, suspect
+
+
+# First path segments of the Fluxer API, to recognise a path written without its
+# leading slash or behind a variable: `format!("channels/{}", ..)`, `"{base}/users/.."`.
+API_ROOTS = (
+    "auth", "channels", "emojis", "gifs", "guilds", "invites", "read-states",
+    "search", "stickers", "users",
+)
+PATH_LOOKALIKE = re.compile(
+    r"(?:(?:" + "|".join(API_ROOTS) + r")/|\{[A-Za-z_]\w*\}/(?:" + "|".join(API_ROOTS) + r")/)"
+)
+
+
+def looks_like_path(text):
+    return PATH_LOOKALIKE.match(text) is not None
 
 
 def method_for(masked, start, end, next_literal_start):
@@ -259,14 +310,31 @@ def load_extra_routes():
     return routes
 
 
+def source_crates():
+    return sorted(d for d in CRATES.iterdir() if (d / "src").is_dir())
+
+
 def inlet_routes():
-    """Every (METHOD, path) Inlet calls. Raises ToolError when the extra list is stale."""
-    resolved, unresolved = scan_source()
+    """Every (METHOD, path) Inlet calls. Raises ToolError when the extra list is stale.
+
+    inlet-protocol is read whole. Any other crate is read in the files that call
+    `Client::request_json`, the way the app reaches routes the protocol crate has no
+    method for.
+    """
+    resolved, unresolved, suspect = {}, {}, []
+    for crate in source_crates():
+        r, u, sus = scan_source(crate / "src", every_file=crate.name == PROTOCOL_CRATE)
+        for k, v in r.items():
+            resolved.setdefault(k, []).extend(v)
+        for k, v in u.items():
+            unresolved.setdefault(k, v)
+        suspect += sus
     extra = load_extra_routes()
-    problems = []
+    problems = [f"{w}: not classified as a route, rewrite it or extend the scanner" for w in suspect]
     for path, where in sorted(unresolved.items()):
         # A literal with no method at its call site is a base that another function
-        # extends (reactions). It must be covered by an entry in routes-extra.txt.
+        # extends (reactions) or a route another function sends (the app's settings
+        # route). It must be covered by an entry in routes-extra.txt.
         if not any(p == path or p.startswith(path + "/") for _, p in extra):
             problems.append(
                 f"{where}: path {path} has no HTTP method at its call site and no "
@@ -276,7 +344,7 @@ def inlet_routes():
     literal_paths = resolved_paths | set(unresolved)
     for method, path in sorted(extra):
         if not any(path == lp or path.startswith(lp + "/") for lp in literal_paths):
-            problems.append(f"routes-extra.txt: {method} {path} matches no path in inlet-protocol")
+            problems.append(f"routes-extra.txt: {method} {path} matches no path in the scanned sources")
     if len(resolved) + len(extra) < 20:
         problems.append(f"only {len(resolved) + len(extra)} routes found: the scanner is broken")
     if problems:
@@ -446,6 +514,15 @@ def diff_nodes(old, new, path, out):
                 out.append(f"+ {sub}: {short(new[key])}")
             else:
                 diff_nodes(old[key], new[key], sub, out)
+    elif isinstance(old, list) and isinstance(new, list):
+        # The lists are sorted, so they are sets: show what left and what came, not two
+        # long lines that differ in one element.
+        keyed_old = {json.dumps(v, sort_keys=True, ensure_ascii=False): v for v in old}
+        keyed_new = {json.dumps(v, sort_keys=True, ensure_ascii=False): v for v in new}
+        for k in sorted(set(keyed_old) - set(keyed_new)):
+            out.append(f"- {path}[]: {short(keyed_old[k])}")
+        for k in sorted(set(keyed_new) - set(keyed_old)):
+            out.append(f"+ {path}[]: {short(keyed_new[k])}")
     else:
         out.append(f"- {path}: {short(old)}")
         out.append(f"+ {path}: {short(new)}")

@@ -95,6 +95,23 @@ jobs:
           done <<< "$files"
           echo "code=$code" >> "$GITHUB_OUTPUT"
 
+  api-snapshot-tests:
+    name: API snapshot tool
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tool's own tests, and the check that the committed snapshots list exactly the
+      # routes inlet-protocol and inlet-app call. No network. When this fails after a
+      # route was added or removed, see docs/API-DRIFT.md.
+      - name: Tool tests and route check
+        run: python3 -I -m unittest discover -s tests/api-snapshot
+
   fmt:
     name: rustfmt
     needs: changes

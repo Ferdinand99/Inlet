@@ -56,13 +56,15 @@ ROUTES = [("DELETE", "/things/{}"), ("GET", "/things/{}"), ("POST", "/things"), 
 
 
 class ScannerTests(unittest.TestCase):
-    def scan(self, files):
+    def scan(self, files, every_file=True, suspects=False):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             for name, text in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_text(text, encoding="utf-8")
             with mock.patch.object(tool, "REPO", root):
-                return tool.scan_source(root)
+                resolved, unresolved, suspect = tool.scan_source(root, every_file=every_file)
+            return (resolved, unresolved, suspect) if suspects else (resolved, unresolved)
 
     def test_method_before_and_after_the_path_and_helpers(self):
         resolved, unresolved = self.scan({"a.rs": '''
@@ -106,6 +108,43 @@ class ScannerTests(unittest.TestCase):
         '''})
         self.assertEqual(sorted(resolved), [("PUT", "/ok/{}")])
 
+    def test_other_crates_are_read_only_where_they_call_request_json(self):
+        resolved, unresolved = self.scan({
+            "calls.rs": 'fn a() { c.request_json(Method::PATCH, "/app/{}/x", None); }',
+            "pure_ui.rs": 'fn a() { let link = "/invite/abc"; let p = "/not/an/api/call"; }',
+            "tests.rs": 'fn a() { c.request_json(Method::GET, "/from/tests", None); }',
+            "mod.rs": '#[cfg(test)]\nmod tests;\n',
+        }, every_file=False)
+        self.assertEqual(sorted(resolved), [("PATCH", "/app/{}/x")])
+        self.assertEqual(unresolved, {})
+
+    def test_a_path_built_in_one_function_and_sent_in_another_is_unresolved(self):
+        _, unresolved = self.scan({"n.rs": """
+            fn route(g: Option<u64>) -> String { format!("/users/@me/guilds/{g}/settings") }
+            fn write(c: &Client) { c.request_json(Method::PATCH, &route(None), None); }
+        """}, every_file=False)
+        self.assertEqual(list(unresolved), ["/users/@me/guilds/{}/settings"])
+
+    def test_external_test_modules_are_skipped(self):
+        resolved, _ = self.scan({
+            "lib.rs": '#[cfg(test)]\nmod testkit;\nfn a() { raw(Method::GET, "/real", 0); }',
+            "testkit.rs": 'fn a() { raw(Method::GET, "/only/in/tests", 0); }',
+        })
+        self.assertEqual(sorted(resolved), [("GET", "/real")])
+
+    def test_strings_that_look_like_paths_but_are_not_classified_are_reported(self):
+        _, _, suspect = self.scan({"a.rs": """
+            fn a() {
+                let a = format!("channels/{}/x", id);
+                let b = format!("{base}/users/@me");
+                let c = format!("{}/v1", api);
+                let d = format!("{}/users?limit={}", base_path, n);
+            }
+        """}, suspects=True)
+        self.assertEqual(len(suspect), 2, suspect)
+        self.assertTrue(suspect[0].startswith("a.rs:3"))
+        self.assertTrue(suspect[1].startswith("a.rs:4"))
+
     def test_the_real_route_list_is_complete_and_the_snapshots_cover_it(self):
         out = io.StringIO()
         err = io.StringIO()
@@ -115,6 +154,9 @@ class ScannerTests(unittest.TestCase):
         routes = tool.inlet_routes()
         self.assertIn(("POST", "/channels/{}/messages"), routes)
         self.assertIn(("PUT", "/channels/{}/messages/{}/reactions/{}/@me"), routes)
+        # Routes the app sends itself, through Client::request_json.
+        self.assertIn(("PATCH", "/users/@me/guilds/{}/settings"), routes)
+        self.assertIn(("PATCH", "/users/@me/guilds/@me/settings"), routes)
 
     def test_a_stale_extra_route_fails(self):
         with tempfile.TemporaryDirectory() as d:
@@ -273,6 +315,12 @@ class DiffAndCheckTests(unittest.TestCase):
         lines = body.read_text(encoding="utf-8").splitlines()
         self.assertRegex(lines[-1], r"^<!-- drift-hash: [0-9a-f]{16} -->$")
         self.assertNotIn("0123456789abcdef", lines[-1])
+
+    def test_changed_list_elements_are_shown_one_by_one(self):
+        old = {"a": {"anyOf": [{"type": "string"}, {"type": "null"}, {"x": "y" * 300}]}}
+        new = {"a": {"anyOf": [{"type": "integer"}, {"type": "null"}, {"x": "y" * 300}]}}
+        lines = tool.diff_snapshots(old, new)
+        self.assertEqual(lines, ['- a.anyOf[]: {"type": "string"}', '+ a.anyOf[]: {"type": "integer"}'])
 
     def test_the_issue_body_is_capped(self):
         big = json.loads(json.dumps(DOC))
