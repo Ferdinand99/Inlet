@@ -37,6 +37,18 @@ pub fn parse_embed_with(input: &str, names: &Names) -> Vec<Block> {
     parse_flags(input, names, ParserFlags::ALL & !ParserFlags::ALLOW_TABLES)
 }
 
+/// [`parse_with`] for the line above a reply, as Fluxer's `RESTRICTED_INLINE_REPLY`: no
+/// block quotes, tables, alerts, headings or lists, so their markers show as typed.
+pub fn parse_reply_with(input: &str, names: &Names) -> Vec<Block> {
+    let not = ParserFlags::ALLOW_BLOCKQUOTES
+        | ParserFlags::ALLOW_MULTILINE_BLOCKQUOTES
+        | ParserFlags::ALLOW_TABLES
+        | ParserFlags::ALLOW_ALERTS
+        | ParserFlags::ALLOW_HEADINGS
+        | ParserFlags::ALLOW_LISTS;
+    parse_flags(input, names, ParserFlags::ALL & !not)
+}
+
 /// [`parse_with`] for a profile's bio, as Fluxer's `RESTRICTED_USER_BIO_FLAGS`: no
 /// headings, code blocks, role or `@everyone` mentions, subtext, tables or alerts
 /// (they stay plain text).

@@ -203,6 +203,10 @@ settings_tab 65-settings-accounts accounts dark
 INLET_DEMO_THEME=light scene 66-chat-light chat-cozy c-general
 INLET_DEMO_THEME=coal scene 67-chat-coal chat-cozy c-general
 
+# The channel header with the search column open at 1280 px: a long channel name keeps
+# its place, the topic and the status line give way first.
+scene 80-header-search-long-name search-results c-rules
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no

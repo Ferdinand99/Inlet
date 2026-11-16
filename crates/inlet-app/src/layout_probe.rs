@@ -31,6 +31,9 @@ pub mod selector {
     pub const GUILD_HEADER: &str = "guild-header";
     /// The channel header above the messages.
     pub const CHAT_HEADER: &str = "chat-header";
+    /// The channel's name in that header, and its status line.
+    pub const CHAT_HEADER_TITLE: &str = "chat-header-title";
+    pub const CHAT_HEADER_STATUS: &str = "chat-header-status";
     /// A channel row.
     pub const CHANNEL_ROW: &str = "channel-row";
     /// A message row (cozy), its avatar column and its text column.
@@ -58,6 +61,18 @@ impl Probe {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
             open_demo(&mut inlet, window, cx);
+            inlet
+        });
+        Self { inlet }
+    }
+
+    /// The same with the search column open beside the chat, as after a click on the
+    /// header's search field.
+    pub fn with_search_open(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let inlet = cx.new(|cx| {
+            let mut inlet = Inlet::detached(window, cx);
+            open_demo(&mut inlet, window, cx);
+            inlet.open_search(window, cx);
             inlet
         });
         Self { inlet }
