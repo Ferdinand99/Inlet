@@ -575,9 +575,9 @@ impl Inlet {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                    let entry = match &fav {
-                        Tile::Gif(g) => favourite_entry(g),
-                        Tile::Favourite(e) => (**e).clone(),
+                    let (entry, source) = match &fav {
+                        Tile::Gif(g) => (favourite_entry(g), Some(g.clone())),
+                        Tile::Favourite(e) => ((**e).clone(), None),
                         _ => return,
                     };
                     let link = sendable(&entry.url);
@@ -586,6 +586,7 @@ impl Inlet {
                         item_menu::Subject::Gif {
                             entry: Box::new(entry),
                             link,
+                            source,
                         },
                         item_menu::click_at(e),
                     );

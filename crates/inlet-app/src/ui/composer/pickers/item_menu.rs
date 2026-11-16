@@ -56,7 +56,12 @@ pub(super) enum Subject {
         entry: Box<FavoriteGifEntry>,
         /// The link that goes into a message, if it can be sent.
         link: Option<String>,
+        /// The search result it came from, which can be saved to the saved media (a
+        /// favourite stored by Fluxer has none).
+        source: Option<Box<p::Gif>>,
     },
+    /// A saved media item: it can be removed.
+    Meme { id: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,9 +111,9 @@ pub fn clone_targets(
 /// The feature that lets others clone a community's emoji (`sticker` false) or stickers.
 pub fn clone_feature(sticker: bool) -> &'static str {
     if sticker {
-        "CLONE_STICKER_ENABLED"
+        crate::backend::composer::gif::CLONE_STICKER_FEATURE
     } else {
-        "CLONE_EMOJI_ENABLED"
+        crate::backend::composer::gif::CLONE_EMOJI_FEATURE
     }
 }
 
@@ -273,7 +278,11 @@ impl Inlet {
                     },
                 ));
             }
-            Subject::Gif { entry, link } => {
+            Subject::Gif {
+                entry,
+                link,
+                source,
+            } => {
                 let on = !self.composer.pickers.prefs.is_favourite_gif(&entry.url);
                 let entry = entry.clone();
                 items.push(self.menu_item(
@@ -304,6 +313,33 @@ impl Inlet {
                         },
                     ));
                 }
+                if let Some(gif) = source.clone() {
+                    items.push(self.menu_item(
+                        "item-menu-save-gif",
+                        t!("item-menu-save-gif"),
+                        cx,
+                        move |this, _| {
+                            this.backend.send(ComposerCmd::Pickers(Cmd::SaveGifAsMeme {
+                                gif: gif.clone(),
+                            }));
+                            this.close_menu();
+                        },
+                    ));
+                }
+            }
+            Subject::Meme { id } => {
+                let id = id.clone();
+                items.push(self.menu_item(
+                    "item-menu-remove-meme",
+                    t!("item-menu-remove-meme"),
+                    cx,
+                    move |this, _| {
+                        this.backend.send(ComposerCmd::Pickers(Cmd::DeleteMeme {
+                            meme_id: id.clone(),
+                        }));
+                        this.close_menu();
+                    },
+                ));
             }
             Subject::Sticker { .. } => {}
         }
@@ -566,8 +602,14 @@ mod tests {
 
     #[test]
     fn emoji_and_stickers_have_their_own_clone_feature() {
-        assert_eq!(clone_feature(false), "CLONE_EMOJI_ENABLED");
-        assert_eq!(clone_feature(true), "CLONE_STICKER_ENABLED");
+        assert_eq!(
+            clone_feature(false),
+            crate::backend::composer::gif::CLONE_EMOJI_FEATURE
+        );
+        assert_eq!(
+            clone_feature(true),
+            crate::backend::composer::gif::CLONE_STICKER_FEATURE
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@ use inlet_protocol::{ImageFormat, Transform};
 use url::Url;
 
 use super::emoji::empty;
+use super::item_menu;
 use super::PICKER_WIDTH;
 use crate::app::Inlet;
 use crate::backend::composer::gif::Cmd;
@@ -133,6 +134,9 @@ impl Inlet {
         let anim = self.media.images.animator(Motion::Gif);
         let picture = picture_of(shown, (TILE_W, TILE_H), 6., ObjectFit::Cover, &anim);
         let id = meme.id.clone();
+        let menu_subject = item_menu::Subject::Meme {
+            id: meme.id.clone(),
+        };
         div()
             .id(SharedString::from(format!("picker-meme-{row}-{col}")))
             .w(px(TILE_W))
@@ -155,6 +159,14 @@ impl Inlet {
                 }
                 this.picked(false, cx);
             }))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    // The item's menu: remove it from the saved media.
+                    this.open_item_menu(menu_subject.clone(), item_menu::click_at(e));
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 }

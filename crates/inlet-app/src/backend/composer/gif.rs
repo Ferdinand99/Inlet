@@ -28,6 +28,7 @@
 //! - memes: one `GET` when the memes tab opens and READY gave none;
 //! - a picked sticker or meme is one message (`POST`);
 //! - copying an emoji or sticker into a community is one `POST` per pick.
+//! - saving a GIF to the saved media and removing a saved item are one request each.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -51,6 +52,9 @@ pub const MAX_USAGE_KEYS: usize = 200;
 pub const MAX_FAVOURITE_EMOJI: usize = 500;
 /// Favourite GIFs kept.
 pub const MAX_FAVOURITE_GIFS: usize = 500;
+/// The community features that let others clone its emoji and its stickers.
+pub const CLONE_EMOJI_FEATURE: &str = "CLONE_EMOJI_ENABLED";
+pub const CLONE_STICKER_FEATURE: &str = "CLONE_STICKER_ENABLED";
 /// Local spam marks kept per list.
 pub const MAX_SPAM_MARKS: usize = 5_000;
 /// Longest usage or favourite key (Fluxer's `MAX_USAGE_KEY_LENGTH`).
@@ -105,6 +109,11 @@ pub enum Cmd {
         meme_id: String,
         nonce: String,
     },
+    /// Saves a GIF from the picker to the account's saved media (the server keeps a copy;
+    /// the gateway brings the new item). Answered with [`Ev::MemeDone`] or [`Ev::MemeFailed`].
+    SaveGifAsMeme { gif: Box<p::Gif> },
+    /// Removes a saved media item. Answered like [`Cmd::SaveGifAsMeme`].
+    DeleteMeme { meme_id: String },
     /// Copies an emoji or a sticker into one of the account's own communities (the
     /// server copies it). Answered with [`Ev::Cloned`] or [`Ev::CloneFailed`].
     CloneExpression {
@@ -150,6 +159,12 @@ pub enum Ev {
     },
     /// Copying an emoji or sticker failed.
     CloneFailed(String),
+    /// A saved media item was added (`removed` false) or removed.
+    MemeDone {
+        removed: bool,
+    },
+    /// Saving or removing a saved media item failed.
+    MemeFailed(String),
 }
 
 /// What the pickers know about the instance and the account.
@@ -666,6 +681,30 @@ impl Backend {
                     if let Err(err) = ctx.client.send(&channel_id, &message).await {
                         ctx.send_failed(err);
                     }
+                });
+            }
+            Cmd::SaveGifAsMeme { gif } => {
+                self.spawn_guarded("save gif as meme", None, async move {
+                    let ev = match ctx.client.save_gif_as_meme(&gif).await {
+                        Ok(_) => Ev::MemeDone { removed: false },
+                        Err(err) => match reason(&ctx.internal, ctx.gen, err) {
+                            Some(r) => Ev::MemeFailed(r),
+                            None => return,
+                        },
+                    };
+                    let _ = ctx.events.unbounded_send(super::Ev::Pickers(ev));
+                });
+            }
+            Cmd::DeleteMeme { meme_id } => {
+                self.spawn_guarded("delete meme", None, async move {
+                    let ev = match ctx.client.delete_meme(&meme_id).await {
+                        Ok(()) => Ev::MemeDone { removed: true },
+                        Err(err) => match reason(&ctx.internal, ctx.gen, err) {
+                            Some(r) => Ev::MemeFailed(r),
+                            None => return,
+                        },
+                    };
+                    let _ = ctx.events.unbounded_send(super::Ev::Pickers(ev));
                 });
             }
             Cmd::CloneExpression {

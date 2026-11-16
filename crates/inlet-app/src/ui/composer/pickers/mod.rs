@@ -717,6 +717,16 @@ impl Inlet {
             Ev::CloneFailed(reason) => {
                 self.chat.notice = Some(t!("item-clone-failed", error = reason));
             }
+            Ev::MemeDone { removed } => {
+                self.chat.notice = Some(if removed {
+                    t!("item-meme-removed")
+                } else {
+                    t!("item-meme-saved")
+                });
+            }
+            Ev::MemeFailed(reason) => {
+                self.chat.notice = Some(t!("item-meme-failed", error = reason));
+            }
         }
         cx.notify();
     }

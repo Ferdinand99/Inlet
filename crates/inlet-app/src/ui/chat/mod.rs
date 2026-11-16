@@ -18,6 +18,7 @@ mod reply_preview;
 mod system_message;
 pub mod time;
 pub mod typing;
+mod web_actions;
 mod welcome;
 
 use gpui::{div, list, prelude::*, px, Context, FollowMode, ListAlignment, ListState, Window};
