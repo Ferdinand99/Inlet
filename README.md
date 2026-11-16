@@ -65,9 +65,9 @@ None of this works in the app yet. Some of it exists as library code in the work
 
 There is nothing to download yet, because no release has been published. Once there is one, get the file for your system from [Releases](https://github.com/Ferdinand99/Inlet/releases):
 
-- Windows: `inlet-windows-x86_64.exe`. The file is not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
+- Windows: `inlet-<version>-windows-x86_64-setup.exe` installs Inlet for your user account (no administrator rights needed); `inlet-<version>-windows-x86_64.zip` is a portable copy. The files are not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
 - macOS: `inlet-macos-aarch64.dmg`. Open it and drag Inlet to Applications.
-- Linux: `inlet-linux-x86_64.tar.gz`.
+- Linux: `inlet-<version>-linux-x86_64.AppImage` (make it executable and run it; it needs FUSE 2, see [`packaging/README.md`](packaging/README.md)) or `inlet-<version>-linux-x86_64.tar.gz`.
 
 Every release has a `SHA256SUMS.txt` file. Check your download against it before you run it.
 

@@ -150,7 +150,7 @@ pub struct AutocompleteState {
 }
 
 pub struct ComposerView {
-    pub(super) editor: Entity<Editor>,
+    pub(crate) editor: Entity<Editor>,
     pub(super) max_len: usize,
     pub(super) channel: Option<ChannelContext>,
     pub(super) shared: Rc<RefCell<Shared>>,

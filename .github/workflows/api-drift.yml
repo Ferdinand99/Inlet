@@ -1,0 +1,86 @@
+name: API drift
+
+# Once a week, compares the public OpenAPI document of each Fluxer instance with the
+# snapshot of the routes and schemas Inlet uses (tests/api-snapshot). When something
+# changed, one issue per instance is opened, or commented on if it is still open.
+#
+# The document is public: nothing here needs a secret and nothing sends a credential.
+# The built-in token below is used only by the step that talks to the issue tracker,
+# never by the step that fetches the document. The fetched text reaches the issue only
+# through a file, never through a shell command line.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: ${{ matrix.instance }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        instance: [fluxer.app, fluxer.opland.net]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tool's own tests, and a check that the route list still matches inlet-protocol.
+      - name: Tool tests
+        run: |
+          set -euo pipefail
+          python3 -I -m unittest discover -s tests/api-snapshot
+
+      # Exit code 1 is drift, 3 a failed fetch (network, 5xx, not JSON, too large), 2 a
+      # broken tool or a stale route list. Only drift goes on to the issue step.
+      - name: Compare with the snapshot
+        id: compare
+        env:
+          INSTANCE: ${{ matrix.instance }}
+        run: |
+          set -euo pipefail
+          code=0
+          python3 -I tests/api-snapshot/api_snapshot.py check "$INSTANCE" --issue-body "$RUNNER_TEMP/issue.md" || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+            exit "$code"
+          fi
+
+      - name: Open or update the issue
+        if: steps.compare.outputs.code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTANCE: ${{ matrix.instance }}
+        run: |
+          set -euo pipefail
+          title="API drift: ${INSTANCE}"
+          body="$RUNNER_TEMP/issue.md"
+          # The marker is the last line the tool writes; the diff above it is untrusted text.
+          hash="$(tail -n 1 "$body" | grep -Eo 'drift-hash: [0-9a-f]{16}')"
+          [ -n "$hash" ]
+          number="$(gh issue list --state open --author "app/github-actions" --search "API drift in:title" --limit 100 --json number,title \
+            | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')"
+          if [ -z "$number" ]; then
+            gh issue create --title "$title" --body-file "$body"
+            exit 0
+          fi
+          # A comment only when the drift differs from what is already on the issue.
+          seen="$(gh issue view "$number" --json body,comments --jq '[.body, (.comments[].body)] | join("\n")')"
+          if printf '%s' "$seen" | grep -qF "<!-- $hash -->"; then
+            echo "Issue #$number already shows this drift."
+          else
+            gh issue comment "$number" --body-file "$body"
+          fi

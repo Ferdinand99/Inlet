@@ -392,17 +392,32 @@ impl Inlet {
     ) -> E {
         element
             .on_action(cx.listener(|this, _: &ToggleEmojiPicker, window, cx| {
+                if !this.picker_keys_allowed() {
+                    return;
+                }
                 let target = this.key_target(window, cx);
                 this.toggle_picker(Tab::Emoji, target, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleGifPicker, window, cx| {
+                if !this.picker_keys_allowed() {
+                    return;
+                }
                 let target = this.key_target(window, cx);
                 this.toggle_picker(Tab::Gifs, target, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleStickerPicker, window, cx| {
+                if !this.picker_keys_allowed() {
+                    return;
+                }
                 let target = this.key_target(window, cx);
                 this.toggle_picker(Tab::Stickers, target, window, cx)
             }))
+    }
+
+    /// Whether a picker key acts now: not behind another layer (the list of shortcuts,
+    /// the settings, a window), but the key closes a picker that is the top layer.
+    fn picker_keys_allowed(&self) -> bool {
+        !self.layer_open() || self.is_top_layer(Layer::Picker)
     }
 
     /// The composer a picker key is for: the thread panel's when it has the keyboard

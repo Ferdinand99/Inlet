@@ -17,6 +17,9 @@ blue) and `report.md`.
 - `baseline/<os>/<name>.png`: what the scene looked like on that platform's CI runner.
   Fonts and DPI are pinned: the runner images are fixed, the screen is set to
   1920x1080 at one pixel per logical pixel, and macOS and Linux use the bundled fonts.
+  On Linux the script also hands the app a closed set of fallback fonts (the Japanese
+  subset in `fonts/`, DejaVu and Noto Color Emoji; see `fonts/README.md`), because the
+  runner image's own CJK fonts change without notice.
 
 The scripts that take the screenshots are `scripts/windows-screenshot.ps1`,
 `scripts/macos-screenshot.sh` and `scripts/xvfb-screens.sh`; `inlet-visual` (a demo

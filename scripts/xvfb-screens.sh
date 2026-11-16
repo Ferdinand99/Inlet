@@ -8,8 +8,28 @@
 # layout changes do not break the script.
 set -uo pipefail
 bin="$1"
-scenes_dir="$(cd "$(dirname "$0")/.." && pwd)/tests/visual/scenes"
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+scenes_dir="$repo/tests/visual/scenes"
 out=$(mktemp -d)
+
+# A closed set of fonts, so the pictures do not depend on what the machine has
+# installed (GitHub's runner images change their fonts without notice, which moved the
+# Japanese channel name's anti-aliasing). The app reads FONTCONFIG_FILE and loads the
+# directories listed there and nothing else: the Japanese test font from the repository
+# (tests/visual/fonts), DejaVu (the fallback for Arabic and the like) and Noto Color
+# Emoji (without it emoji are empty boxes). Needs the packages fonts-dejavu-core and
+# fonts-noto-color-emoji; the bundled IBM Plex fonts need nothing. The directory lives
+# outside $out, which is handed back as a tar.
+fonts=$(mktemp -d)
+trap 'rm -rf "$fonts"' EXIT
+cp "$repo/tests/visual/fonts/NotoSansJP-subset.ttf" "$fonts/"
+find /usr/share/fonts -type f \( -name 'DejaVuSans*.ttf' -o -name 'NotoColorEmoji.ttf' \) -exec cp {} "$fonts/" \;
+for f in DejaVuSans.ttf DejaVuSans-Bold.ttf DejaVuSansMono.ttf NotoColorEmoji.ttf; do
+  [ -f "$fonts/$f" ] || { echo "font $f is missing: install fonts-dejavu-core and fonts-noto-color-emoji" >&2; exit 1; }
+done
+printf '<?xml version="1.0"?>\n<fontconfig>\n  <dir>%s</dir>\n</fontconfig>\n' "$fonts" > "$fonts/fonts.conf"
+export FONTCONFIG_FILE="$fonts/fonts.conf"
+
 Xvfb :99 -screen 0 1280x860x24 -dpi 96 >/dev/null 2>&1 &
 export DISPLAY=:99 XDG_CONFIG_HOME="$out/config"
 # One device pixel per logical pixel, whatever the X server says.
@@ -151,6 +171,8 @@ scene 38-picker-gif picker-gif c-general
 # Message search: the search panel with results; the quick switcher over every account.
 scene 41-search-results search-results c-general
 scene 42-quick-switcher quick-switcher c-general
+# The list of keyboard shortcuts (Ctrl+/).
+scene 70-keybind-help keybind-help c-general
 
 # 10. The Notifications settings tab.
 INLET_DEMO=1 INLET_DEMO_LIVE_SECS=3600 INLET_DEMO_GUILD=g1 INLET_DEMO_CHANNEL=c-general INLET_DEMO_SETTINGS=notifications "$bin" >>"$out/demo.log" 2>&1 &

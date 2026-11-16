@@ -6,6 +6,7 @@ mod accounts;
 mod advanced;
 mod appearance;
 mod desktop;
+mod keybinds;
 mod messages_media;
 mod my_profile;
 mod notifications;
@@ -22,6 +23,7 @@ pub fn all() -> Vec<Box<dyn SettingsTab>> {
         Box::new(privacy::PrivacyTab),
         Box::new(notifications::NotificationsTab),
         Box::new(desktop::DesktopTab),
+        Box::new(keybinds::KeybindsTab),
         Box::new(advanced::AdvancedTab),
         Box::new(accounts::AccountsTab),
     ]

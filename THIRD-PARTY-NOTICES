@@ -22,13 +22,13 @@ the binary are listed at the end.
 GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)
 Used by:
   - fluxer_markdown_parser 0.1.0
-  - inlet 0.0.1 (https://github.com/Ferdinand99/Inlet)
-  - inlet-editor 0.0.1 (https://github.com/Ferdinand99/Inlet)
-  - inlet-emoji 0.0.1 (https://github.com/Ferdinand99/Inlet)
-  - inlet-media 0.0.1 (https://github.com/Ferdinand99/Inlet)
-  - inlet-platform 0.0.1 (https://github.com/Ferdinand99/Inlet)
-  - inlet-protocol 0.0.1 (https://github.com/Ferdinand99/Inlet)
-  - inlet-state 0.0.1 (https://github.com/Ferdinand99/Inlet)
+  - inlet (https://github.com/Ferdinand99/Inlet)
+  - inlet-editor (https://github.com/Ferdinand99/Inlet)
+  - inlet-emoji (https://github.com/Ferdinand99/Inlet)
+  - inlet-media (https://github.com/Ferdinand99/Inlet)
+  - inlet-platform (https://github.com/Ferdinand99/Inlet)
+  - inlet-protocol (https://github.com/Ferdinand99/Inlet)
+  - inlet-state (https://github.com/Ferdinand99/Inlet)
 --------------------------------------------------------------------------------
 GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007
@@ -16411,3 +16411,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later (the licence text is above).
 Fluxer built that list from Unicode emoji-test.txt 17.0.0 and the CLDR 48 emoji
 annotations, which are licensed under the Unicode License v3 (text above).
 
+================================================================================
+Test-only font (not part of any build)
+================================================================================
+
+Noto Sans JP, a subset with the Japanese glyphs the demo data uses
+(tests/visual/fonts/NotoSansJP-subset.ttf in the source). Only the Linux screenshot
+checks in the source repository load it; it is not compiled into Inlet and is in no
+binary. Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name
+'Source'. Licensed under the SIL Open Font License, Version 1.1 (text above, also in
+tests/visual/fonts/OFL.txt).
