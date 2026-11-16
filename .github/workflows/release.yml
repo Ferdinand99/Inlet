@@ -40,9 +40,16 @@ jobs:
       dmg-artifact: inlet-macos-aarch64-dmg
       retention-days: 7
 
+  # A CycloneDX SBOM per platform (sbom.yml); the release job attaches them.
+  sbom:
+    name: SBOM
+    uses: ./.github/workflows/sbom.yml
+    permissions:
+      contents: read
+
   release:
     name: Create release
-    needs: [build, macos-sign]
+    needs: [build, macos-sign, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -62,6 +69,10 @@ jobs:
           cp artifacts/inlet-windows-x86_64/inlet.exe release/inlet-windows-x86_64.exe
           cp artifacts/inlet-macos-aarch64-dmg/inlet-macos-aarch64.dmg release/
           cp artifacts/inlet-linux-x86_64/inlet-linux-x86_64.tar.gz release/
+          # One SBOM per platform build (CycloneDX, JSON).
+          cp artifacts/inlet-sbom-*/*.cdx.json release/
+          sboms=(release/*.cdx.json)
+          test "${#sboms[@]}" -eq 3
           cp LICENSE release/LICENSE
           # Third-party licence notices, if the repository carries them.
           for f in THIRD-PARTY-NOTICES*; do
@@ -71,6 +82,20 @@ jobs:
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           ls -l
+
+      # LICENSE and THIRD-PARTY-NOTICES (which holds the licences of the fonts, icons and
+      # Twemoji) are in the release and inside the Linux archive; the check fails the
+      # release when one of them is missing or lost its licence texts.
+      - name: Check the licence files
+        run: scripts/check-package-licences.sh release
+
+      # The attest job below attests exactly these files, the ones that are published.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Write release notes
         run: |
@@ -109,3 +134,30 @@ jobs:
             --title "Inlet $TAG (beta)" \
             --notes-file notes.md \
             "${flags[@]}"
+
+  # Build provenance (SLSA, signed with Sigstore) for every file in the release: the
+  # three downloads, the three SBOMs, LICENSE, THIRD-PARTY-NOTICES and SHA256SUMS.txt.
+  # It ties each file to this workflow run and this commit. Anyone can check a download:
+  #
+  #   gh attestation verify <file> --repo Ferdinand99/Inlet
+  #
+  # This is the only job with the two extra permissions, and it runs no repository code:
+  # it downloads the files the release job just published and signs their digests.
+  attest:
+    name: Build provenance
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: release-files
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-files/*

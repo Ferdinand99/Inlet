@@ -1,0 +1,125 @@
+name: Audit
+
+# cargo-audit checks Cargo.lock against the RustSec advisory database on pull requests,
+# on pushes to v0 and main, and every day (a new advisory can appear without any change
+# to the repository). A known vulnerability fails the job. An unmaintained, unsound or
+# yanked crate is a warning: it shows as an annotation and in the job summary.
+#
+# How this differs from the cargo-deny job in build.yml, which also reads the advisory
+# database:
+#
+# - cargo-deny is the gate for what Inlet ships. It reads the dependency graph of the
+#   three release targets, and it is where licences, sources and bans are decided.
+#   Its `unmaintained = "workspace"` setting ignores unmaintained crates that only
+#   arrive through gpui, so it stays quiet about them on purpose.
+# - cargo-audit reads every package in Cargo.lock, whatever target or feature pulls it
+#   in, and reports unmaintained, unsound and yanked crates as warnings instead of
+#   hiding them. It also runs on a timer. It does not look at licences or sources.
+#
+# So a vulnerability in the shipped graph is found by both, and nothing else in this
+# job repeats a deny check. The fuzz target of inlet-media has a lock of its own and is
+# audited too.
+#
+# The second job checks that the licence files that every package must carry (fonts,
+# icons, Twemoji, THIRD-PARTY-NOTICES) are in place; release.yml runs the same script on
+# the files it publishes.
+
+on:
+  push:
+    branches: [v0, main]
+  pull_request:
+    branches: [v0, main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The released cargo-audit binary, checked against the hash in the action's
+      # manifest, instead of compiling it. Reading Cargo.lock needs no Rust toolchain.
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+
+      # Both locks are always read; the exit codes are kept so one result cannot hide
+      # the other. The settings are in .cargo/audit.toml.
+      - name: Audit the lock files
+        id: audit
+        run: |
+          set +e
+          cargo audit --file Cargo.lock --json > audit-main.json
+          main=$?
+          cargo audit --file crates/inlet-media/fuzz/Cargo.lock --json > audit-fuzz.json
+          fuzz=$?
+          set -e
+          # The same results in readable form, in the log.
+          cargo audit --file Cargo.lock || true
+          cargo audit --file crates/inlet-media/fuzz/Cargo.lock || true
+          echo "main=$main" >> "$GITHUB_OUTPUT"
+          echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+
+      # Warnings (unmaintained, unsound, yanked) become annotations and a summary table.
+      # Failing to read the JSON never changes the result of the audit itself.
+      - name: Report warnings
+        if: always()
+        run: |
+          {
+            echo "### cargo-audit warnings"
+            echo
+            echo "| Lock | Kind | Crate | Advisory |"
+            echo "| --- | --- | --- | --- |"
+          } > summary.md
+          for f in main fuzz; do
+            [ -s "audit-$f.json" ] || continue
+            jq -r --arg lock "$f" '
+              (.warnings // {}) | to_entries[] | .key as $kind | .value[]
+              | "\($lock)\t\($kind)\t\(.package.name) \(.package.version)\t\(.advisory.id // "-") \(.advisory.title // "")"
+            ' "audit-$f.json" > "warnings-$f.tsv" || true
+            while IFS=$'\t' read -r lock kind crate advisory; do
+              [ -n "$kind" ] || continue
+              echo "::warning title=cargo-audit ($lock lock): $kind::$crate $advisory"
+              echo "| $lock | $kind | $crate | $advisory |" >> summary.md
+            done < "warnings-$f.tsv"
+          done
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on vulnerabilities
+        env:
+          MAIN: ${{ steps.audit.outputs.main }}
+          FUZZ: ${{ steps.audit.outputs.fuzz }}
+        run: |
+          if [ "$MAIN" != 0 ] || [ "$FUZZ" != 0 ]; then
+            echo "::error::cargo-audit found a vulnerability or could not run (Cargo.lock: $MAIN, fuzz lock: $FUZZ)"
+            exit 1
+          fi
+
+  licences:
+    name: Licence files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The licences of fonts, icons and Twemoji are in the source and in the notices
+        run: scripts/check-package-licences.sh --source

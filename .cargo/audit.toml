@@ -1,0 +1,37 @@
+# cargo-audit configuration (RustSec advisory database): .github/workflows/audit.yml.
+#
+# What fails the job and what only warns:
+#
+# - A known vulnerability in Cargo.lock fails the job (cargo-audit's exit code).
+# - An unmaintained, unsound or yanked crate, or a notice, is a warning: it is printed
+#   and listed in the job summary, and the job stays green. cargo-deny (deny.toml) makes
+#   the call for the crates Inlet ships; see the comment in audit.yml for the split.
+#
+# Ignoring an advisory: add its ID to `ignore` with a comment above it that holds the
+# date, who looked and why Inlet is not affected, and when to look again. An ignore
+# without a dated reason does not get through review. cargo-deny's own ignore list
+# (deny.toml) is separate; an advisory that both tools report has to be listed in both.
+#
+# Nothing is ignored today.
+
+[advisories]
+ignore = [
+    # Example of the form (not an entry):
+    # "RUSTSEC-0000-0000", # 2026-11-16: <crate> only reads <data from where>, never the network. Look again when <crate> 1.2 is out.
+]
+# Shown as warnings, not failures.
+informational_warnings = ["unmaintained", "unsound", "notice"]
+
+[database]
+fetch = true
+stale = false
+
+[yanked]
+enabled = true
+update_index = true
+
+[output]
+# Warnings do not fail the job. To make them fail, set deny = ["warnings"].
+deny = []
+format = "terminal"
+quiet = false
