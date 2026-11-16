@@ -37,10 +37,22 @@ impl Render for Inlet {
         let root = self.picker_keys(root, cx);
         let root = self.search_keys(root, window, cx);
         let root = self.keymap_keys(root, window, cx);
+        // Inlet's own title bar, when it draws one: the bar on top, everything else
+        // (the screen and the layers over it) under it.
+        let titlebar = self.render_titlebar(window, cx);
+        let handles = self.render_resize_handles(window, cx);
         if self.show_about {
-            return root
-                .child(about::render(self.show_licences, cx))
-                .into_any_element();
+            let about = about::render(self.show_licences, cx);
+            return match titlebar {
+                Some(bar) => root
+                    .flex()
+                    .flex_col()
+                    .child(bar)
+                    .child(div().relative().flex_1().min_h_0().child(about))
+                    .children(handles)
+                    .into_any_element(),
+                None => root.child(about).into_any_element(),
+            };
         }
         let content = match self.screen.clone() {
             Screen::Starting { instance } => self.render_starting(instance, cx).into_any_element(),
@@ -65,7 +77,30 @@ impl Render for Inlet {
             Screen::Main => self.render_main(cx).into_any_element(),
         };
         let overlays = self.render_overlays(cx);
-        root.child(content).children(overlays).into_any_element()
+        // The cat, when it is switched on, plays over everything.
+        let neko = self.render_neko(cx);
+        match titlebar {
+            Some(bar) => root
+                .flex()
+                .flex_col()
+                .child(bar)
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .child(content)
+                        .children(overlays),
+                )
+                .children(handles)
+                .children(neko)
+                .into_any_element(),
+            None => root
+                .child(content)
+                .children(overlays)
+                .children(neko)
+                .into_any_element(),
+        }
     }
 }
 

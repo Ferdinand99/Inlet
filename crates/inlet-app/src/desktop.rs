@@ -26,9 +26,10 @@ use gpui::{
     FontWeight, Global, KeyBinding, TitlebarOptions, Window, WindowBounds, WindowHandle,
     WindowOptions,
 };
+use inlet_platform::mac_permissions::{self, Permission, Status as PermissionStatus};
 use inlet_platform::{
     autostart, deep_link, gpui_glue, Badge, DeepLink, Icon, Instance, PlatformEvent, Tray,
-    TrayItem, TrayState,
+    TrayIcons, TrayItem, TrayLook, TrayState, TrayTone as PlatformTone,
 };
 use inlet_state::{AccountState, ChannelId, GuildId, Unread};
 
@@ -37,7 +38,7 @@ use crate::backend::accounts;
 use crate::backend::platform::links::{
     self, Incoming, LinkGate, LinkQueue, Lookup, Next, Prompt, Session,
 };
-use crate::backend::platform::prefs::{self, DesktopPrefs};
+use crate::backend::platform::prefs::{self, DesktopPrefs, TrayTone};
 use crate::backend::platform::window_state::{self, Monitor, Placement, Rect};
 use crate::backend::platform::{
     self as platform, Ev, SecondLaunch, DOCK_QUIT, TRAY_OPEN, TRAY_QUIT,
@@ -66,6 +67,17 @@ const SAVE_AFTER: Duration = Duration::from_secs(2);
 
 const TRAY_PNG: &[u8] =
     include_bytes!("../../../assets/brand/linux/hicolor/32x32/apps/no.opland.inlet.png");
+/// Inlet's own one-colour tray icons: light for a dark taskbar, dark for a light one, and
+/// the template image the macOS menu bar tints.
+const TRAY_WHITE_PNG: &[u8] =
+    include_bytes!("../../../assets/brand/tray/inlet-tray-on-dark-32.png");
+const TRAY_BLACK_PNG: &[u8] =
+    include_bytes!("../../../assets/brand/tray/inlet-tray-on-light-32.png");
+const TRAY_TEMPLATE_PNG: &[u8] =
+    include_bytes!("../../../assets/brand/tray/inlet-trayTemplate@2x.png");
+
+/// How often the permissions of macOS are looked at while the Desktop tab is open.
+const PERMISSION_LOOK: Duration = Duration::from_secs(2);
 
 /// Demo builds with sample data write nothing and register nothing.
 fn demo_mode() -> bool {
@@ -207,6 +219,18 @@ pub struct Desktop {
     last_unread: Option<DesktopUnread>,
     /// When the window last moved, while that is not written yet.
     moved_at: Option<Instant>,
+    /// Inlet draws its own title bar (decided at start: a change needs a restart).
+    pub custom_titlebar: bool,
+    /// Whether a tray icon was asked for at start. On Linux a tray icon can only be
+    /// added or removed with a restart.
+    tray_at_start: bool,
+    /// Where the macOS permissions stand, and when they were last looked at.
+    pub permissions: [PermissionStatus; 4],
+    permissions_at: Option<Instant>,
+    /// The person asked to reset the app data and has not confirmed yet.
+    pub reset_asked: bool,
+    /// The app data is being reset: nothing is written on the way out.
+    reset_pending: bool,
 }
 
 impl Global for Desktop {}
@@ -224,7 +248,27 @@ impl Desktop {
             links: LinkQueue::default(),
             last_unread: None,
             moved_at: None,
+            custom_titlebar: false,
+            tray_at_start: true,
+            permissions: [PermissionStatus::Unsupported; 4],
+            permissions_at: None,
+            reset_asked: false,
+            reset_pending: false,
         }
+    }
+
+    /// Whether the person turned the tray icon on or off since Inlet started, on a
+    /// system where that needs a restart (Linux).
+    pub fn tray_change_waits_for_restart(&self) -> bool {
+        cfg!(target_os = "linux") && self.prefs.show_tray_icon != self.tray_at_start
+    }
+
+    /// Where a macOS permission stands, as last looked at.
+    pub fn permission(&self, which: Permission) -> PermissionStatus {
+        Permission::ALL
+            .iter()
+            .position(|p| *p == which)
+            .map_or(PermissionStatus::Unsupported, |i| self.permissions[i])
     }
 
     /// Another account became active: a link waiting for the one before is dropped.
@@ -239,6 +283,9 @@ impl Desktop {
 
     fn save(&mut self) {
         self.moved_at = None;
+        if self.reset_pending {
+            return;
+        }
         if let Some(path) = &self.path {
             if let Err(err) = prefs::save(path, &self.prefs) {
                 log::warn!("could not write the desktop settings: {err}");
@@ -254,8 +301,16 @@ pub fn init(cx: &mut App) {
     } else {
         prefs::settings_path()
     };
-    let prefs = path.as_deref().map(prefs::load).unwrap_or_default();
-    cx.set_global(Desktop::new(prefs, path));
+    let mut prefs = path.as_deref().map(prefs::load).unwrap_or_default();
+    // A demo run can show the cat.
+    #[cfg(feature = "demo")]
+    if demo_mode() && std::env::var_os("INLET_DEMO_NEKO").is_some() {
+        prefs.show_neko = true;
+    }
+    let mut desktop = Desktop::new(prefs, path);
+    desktop.custom_titlebar = uses_own_title_bar(&desktop.prefs);
+    desktop.tray_at_start = desktop.prefs.show_tray_icon;
+    cx.set_global(desktop);
     gpui_glue::install(cx);
     install_actions(cx);
     // The dock menu on macOS (Quit is already in it), and the jump list on Windows:
@@ -324,7 +379,14 @@ fn install_actions(cx: &mut App) {
 
 /// The main window's options: back where it was on its monitor, or centred.
 pub fn window_options(start: &Start, cx: &mut App) -> WindowOptions {
-    let memory = cx.global::<Desktop>().prefs.window.clone();
+    let desktop = cx.global::<Desktop>();
+    // Without "remember window size and position" the window starts centred, as new.
+    let memory = if desktop.prefs.remember_window_state {
+        desktop.prefs.window.clone()
+    } else {
+        Default::default()
+    };
+    let own_title_bar = desktop.custom_titlebar;
     let displays = cx.displays();
     let monitors: Vec<Monitor> = displays
         .iter()
@@ -386,8 +448,18 @@ pub fn window_options(start: &Start, cx: &mut App) -> WindowOptions {
         focus: !hidden,
         titlebar: Some(TitlebarOptions {
             title: Some(t!("app-window-title").into()),
-            ..Default::default()
+            // Inlet's own title bar (Windows, macOS: the buttons stay where the system
+            // puts them, over Inlet's bar).
+            appears_transparent: own_title_bar,
+            traffic_light_position: (own_title_bar && cfg!(target_os = "macos"))
+                .then(|| point(px(12.), px(10.))),
         }),
+        // Linux: the window has no frame from the system; Inlet draws it.
+        window_decorations: (own_title_bar
+            && cfg!(any(target_os = "linux", target_os = "freebsd")))
+        .then_some(gpui::WindowDecorations::Client),
+        // macOS: Inlet's bar moves the window itself.
+        app_owns_titlebar_drag: own_title_bar && cfg!(target_os = "macos"),
         app_id: Some(inlet_platform::APP_ID.into()),
         // X11 only; Windows takes the icon from the .exe resource (build.rs).
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -478,6 +550,7 @@ pub fn attach(
             let unread = this.desktop_unread(cx);
             sync_unread(unread, cx);
             this.release_waiting_link(cx);
+            refresh_tray_look(cx);
             let d = cx.global_mut::<Desktop>();
             if d.moved_at.is_some_and(|t| t.elapsed() >= SAVE_AFTER) {
                 d.save();
@@ -503,14 +576,62 @@ pub fn attach(
     }
 }
 
+/// Whether Inlet draws its own title bar this run: Windows, macOS and Linux, unless the
+/// person chose the system's (Windows and Linux; macOS always gets a bar of its own with
+/// the system's buttons). Demo runs keep the system's, so the screenshots of the other
+/// scenes do not change; `INLET_DEMO_TITLEBAR` turns it on for the ones that show it.
+fn uses_own_title_bar(prefs: &DesktopPrefs) -> bool {
+    if demo_mode() {
+        return cfg!(feature = "demo") && std::env::var_os("INLET_DEMO_TITLEBAR").is_some();
+    }
+    cfg!(target_os = "macos") || !prefs.use_system_title_bar
+}
+
+/// The tray's pictures: the coloured icon and Inlet's one-colour ones.
+fn tray_icons() -> Option<TrayIcons> {
+    let load = |bytes: &[u8]| match Icon::from_png(bytes) {
+        Ok(icon) => Some(icon),
+        Err(err) => {
+            log::warn!("tray icon: {err}");
+            None
+        }
+    };
+    Some(TrayIcons {
+        colored: load(TRAY_PNG)?,
+        white: load(TRAY_WHITE_PNG)?,
+        black: load(TRAY_BLACK_PNG)?,
+        template: load(TRAY_TEMPLATE_PNG)?,
+    })
+}
+
+/// How the person wants the tray icon to look.
+fn tray_look(prefs: &DesktopPrefs) -> TrayLook {
+    TrayLook {
+        colored: prefs.colored_tray_icon,
+        tone: match prefs.tray_tone {
+            TrayTone::Auto => PlatformTone::Auto,
+            TrayTone::White => PlatformTone::White,
+            TrayTone::Black => PlatformTone::Black,
+        },
+    }
+}
+
 /// `opened_hidden`: the window was opened hidden for a login start (Windows, macOS).
 /// `hide_when_shown`: a login start on Linux, where the window is hidden only once a
 /// tray icon is there.
 fn create_tray(opened_hidden: bool, hide_when_shown: bool, cx: &mut App) {
-    let icon = match Icon::from_png(TRAY_PNG) {
-        Ok(icon) => icon,
-        Err(err) => {
-            log::warn!("tray icon: {err}");
+    let (wanted, look) = {
+        let d = cx.global::<Desktop>();
+        (d.prefs.show_tray_icon, tray_look(&d.prefs))
+    };
+    let icons = match tray_icons() {
+        Some(icons) if wanted => icons,
+        // "Show system tray icon" is off, or the pictures are broken: no tray icon, so
+        // nothing hides to it and a hidden login start shows the window.
+        _ => {
+            if opened_hidden {
+                show_main_window(cx);
+            }
             return;
         }
     };
@@ -519,7 +640,7 @@ fn create_tray(opened_hidden: bool, hide_when_shown: bool, cx: &mut App) {
         TrayItem::separator(),
         TrayItem::action(TRAY_QUIT, t!("desktop-tray-quit")),
     ];
-    let created = gpui_glue::create_tray(cx, icon, menu);
+    let created = gpui_glue::create_tray_styled(cx, icons, menu, look);
     cx.spawn(async move |cx| {
         let result = created.await;
         cx.update(|cx| match result {
@@ -545,11 +666,31 @@ fn create_tray(opened_hidden: bool, hide_when_shown: bool, cx: &mut App) {
     .detach();
 }
 
+/// Runs `f` on the app view once the current update is done (see [`with_main_window`]).
+pub(crate) fn with_app_view(
+    cx: &mut App,
+    what: &'static str,
+    f: impl FnOnce(&mut Inlet, &mut Window, &mut Context<Inlet>) + 'static,
+) {
+    let Some(handle) = cx
+        .try_global::<Desktop>()
+        .and_then(|d| d.window)
+        .and_then(|h| h.downcast::<Inlet>())
+    else {
+        return;
+    };
+    cx.defer(move |cx| {
+        if let Err(err) = handle.update(cx, |this, window, cx| f(this, window, cx)) {
+            log::warn!("could not {what}: {err}");
+        }
+    });
+}
+
 /// Runs `f` on the main window once the current update is done. Actions, keys and
 /// clicks are handled inside an update of that very window, during which gpui has
 /// taken the window out of the app; updating it there fails. Deferred, the window is
 /// back. A failure is logged, never swallowed.
-fn with_main_window(
+pub(crate) fn with_main_window(
     cx: &mut App,
     what: &'static str,
     f: impl FnOnce(&mut Window, &mut App) + 'static,
@@ -615,8 +756,31 @@ fn should_close(window: &mut Window, cx: &mut App) -> bool {
     }
 }
 
-/// Notes the window's place for its monitor; written once it stays put.
+/// Inlet's own close button: the same as the system's, which hides to the tray when
+/// that is on and a tray icon is shown, else closes the window and quits.
+pub fn close_requested(window: &mut Window, cx: &mut App) {
+    if should_close(window, cx) {
+        window.remove_window();
+    }
+}
+
+/// Inlet's own minimize button (and Command-M): hides to the tray when "minimize to
+/// tray" is on and a tray icon is shown, else minimizes.
+pub fn minimize_requested(window: &mut Window, cx: &mut App) {
+    let d = cx.global::<Desktop>();
+    if d.prefs.minimize_to_tray && d.tray_shown() {
+        gpui_glue::hide_window(window, cx);
+    } else {
+        window.minimize_window();
+    }
+}
+
+/// Notes the window's place for its monitor; written once it stays put. Nothing is
+/// noted when the person turned "remember window size and position" off.
 fn note_window_place(window: &Window, cx: &mut App) {
+    if !cx.global::<Desktop>().prefs.remember_window_state {
+        return;
+    }
     let (bounds, maximized) = match window.window_bounds() {
         WindowBounds::Windowed(b) => (b, false),
         WindowBounds::Maximized(b) => (b, true),
@@ -664,9 +828,118 @@ pub fn set_zoom(zoom: f32, cx: &mut App) {
 
 /// Turns closing to the tray on or off.
 pub fn set_close_to_tray(on: bool, cx: &mut App) {
+    change_prefs(cx, |p| p.close_to_tray = on);
+}
+
+/// Changes the desktop settings, keeps them, and does what the change asks for at once:
+/// the tray icon comes or goes (Windows and macOS; Linux asks for a restart) or is drawn
+/// again, the taskbar badge changes colour, the launcher badge is drawn again.
+pub fn change_prefs(cx: &mut App, change: impl FnOnce(&mut DesktopPrefs)) {
     let d = cx.global_mut::<Desktop>();
-    d.prefs.close_to_tray = on;
+    let before = d.prefs.clone();
+    change(&mut d.prefs);
+    if d.prefs == before {
+        return;
+    }
+    let after = d.prefs.clone();
     d.save();
+    if before.show_tray_icon != after.show_tray_icon {
+        apply_tray_visibility(after.show_tray_icon, cx);
+    }
+    if tray_look(&before) != tray_look(&after) {
+        refresh_tray_look(cx);
+    }
+    if before.dark_taskbar_badge != after.dark_taskbar_badge {
+        gpui_glue::set_dark_badge(cx, after.dark_taskbar_badge);
+    }
+    if before.unread_launcher_badge != after.unread_launcher_badge {
+        // The badge is worked out again at the next tick.
+        cx.global_mut::<Desktop>().last_unread = None;
+    }
+    cx.refresh_windows();
+}
+
+/// Adds the tray icon or removes it. Linux cannot do either while running (the tray
+/// protocol does not let an app come and go reliably), so the change waits for a
+/// restart there; the Desktop tab says so.
+fn apply_tray_visibility(show: bool, cx: &mut App) {
+    if cfg!(target_os = "linux") {
+        return;
+    }
+    if show {
+        if cx.global::<Desktop>().tray.is_none() {
+            create_tray(false, false, cx);
+        }
+    } else {
+        // Dropped in a task, outside the borrow of the app: the shell is called.
+        let gone = cx.global_mut::<Desktop>().tray.take();
+        cx.spawn(async move |_| drop(gone)).detach();
+        cx.global_mut::<Desktop>().last_unread = None;
+        // A window that was hidden to the tray would have no way back.
+        show_main_window(cx);
+    }
+}
+
+/// Draws the tray icon again when its look (or the taskbar's colour) changed.
+fn refresh_tray_look(cx: &mut App) {
+    let d = cx.global::<Desktop>();
+    if let Some(tray) = d.tray.clone() {
+        let look = tray_look(&d.prefs);
+        gpui_glue::set_tray_look(cx, &tray, look);
+    }
+}
+
+/// Starts Inlet again and quits this one (a setting that needs a restart).
+pub fn relaunch(cx: &mut App) {
+    if let Err(err) = inlet_platform::spawn_relaunch() {
+        log::warn!("Inlet could not be started again: {err}");
+        return;
+    }
+    quit(cx);
+}
+
+/// Resets the app data: starts the new Inlet that wipes everything before it reads it,
+/// and quits this one without writing anything on the way out.
+pub fn reset_app_data(cx: &mut App) {
+    cx.global_mut::<Desktop>().reset_pending = true;
+    if let Err(err) = inlet_platform::spawn_relaunch_with(&[crate::backend::platform::reset::FLAG])
+    {
+        log::warn!("Inlet could not be started to reset its data: {err}");
+        let d = cx.global_mut::<Desktop>();
+        d.reset_pending = false;
+        d.reset_asked = false;
+        return;
+    }
+    quit(cx);
+}
+
+/// The Desktop settings are open at the question before the app data is reset (the
+/// Troubleshooting menu).
+pub fn ask_to_reset(cx: &mut App) {
+    cx.global_mut::<Desktop>().reset_asked = true;
+}
+
+/// Looks at the macOS permissions, at most every couple of seconds. Cheap system
+/// calls, no prompt.
+pub fn look_at_permissions(cx: &mut App) {
+    let d = cx.global_mut::<Desktop>();
+    if d.permissions_at
+        .is_some_and(|t| t.elapsed() < PERMISSION_LOOK)
+    {
+        return;
+    }
+    d.permissions_at = Some(Instant::now());
+    for (i, p) in Permission::ALL.iter().enumerate() {
+        d.permissions[i] = mac_permissions::status(*p);
+    }
+}
+
+/// Asks for a macOS permission (the person pressed its button), then looks again.
+pub fn ask_permission(which: Permission, cx: &mut App) {
+    mac_permissions::request(which);
+    cx.global_mut::<Desktop>().permissions_at = None;
+    look_at_permissions(cx);
+    cx.refresh_windows();
 }
 
 /// Turns the login item on or off, or changes whether it starts Inlet hidden. The
@@ -737,6 +1010,23 @@ impl DesktopUnread {
         }
     }
 
+    /// The badge for a system. A Linux launcher shows only numbers, so there unread
+    /// messages without mentions show as 1, as Fluxer does, unless the person turned
+    /// that off ("badge the app icon for unread messages"); mentions always show their
+    /// count.
+    pub fn badge_for(&self, linux_launcher: bool, unread_as_one: bool) -> Badge {
+        match self.badge() {
+            Badge::Dot if linux_launcher => {
+                if unread_as_one {
+                    Badge::Count(1)
+                } else {
+                    Badge::None
+                }
+            }
+            other => other,
+        }
+    }
+
     fn tooltip(&self) -> String {
         if self.mentions > 0 {
             t!("desktop-tray-mentions", count = self.mentions)
@@ -778,11 +1068,15 @@ fn sync_unread(unread: DesktopUnread, cx: &mut App) {
     }
     d.last_unread = Some(unread);
     let tray = d.tray.clone();
+    let launcher_badge = d.prefs.unread_launcher_badge;
     if let Some(tray) = &tray {
         gpui_glue::set_tray_state(cx, tray, unread.tray_state());
         gpui_glue::set_tray_tooltip(cx, tray, unread.tooltip());
     }
-    gpui_glue::set_badge(cx, unread.badge());
+    gpui_glue::set_badge(
+        cx,
+        unread.badge_for(cfg!(target_os = "linux"), launcher_badge),
+    );
 }
 
 /// The signed-in account, as the link rules see it.

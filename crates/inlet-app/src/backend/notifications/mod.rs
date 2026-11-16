@@ -17,7 +17,6 @@
 //!   writes still running (`Accounts::teardown`), so no answer reaches the next account.
 
 pub mod alerts;
-pub mod sound;
 
 use inlet_protocol as p;
 use inlet_state::GuildId;

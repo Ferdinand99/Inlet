@@ -242,6 +242,8 @@ Run-Demo "64-settings-advanced" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "360
 Run-Demo "65-settings-accounts" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_SETTINGS = "accounts"; INLET_DEMO_THEME = "dark" } 10
 Run-Demo "66-chat-light" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "chat-cozy"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "light" } 10
 Run-Demo "67-chat-coal" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "chat-cozy"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "coal" } 10
+Run-Demo "140-titlebar" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "dark"; INLET_DEMO_TITLEBAR = "1" } 10
+Run-Demo "141-neko" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general"; INLET_DEMO_THEME = "dark"; INLET_DEMO_NEKO = "1" } 10
 
 # A demo that quit before its screenshot crashed: fail the job, the pictures are not
 # worth checking.

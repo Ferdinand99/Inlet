@@ -85,18 +85,7 @@ impl SettingsTab for NotificationsTab {
                 })),
             )
             .child(heading(t!("settings-notifications-sounds")))
-            .child(
-                toggle(
-                    "settings-notifications-sound",
-                    t!("settings-notifications-sound"),
-                    prefs.sound,
-                    true,
-                )
-                .on_click(cx.listener(|_, _, _, cx| {
-                    alerts::change_prefs(cx, |p| p.sound = !p.sound);
-                    cx.notify();
-                })),
-            )
+            .child(super::sounds::section(cx))
             .child(heading(t!("settings-notifications-rules")))
             .child(note(t!("settings-notifications-rules-note")).pl_0())
             .child(note(t!("settings-notifications-dnd-note")).pl_0().pt_2())

@@ -30,6 +30,7 @@
 
 pub mod account;
 pub mod profile;
+pub mod sounds;
 pub mod write;
 
 use super::{Backend, Command, Event};
@@ -38,6 +39,7 @@ use super::{Backend, Command, Event};
 /// the guild order and folders, each with its own `Cmd`.
 pub enum Cmd {
     Account(account::Cmd),
+    Sounds(sounds::Cmd),
 }
 
 /// Events of this domain, by part.
@@ -51,6 +53,12 @@ impl From<account::Cmd> for Command {
     }
 }
 
+impl From<sounds::Cmd> for Command {
+    fn from(cmd: sounds::Cmd) -> Self {
+        Command::Settings(Cmd::Sounds(cmd))
+    }
+}
+
 impl From<account::Ev> for Event {
     fn from(ev: account::Ev) -> Self {
         Event::Settings(Ev::Account(ev))
@@ -60,6 +68,7 @@ impl From<account::Ev> for Event {
 pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     match cmd {
         Cmd::Account(cmd) => account::handle(backend, cmd),
+        Cmd::Sounds(cmd) => sounds::handle(backend, cmd),
     }
 }
 

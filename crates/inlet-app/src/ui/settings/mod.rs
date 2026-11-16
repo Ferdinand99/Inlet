@@ -219,12 +219,15 @@ impl Inlet {
         // would read as every switch off).
         if let Some(user) = state.user() {
             store::gateway_settings(cx, user, Some(state.display()));
+            // The sound effects have their own store (`ui::sounds`).
+            crate::ui::sounds::follow_account(cx, state.sound());
         }
     }
 
     /// Another account is shown: its settings, not the last one's, decide.
     pub(crate) fn settings_account_changed(&mut self, cx: &mut Context<Self>) {
         store::reset_account(cx);
+        crate::ui::sounds::forget_account(cx);
         self.settings.profile.reset();
         self.follow_account_settings(cx);
     }

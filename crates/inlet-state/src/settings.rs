@@ -46,6 +46,19 @@ pub struct Display {
     pub convert_emoticons: Option<bool>,
 }
 
+/// The sound settings of the synced preferences (`SyncedPreferences.sound`).
+pub type SoundSettings = inlet_protocol::proto::preferences::SoundSettings;
+
+/// What the synced preferences of `settings` say that the app follows: the display
+/// preferences and the sound settings. `None` when there is no readable snapshot.
+fn read_preferences(settings: &UserSettings) -> Option<(Display, Option<SoundSettings>)> {
+    let prefs = settings.synced_preferences()?.ok()?;
+    Some((
+        Display::of_preferences(prefs.get()),
+        prefs.get().sound.clone(),
+    ))
+}
+
 impl Display {
     /// What the synced preferences of `settings` say, if it carries a readable snapshot.
     pub fn of(settings: &UserSettings) -> Option<Display> {
@@ -71,6 +84,8 @@ impl Display {
 pub struct Settings {
     user: Option<Box<UserSettings>>,
     display: Display,
+    /// The sound settings of the synced preferences, as the server holds them.
+    sound: Option<SoundSettings>,
     /// The guild order and folders. Kept apart from the user settings above: the server
     /// list fills this in (it is empty here).
     guild_folders: Vec<GuildFolder>,
@@ -101,8 +116,13 @@ impl Settings {
     /// The settings READY carries, if it carries any.
     pub fn from_ready(r: &Ready) -> Self {
         let user = r.user_settings().filter(is_full);
+        let (display, sound) = user
+            .as_ref()
+            .and_then(read_preferences)
+            .unwrap_or_default();
         Settings {
-            display: user.as_ref().and_then(Display::of).unwrap_or_default(),
+            display,
+            sound,
             user: user.as_ref().map(trimmed),
             guild_folders: Vec::new(),
         }
@@ -113,8 +133,9 @@ impl Settings {
     pub fn apply(&mut self, event: &Dispatch) -> Changes {
         if let Dispatch::UserSettingsUpdate(update) = event {
             if is_full(update) {
-                if let Some(display) = Display::of(update) {
+                if let Some((display, sound)) = read_preferences(update) {
                     self.display = display;
+                    self.sound = sound;
                 }
                 self.user = Some(trimmed(update));
             }
@@ -132,6 +153,11 @@ impl Settings {
     /// The font size and message spacing of the synced preferences.
     pub fn display(&self) -> Display {
         self.display
+    }
+
+    /// The sound settings of the synced preferences, if the account has any.
+    pub fn sound(&self) -> Option<&SoundSettings> {
+        self.sound.as_ref()
     }
 
     /// The guild order and folders (see the field).

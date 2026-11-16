@@ -19,7 +19,8 @@ use gpui::{SharedString, SystemNotification};
 
 use crate::events::emit;
 use crate::{
-    deep_link, Badge, Icon, Notification, PlatformEvent, Result, Tray, TrayItem, TrayState,
+    deep_link, Badge, Icon, Notification, PlatformEvent, Result, Tray, TrayIcons, TrayItem,
+    TrayLook, TrayState,
 };
 
 /// Call once, before the app runs. Links that macOS hands to the bundle
@@ -117,6 +118,34 @@ pub fn set_badge(cx: &App, badge: impl Into<Badge>) {
 /// no tray host; the app should then not hide its window to the tray.
 pub fn create_tray(cx: &App, icon: Icon, menu: Vec<TrayItem>) -> Task<Result<Rc<Tray>>> {
     cx.spawn(async move |_| Tray::new(icon, menu).map(Rc::new))
+}
+
+/// As [`create_tray`], with the look the person picked (colour or monochrome, and the
+/// tone). The taskbar colour is read here, in the task.
+pub fn create_tray_styled(
+    cx: &App,
+    icons: TrayIcons,
+    menu: Vec<TrayItem>,
+    look: TrayLook,
+) -> Task<Result<Rc<Tray>>> {
+    cx.spawn(async move |_| {
+        Tray::with_look(icons, menu, look, crate::taskbar_is_dark()).map(Rc::new)
+    })
+}
+
+/// Changes how the tray icon looks, from a task. The taskbar colour is read again (it
+/// changes with the system theme); nothing is redrawn when nothing changed.
+pub fn set_tray_look(cx: &App, tray: &Rc<Tray>, look: TrayLook) {
+    let tray = tray.clone();
+    cx.spawn(async move |_| tray.set_look(look, crate::taskbar_is_dark()))
+        .detach();
+}
+
+/// Draws the Windows taskbar badge dark grey instead of red, or back, from a task.
+/// Other systems ignore it.
+pub fn set_dark_badge(cx: &App, dark: bool) {
+    cx.spawn(async move |_| crate::badge::set_dark_overlay(dark))
+        .detach();
 }
 
 /// Switches the tray icon between normal, unread and mention, from a task.

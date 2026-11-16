@@ -1,30 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The notification sound: Inlet's own (`assets/sounds`, CC0, made for Inlet), never
-//! Fluxer's. It plays on a thread of its own through the system's default output
-//! device: the UI thread only queues a request and never waits. The device is opened
-//! for each sound and closed after it, so Inlet holds no audio device while it is
-//! quiet. A sound that cannot play (no device, a busy one) is logged once and skipped.
+//! Playing one sound on the system's default output device, and the PCM helpers around
+//! it. A sound is mono samples in -1..=1 at their own rate ([`Pcm`]); the caller picks
+//! the gain and may stop it early.
 //!
-//! - Before each sound the thread asks `inlet_platform::quiet_mode` whether the system
-//!   is in a quiet mode (do not disturb, presentation, full screen): then it stays
-//!   silent, as the system holds back the (silent) notification itself.
+//! The device is opened for each sound and closed after it, so Inlet holds no audio
+//! device while it is quiet. A sound that cannot play (no device, a busy one) returns an
+//! error, which the caller logs once.
+//!
 //! - Windows and macOS play through cpal (WASAPI, CoreAudio).
 //! - Linux loads ALSA's `libasound.so.2` at run time, only when a sound plays. Inlet
 //!   does not link it, so a system without it starts normally and only has no sound.
 //!   ALSA's `default` device reaches PulseAudio or PipeWire on a desktop.
+//! - Tests never open a device.
 
-// Tests never play a sound: the player is only started by the app.
+// Tests never play a sound.
 #![cfg_attr(test, allow(dead_code))]
 
-use std::sync::mpsc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-/// The sound for a message that notifies: 48 kHz, 16-bit mono WAV.
-const MESSAGE_WAV: &[u8] = include_bytes!("../../../../../assets/sounds/message.wav");
-/// Sounds waiting to play; more are dropped (they would only overlap).
-const QUEUE: usize = 2;
-/// Longest sound accepted, in samples (2 s at 48 kHz).
-const MAX_SAMPLES: usize = 96_000;
+/// Longest built-in sound accepted, in samples (2 s at 48 kHz).
+pub const MAX_BUILTIN_SAMPLES: usize = 96_000;
 
 /// Samples in -1..=1 at their own rate.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,7 +30,7 @@ pub struct Pcm {
 }
 
 impl Pcm {
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[allow(dead_code)] // the loop of the voice tasks and the tests
     pub fn duration(&self) -> Duration {
         Duration::from_secs_f64(self.samples.len() as f64 / f64::from(self.rate.max(1)))
     }
@@ -67,7 +63,7 @@ pub fn parse_wav(bytes: &[u8]) -> Option<Pcm> {
                     .as_chunks::<2>()
                     .0
                     .iter()
-                    .take(MAX_SAMPLES)
+                    .take(MAX_BUILTIN_SAMPLES)
                     .map(|s| f32::from(i16::from_le_bytes(*s)) / 32768.0)
                     .collect();
                 return Some(Pcm { rate, samples });
@@ -78,52 +74,6 @@ pub fn parse_wav(bytes: &[u8]) -> Option<Pcm> {
         at += 8 + len + (len & 1);
     }
     None
-}
-
-/// The sound Inlet plays for a message that notifies.
-pub fn message_sound() -> Option<Pcm> {
-    parse_wav(MESSAGE_WAV)
-}
-
-/// Plays the message sound on its own thread.
-pub struct SoundPlayer {
-    tx: mpsc::SyncSender<()>,
-}
-
-impl SoundPlayer {
-    /// Starts the sound thread; `None` when the sound or the thread is not there.
-    pub fn start() -> Option<Self> {
-        let pcm = message_sound()?;
-        let (tx, rx) = mpsc::sync_channel::<()>(QUEUE);
-        std::thread::Builder::new()
-            .name("inlet-sound".into())
-            .spawn(move || {
-                // The same failure is logged once, not for every sound.
-                let mut last_error = None;
-                for () in rx {
-                    if inlet_platform::quiet_mode() {
-                        continue;
-                    }
-                    match output::play(&pcm) {
-                        Ok(()) => last_error = None,
-                        Err(err) => {
-                            if last_error.as_ref() != Some(&err) {
-                                log::info!("the notification sound did not play: {err}");
-                            }
-                            last_error = Some(err);
-                        }
-                    }
-                }
-            })
-            .map_err(|err| log::warn!("no sound thread: {err}"))
-            .ok()?;
-        Some(SoundPlayer { tx })
-    }
-
-    /// Queues the sound without waiting; dropped when two are already waiting.
-    pub fn play(&self) {
-        let _ = self.tx.try_send(());
-    }
 }
 
 /// The sound at the device's rate: linear interpolation between the samples.
@@ -146,18 +96,33 @@ pub fn resample(pcm: &Pcm, rate: u32) -> Vec<f32> {
         .collect()
 }
 
+/// `samples` scaled by `gain` and kept in -1..=1.
+pub fn with_gain(samples: &[f32], gain: f32) -> Vec<f32> {
+    let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
+    samples
+        .iter()
+        .map(|s| (s * gain).clamp(-1.0, 1.0))
+        .collect()
+}
+
+/// Plays `pcm` once at `gain` and waits until it is done, or `stop` is set (checked
+/// about every 20 ms).
+pub fn play(pcm: &Pcm, gain: f32, stop: &AtomicBool) -> Result<(), String> {
+    device::play(pcm, gain, stop)
+}
+
 #[cfg(all(not(test), any(windows, target_os = "macos")))]
-mod output {
+mod device {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
 
-    use super::{resample, Pcm};
+    use super::{resample, with_gain, Pcm};
 
-    /// Plays `pcm` once on the default output device and waits until it is done.
-    pub fn play(pcm: &Pcm) -> Result<(), String> {
+    pub fn play(pcm: &Pcm, gain: f32, stop: &AtomicBool) -> Result<(), String> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -165,7 +130,7 @@ mod output {
         let supported = device.default_output_config().map_err(|e| e.to_string())?;
         let format = supported.sample_format();
         let config: StreamConfig = supported.into();
-        let samples = Arc::new(resample(pcm, config.sample_rate));
+        let samples = Arc::new(with_gain(&resample(pcm, config.sample_rate), gain));
         let stream = match format {
             SampleFormat::F32 => build::<f32>(&device, config, samples),
             SampleFormat::I16 => build::<i16>(&device, config, samples),
@@ -175,7 +140,10 @@ mod output {
             other => return Err(format!("sample format {other} not supported")),
         }?;
         stream.play().map_err(|e| e.to_string())?;
-        std::thread::sleep(pcm.duration() + Duration::from_millis(150));
+        let end = Instant::now() + pcm.duration() + Duration::from_millis(150);
+        while Instant::now() < end && !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         Ok(())
     }
 
@@ -210,13 +178,14 @@ mod output {
 
 /// ALSA, loaded at run time (see the module docs).
 #[cfg(all(not(test), target_os = "linux"))]
-mod output {
+mod device {
     use std::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
 
     use libloading::{Library, Symbol};
 
-    use super::Pcm;
+    use super::{with_gain, Pcm};
 
     const STREAM_PLAYBACK: c_int = 0;
     /// `SND_PCM_NONBLOCK`: opening never waits for a device another program holds.
@@ -227,6 +196,8 @@ mod output {
     const ACCESS_RW_INTERLEAVED: c_int = 3;
     /// Latency asked of ALSA, in microseconds.
     const LATENCY_US: c_uint = 100_000;
+    /// Frames written between two looks at the stop flag.
+    const CHUNK: usize = 2_400;
 
     type Open = unsafe extern "C" fn(*mut *mut c_void, *const c_char, c_int, c_int) -> c_int;
     type SetParams =
@@ -260,12 +231,11 @@ mod output {
     }
 
     /// Plays `pcm` once on ALSA's default device and waits until it is done.
-    pub fn play(pcm: &Pcm) -> Result<(), String> {
+    pub fn play(pcm: &Pcm, gain: f32, stop: &AtomicBool) -> Result<(), String> {
         let lib = alsa()?;
-        let samples: Vec<i16> = pcm
-            .samples
+        let samples: Vec<i16> = with_gain(&pcm.samples, gain)
             .iter()
-            .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .map(|s| (s * 32767.0) as i16)
             .collect();
         // SAFETY: every symbol has the type `alsa/pcm.h` declares. The handle is used
         // only between a successful open and the close, and the buffer outlives every
@@ -309,8 +279,13 @@ mod output {
             nonblock(handle, 0);
             let mut at = 0usize;
             let mut stalls = 0;
+            let mut stopped = false;
             while at < samples.len() && stalls < MAX_STALLS {
-                let left = &samples[at..];
+                if stop.load(Ordering::Relaxed) {
+                    stopped = true;
+                    break;
+                }
+                let left = &samples[at..(at + CHUNK).min(samples.len())];
                 let n = writei(handle, left.as_ptr().cast(), left.len() as c_ulong);
                 if n > 0 {
                     at += n as usize;
@@ -322,7 +297,9 @@ mod output {
                     break;
                 }
             }
-            drain(handle);
+            if !stopped {
+                drain(handle);
+            }
             close(handle);
         }
         Ok(())
@@ -331,10 +308,12 @@ mod output {
 
 /// Tests never open an audio device; other systems have no sound.
 #[cfg(any(test, not(any(windows, target_os = "macos", target_os = "linux"))))]
-mod output {
+mod device {
+    use std::sync::atomic::AtomicBool;
+
     use super::Pcm;
 
-    pub fn play(_: &Pcm) -> Result<(), String> {
+    pub fn play(_: &Pcm, _: f32, _: &AtomicBool) -> Result<(), String> {
         Ok(())
     }
 }
@@ -343,27 +322,42 @@ mod output {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_message_sound_is_a_short_mono_wav() {
-        let pcm = message_sound().expect("the shipped sound parses");
-        assert_eq!(pcm.rate, 48_000);
-        let secs = pcm.duration().as_secs_f32();
-        assert!((0.2..1.0).contains(&secs), "{secs} s");
-        // Not clipped, not silent, and it ends in silence (no click).
-        let peak = pcm.samples.iter().fold(0f32, |m, s| m.max(s.abs()));
-        assert!(peak > 0.1 && peak < 0.9, "peak {peak}");
-        assert!(pcm.samples.last().unwrap().abs() < 0.01);
+    /// A mono 16-bit WAV of `samples` at `rate`.
+    fn wav(rate: u32, samples: &[i16]) -> Vec<u8> {
+        let data_len = (samples.len() * 2) as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_len).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        out.extend_from_slice(&1u16.to_le_bytes()); // mono
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(rate * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        for s in samples {
+            out.extend_from_slice(&s.to_le_bytes());
+        }
+        out
     }
 
     #[test]
-    fn other_wav_files_are_refused() {
+    fn a_mono_wav_is_read_and_other_files_are_refused() {
+        let ok = wav(48_000, &[0, 16384, -16384, 32767]);
+        let pcm = parse_wav(&ok).expect("a mono 16-bit WAV parses");
+        assert_eq!(pcm.rate, 48_000);
+        assert_eq!(pcm.samples.len(), 4);
+        assert!((pcm.samples[1] - 0.5).abs() < 1e-4);
         assert_eq!(parse_wav(b"RIFF\0\0\0\0WAVE"), None);
         assert_eq!(parse_wav(b"not a wav file"), None);
-        let mut stereo = MESSAGE_WAV.to_vec();
+        let mut stereo = ok.clone();
         stereo[22] = 2; // channels
         assert_eq!(parse_wav(&stereo), None);
         // A chunk that claims more bytes than there are.
-        assert_eq!(parse_wav(&MESSAGE_WAV[..60]), None);
+        assert_eq!(parse_wav(&ok[..ok.len() - 3]), None);
     }
 
     #[test]
@@ -378,5 +372,15 @@ mod tests {
         assert!(resample(&pcm, 44_100)
             .iter()
             .all(|s| (*s - 0.5).abs() < 1e-6));
+    }
+
+    #[test]
+    fn gain_scales_and_never_clips() {
+        assert_eq!(with_gain(&[0.5, -0.5], 1.0), vec![0.5, -0.5]);
+        assert_eq!(with_gain(&[0.5, -0.5], 0.5), vec![0.25, -0.25]);
+        assert_eq!(with_gain(&[0.8, -0.8], 2.0), vec![1.0, -1.0]);
+        assert_eq!(with_gain(&[0.5], 0.0), vec![0.0]);
+        assert_eq!(with_gain(&[0.5], f32::NAN), vec![0.0]);
+        assert_eq!(with_gain(&[0.5], -1.0), vec![0.0]);
     }
 }

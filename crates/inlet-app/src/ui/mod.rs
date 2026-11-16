@@ -11,6 +11,7 @@ pub mod inbox;
 pub mod markdown;
 pub mod media;
 pub mod members;
+pub mod neko;
 pub mod notifications;
 pub mod overlays;
 pub mod profile;
@@ -20,7 +21,9 @@ pub mod search;
 pub mod settings;
 pub mod sidebar;
 pub mod social;
+pub mod sounds;
 pub mod threads;
+pub mod titlebar;
 pub mod voice;
 pub mod widgets;
 

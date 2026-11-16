@@ -1,0 +1,41 @@
+# Sound effects: the settings section (ui/settings/tabs/sounds.rs, ui/sounds).
+
+settings-sounds-master = Master volume
+settings-sounds-master-note = Sets the level for every sound effect. Per-sound overrides ignore this.
+settings-sounds-disable-all = Disable all notification sounds
+settings-sounds-disable-all-note = Your existing notification sound settings will be preserved.
+settings-sounds-custom-note = Click the upload icon next to any sound to customize it with your own audio file. Max { $size }.
+settings-sounds-too-large = The file is too large. The maximum size is { $size }.
+settings-sounds-unsupported = Choose a supported audio file (MP3, WAV, Ogg Vorbis, FLAC or AAC) and try again.
+settings-sounds-too-long = The sound is too long. It can be at most one minute.
+settings-sounds-unreadable = The file could not be read as a sound.
+settings-sounds-pick-prompt = Use as the sound
+settings-sounds-custom-badge = Custom
+settings-sounds-preview = Preview sound
+settings-sounds-show-more = Show more sound effects
+settings-sounds-show-fewer = Show fewer sound effects
+settings-sounds-per-sound = Per-sound volume
+settings-sounds-per-sound-note = Set custom volumes for individual sounds. Sounds without an override follow the master volume.
+settings-sounds-per-sound-count = Active custom sound volume overrides: { $count }.
+settings-sounds-following-master = Following master • { $percent }%
+settings-sounds-percent = { $percent }%
+settings-sounds-reset-all = Reset all overrides
+
+sound-message = Community message notifications
+sound-direct-message = Direct message notifications
+sound-same-channel-message = Current channel message notifications
+sound-mute = Voice mute
+sound-unmute = Voice unmute
+sound-deaf = Voice deafen
+sound-undeaf = Voice undeafen
+sound-user-join = User joins channel
+sound-user-leave = User leaves channel
+sound-user-move = User moves channel
+sound-viewer-join = Viewer joins stream
+sound-viewer-leave = Viewer leaves stream
+sound-voice-disconnect = Voice disconnected
+sound-incoming-ring = Incoming call
+sound-camera-on = Camera on
+sound-camera-off = Camera off
+sound-screen-share-start = Screen share start
+sound-screen-share-stop = Screen share stop

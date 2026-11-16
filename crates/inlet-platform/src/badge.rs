@@ -2,6 +2,9 @@
 //! overlay icon) and the launcher (Linux, Unity LauncherEntry API, which KDE Plasma
 //! and the GNOME docks read).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
 use crate::Icon;
 
 /// What the badge shows.
@@ -47,6 +50,13 @@ impl Badge {
 
 /// Fluxer's indicator red.
 pub(crate) const BADGE_RED: [u8; 3] = [0xdd, 0x00, 0x00];
+/// The dark grey disc of the "dark taskbar badge" setting.
+pub(crate) const BADGE_DARK: [u8; 3] = [0x4e, 0x50, 0x58];
+
+/// Whether the Windows overlay is dark grey instead of red.
+static DARK_OVERLAY: AtomicBool = AtomicBool::new(false);
+/// The badge as it was last set, to draw it again when the colour changes.
+static LAST_BADGE: Mutex<Badge> = Mutex::new(Badge::None);
 
 /// 5x7 glyphs for the overlay: digits and "+". One row per byte, high bit left.
 fn glyph(c: char) -> Option<[u8; 7]> {
@@ -70,6 +80,12 @@ fn glyph(c: char) -> Option<[u8; 7]> {
 /// square. Fluxer ships these as pre-drawn icon files; Inlet draws them.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn render_overlay(badge: Badge, side: u32) -> Option<Icon> {
+    render_overlay_in(badge, side, BADGE_RED)
+}
+
+/// [`render_overlay`] with the colour of the disc.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn render_overlay_in(badge: Badge, side: u32, disc: [u8; 3]) -> Option<Icon> {
     let label = badge.overlay_label()?;
     let s = side.clamp(8, 256) as usize;
     let mut rgba = vec![0u8; s * s * 4];
@@ -78,7 +94,7 @@ pub(crate) fn render_overlay(badge: Badge, side: u32) -> Option<Icon> {
         for x in 0..s {
             let cov = crate::icon::coverage(x, y, r, r, r);
             let i = (y * s + x) * 4;
-            rgba[i..i + 3].copy_from_slice(&BADGE_RED);
+            rgba[i..i + 3].copy_from_slice(&disc);
             rgba[i + 3] = (cov * 255.0).round() as u8;
         }
     }
@@ -123,7 +139,31 @@ pub(crate) fn render_overlay(badge: Badge, side: u32) -> Option<Icon> {
 /// (Explorer restart), until the next call.
 #[cfg_attr(not(feature = "gpui"), allow(dead_code))]
 pub(crate) fn set_badge(badge: impl Into<Badge>) {
-    imp::set(badge.into());
+    let badge = badge.into();
+    *LAST_BADGE.lock().unwrap_or_else(|e| e.into_inner()) = badge;
+    imp::set(badge);
+}
+
+/// Draws the Windows taskbar overlay in dark grey instead of red, or back (Fluxer's
+/// "use dark taskbar badge"). The badge on screen is drawn again at once. Same rules as
+/// [`set_badge`]: on the UI thread, outside any borrow of gpui's app. Other systems
+/// ignore it.
+#[cfg_attr(not(feature = "gpui"), allow(dead_code))]
+pub(crate) fn set_dark_overlay(dark: bool) {
+    if DARK_OVERLAY.swap(dark, Ordering::Relaxed) != dark {
+        let last = *LAST_BADGE.lock().unwrap_or_else(|e| e.into_inner());
+        imp::set(last);
+    }
+}
+
+/// The colour of the Windows overlay's disc now.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn overlay_disc() -> [u8; 3] {
+    if DARK_OVERLAY.load(Ordering::Relaxed) {
+        BADGE_DARK
+    } else {
+        BADGE_RED
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -161,7 +201,7 @@ mod imp {
         IsWindowVisible, GW_OWNER, HICON, ICONINFO,
     };
 
-    use super::{render_overlay, Badge};
+    use super::{overlay_disc, render_overlay_in, Badge};
     use crate::{Icon, Result};
 
     pub(super) fn set(badge: Badge) {
@@ -180,7 +220,7 @@ mod imp {
             unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER)? };
         // SAFETY: HrInit must be called once before the other methods; it is.
         unsafe { taskbar.HrInit()? };
-        let icon = match render_overlay(badge, 32) {
+        let icon = match render_overlay_in(badge, 32, overlay_disc()) {
             Some(icon) => Some(OwnedIcon(make_hicon(&icon)?)),
             None => None,
         };
@@ -334,6 +374,32 @@ mod tests {
         assert_eq!(Badge::Count(9).overlay_label().as_deref(), Some("9"));
         assert_eq!(Badge::Count(10).overlay_label().as_deref(), Some("9+"));
         assert_eq!(Badge::Dot.overlay_label().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn the_dark_overlay_is_a_dark_grey_disc() {
+        let dark = render_overlay_in(Badge::Dot, 32, BADGE_DARK).unwrap();
+        let reds = dark
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| **p == [0xdd, 0, 0, 255])
+            .count();
+        let greys = dark
+            .rgba()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| **p == [0x4e, 0x50, 0x58, 255])
+            .count();
+        assert_eq!(reds, 0);
+        assert!(greys > 300, "{greys}");
+        // The setting only flips the colour; it never panics where there is no overlay.
+        set_dark_overlay(true);
+        assert_eq!(overlay_disc(), BADGE_DARK);
+        set_dark_overlay(false);
+        assert_eq!(overlay_disc(), BADGE_RED);
     }
 
     #[test]
