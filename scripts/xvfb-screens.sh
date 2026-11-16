@@ -171,6 +171,8 @@ scene 38-picker-gif picker-gif c-general
 # Message search: the search panel with results; the quick switcher over every account.
 scene 41-search-results search-results c-general
 scene 42-quick-switcher quick-switcher c-general
+# The list of keyboard shortcuts (Ctrl+/).
+scene 70-keybind-help keybind-help c-general
 
 # 10. The Notifications settings tab.
 INLET_DEMO=1 INLET_DEMO_LIVE_SECS=3600 INLET_DEMO_GUILD=g1 INLET_DEMO_CHANNEL=c-general INLET_DEMO_SETTINGS=notifications "$bin" >>"$out/demo.log" 2>&1 &

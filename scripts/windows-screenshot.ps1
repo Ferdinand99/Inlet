@@ -227,6 +227,8 @@ Run-Demo "38-picker-gif" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INL
 # Message search: the search panel with results; the quick switcher over every account.
 Run-Demo "41-search-results" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "search-results"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 Run-Demo "42-quick-switcher" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "quick-switcher"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+# The list of keyboard shortcuts (Ctrl+/).
+Run-Demo "70-keybind-help" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "keybind-help"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 # The sign-in steps of the app's own form: identifier, the classic form, a wrong password,
 # the emailed code, the second factor, the new-IP wait.
 foreach ($step in "identifier", "classic", "password", "code", "mfa", "ip") {

@@ -66,8 +66,10 @@ impl Autostart {
         }
     }
 
+    /// For this program; inside an AppImage that is the `.AppImage` file, see
+    /// [`crate::launch_exe`].
     pub fn for_current_exe() -> Result<Self> {
-        Ok(Self::new(crate::APP_ID, std::env::current_exe()?))
+        Ok(Self::new(crate::APP_ID, crate::launch_exe()?))
     }
 
     /// Uses another folder than `~/Library/LaunchAgents` or
