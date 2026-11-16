@@ -6,7 +6,6 @@ message-bot-tag = BOT
 chat-channel-not-on-screen = That channel is not in the list on screen.
 chat-dismissable = { $text }  (click to dismiss)
 chat-disconnected = Disconnected. { $message }
-chat-reconnect = Reconnect
 message-system-tag = SYSTEM
 message-op-tag = OP
 message-send-failed = Could not send: { $reason }

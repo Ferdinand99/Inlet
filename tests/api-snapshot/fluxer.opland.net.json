@@ -312,6 +312,18 @@
     "204": {}
    }
   },
+  "GET /.well-known/fluxer": {
+   "documentedPath": "/.well-known/fluxer",
+   "operationId": "get_well_known_fluxer",
+   "parameters": [],
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "WellKnownFluxerResponse"
+     }
+    }
+   }
+  },
   "GET /auth/ip-authorization/poll": {
    "documentedPath": "/auth/ip-authorization/poll",
    "operationId": "poll_ip_authorization",
@@ -786,6 +798,18 @@
     "200": {
      "application/json": {
       "$ref": "GuildExpressionSourceGuildResponse"
+     }
+    }
+   }
+  },
+  "GET /experiments": {
+   "documentedPath": "/experiments",
+   "operationId": "get_experiments",
+   "parameters": [],
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "ExperimentAssignmentsResponse"
      }
     }
    }
@@ -1811,6 +1835,14 @@
     "204": {}
    }
   },
+  "POST /auth/verify/resend": {
+   "documentedPath": "/auth/verify/resend",
+   "operationId": "resend_verification_email",
+   "parameters": [],
+   "responses": {
+    "204": {}
+   }
+  },
   "POST /channels/{}/attachments": {
    "documentedPath": "/channels/{channel_id}/attachments",
    "operationId": "request_presigned_message_attachment_uploads",
@@ -2269,6 +2301,26 @@
     "204": {}
    }
   },
+  "POST /users/@me/terms-acceptance": {
+   "documentedPath": "/users/@me/terms-acceptance",
+   "operationId": "accept_updated_terms",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "EmptyBodyRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "UserPrivateResponse"
+     }
+    }
+   }
+  },
   "PUT /channels/{}/messages/{}/reactions/{}/@me": {
    "documentedPath": "/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me",
    "operationId": "add_reaction",
@@ -2450,6 +2502,42 @@
   }
  },
  "schemas": {
+  "AccountIdentityLockReasonSchema": {
+   "enum": [
+    "accounts_exist",
+    "admin_exists",
+    "existing_instance",
+    "setup_configured"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "The instance already has accounts",
+    "The instance already has an administrator",
+    "The instance configuration marks setup as finished",
+    "The instance was in use before username sign-in existed, so it stays on email"
+   ],
+   "x-enumNames": [
+    "ACCOUNTS_EXIST",
+    "ADMIN_EXISTS",
+    "EXISTING_INSTANCE",
+    "SETUP_CONFIGURED"
+   ]
+  },
+  "AccountIdentityModeSchema": {
+   "enum": [
+    "email",
+    "username"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "People sign in with a username and no email is collected",
+    "People sign in with an email address"
+   ],
+   "x-enumNames": [
+    "EMAIL",
+    "USERNAME"
+   ]
+  },
   "AccountTierSchema": {
    "enum": [
     "unclaimed",
@@ -2625,6 +2713,21 @@
   },
   "Base64ImageType": {
    "type": "string"
+  },
+  "CaptchaProviderSchema": {
+   "enum": [
+    "altcha",
+    "none"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "An ALTCHA proof of work is asked for",
+    "No captcha is asked for"
+   ],
+   "x-enumNames": [
+    "ALTCHA",
+    "NONE"
+   ]
   },
   "ChannelListResponse": {
    "items": {
@@ -3266,6 +3369,25 @@
    "required": [
     "id",
     "type"
+   ],
+   "type": "object"
+  },
+  "ChannelThreadsAssignmentResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "active": {
+     "const": true,
+     "type": "boolean"
+    },
+    "config_version": {
+     "maximum": 9007199254740991,
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "active",
+    "config_version"
    ],
    "type": "object"
   },
@@ -5342,6 +5464,10 @@
    "maxItems": 1000,
    "type": "array"
   },
+  "CustomBadgePositionType": {
+   "pattern": "^-?[0-9]{1,19}$",
+   "type": "string"
+  },
   "CustomStatusPayload": {
    "properties": {
     "emoji_id": {
@@ -5510,6 +5636,83 @@
    "type": [
     "number",
     "string"
+   ]
+  },
+  "DomainMigrationAssignmentResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "enabled"
+   ],
+   "type": "object"
+  },
+  "DomainMigrationDiscoveryResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "anonymous_rollout_basis_points": {
+     "maximum": 10000,
+     "minimum": 0,
+     "type": "integer"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "rollout_salt": {
+     "maxLength": 64,
+     "minLength": 1,
+     "pattern": "^[\\x20-\\x7e]+$",
+     "type": "string"
+    },
+    "standalone_forwarding": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "anonymous_rollout_basis_points",
+    "enabled",
+    "rollout_salt",
+    "standalone_forwarding"
+   ],
+   "type": "object"
+  },
+  "EffectiveVerificationBasisSchema": {
+   "enum": [
+    "confirmed_email",
+    "local_credential"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Accounts finish setting up by adding a password or passkey",
+    "Accounts finish setting up by confirming an email"
+   ],
+   "x-enumNames": [
+    "CONFIRMED_EMAIL",
+    "LOCAL_CREDENTIAL"
+   ]
+  },
+  "EmailDeliveryStateSchema": {
+   "enum": [
+    "off_disabled",
+    "off_incomplete",
+    "off_username_mode",
+    "on"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Email delivery is on but its settings are incomplete",
+    "Email delivery is turned off",
+    "People sign in with a username, so no email is sent",
+    "The instance sends email"
+   ],
+   "x-enumNames": [
+    "OFF_DISABLED",
+    "OFF_INCOMPLETE",
+    "OFF_USERNAME_MODE",
+    "ON"
    ]
   },
   "EmailType": {
@@ -5731,6 +5934,52 @@
    },
    "required": [
     "name"
+   ],
+   "type": "object"
+  },
+  "EmptyBodyRequest": {
+   "properties": {},
+   "type": "object"
+  },
+  "ExperimentAssignmentsResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "assignments": {
+     "additionalProperties": false,
+     "properties": {
+      "channel_threads": {
+       "$ref": "ChannelThreadsAssignmentResponse"
+      },
+      "domain_migration": {
+       "$ref": "DomainMigrationAssignmentResponse"
+      },
+      "guild_visits": {
+       "$ref": "GuildVisitsAssignmentResponse"
+      },
+      "plutonium_page": {
+       "$ref": "PlutoniumPageAssignmentResponse"
+      },
+      "voice_p2p": {
+       "$ref": "VoiceP2pAssignmentResponse"
+      }
+     },
+     "type": "object"
+    },
+    "poll_interval_seconds": {
+     "maximum": 9007199254740991,
+     "minimum": -9007199254740991,
+     "type": "integer"
+    },
+    "poll_jitter_percent": {
+     "maximum": 50,
+     "minimum": 0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "assignments",
+    "poll_interval_seconds",
+    "poll_jitter_percent"
    ],
    "type": "object"
   },
@@ -6912,6 +7161,24 @@
    ],
    "type": "object"
   },
+  "GuildJoinGateSchema": {
+   "enum": [
+    "always",
+    "off",
+    "visits_capable"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Joining a community never needs a finished account",
+    "Joining needs a finished account in every client",
+    "Joining needs a finished account only in clients that can preview communities"
+   ],
+   "x-enumNames": [
+    "ALWAYS",
+    "OFF",
+    "VISITS_CAPABLE"
+   ]
+  },
   "GuildListResponse": {
    "items": {
     "$ref": "GuildResponse"
@@ -7695,6 +7962,18 @@
     "NONE"
    ]
   },
+  "GuildVisitsAssignmentResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "enabled"
+   ],
+   "type": "object"
+  },
   "HandoffCancelRequest": {
    "properties": {
     "poll_secret": {
@@ -7840,11 +8119,861 @@
     }
    ]
   },
+  "InstanceAgePolicyActionSchema": {
+   "enum": [
+    "block",
+    "restrict"
+   ],
+   "type": "string"
+  },
+  "InstanceAgePolicyGeoSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "action": {
+     "$ref": "InstanceAgePolicyActionSchema"
+    },
+    "country_code": {
+     "type": "string"
+    },
+    "region_code": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "required": [
+    "action",
+    "country_code",
+    "region_code"
+   ],
+   "type": "object"
+  },
+  "InstanceAgePolicySchema": {
+   "additionalProperties": false,
+   "properties": {
+    "geos": {
+     "items": {
+      "$ref": "InstanceAgePolicyGeoSchema"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "geos"
+   ],
+   "type": "object"
+  },
+  "InstanceAppPublicSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "branding": {
+     "$ref": "InstanceBrandingSchema"
+    },
+    "legal": {
+     "additionalProperties": false,
+     "properties": {
+      "guidelines_url": {
+       "type": [
+        "null",
+        "string"
+       ]
+      },
+      "privacy_url": {
+       "type": [
+        "null",
+        "string"
+       ]
+      },
+      "terms_url": {
+       "type": [
+        "null",
+        "string"
+       ]
+      }
+     },
+     "required": [
+      "guidelines_url",
+      "privacy_url",
+      "terms_url"
+     ],
+     "type": "object"
+    },
+    "registration": {
+     "additionalProperties": false,
+     "properties": {
+      "collect_date_of_birth": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "collect_date_of_birth"
+     ],
+     "type": "object"
+    },
+    "setup": {
+     "$ref": "InstanceSetupSchema"
+    }
+   },
+   "required": [
+    "branding",
+    "legal",
+    "registration",
+    "setup"
+   ],
+   "type": "object"
+  },
+  "InstanceBrandingSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "custom_css": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "favicon_dark_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "favicon_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "icon_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "logo_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "premium_info_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "premium_page_color": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "premium_product_name": {
+     "type": "string"
+    },
+    "premium_showcase_expressions_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "premium_showcase_profile_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "premium_showcase_stream_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "premium_showcase_upload_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "product_name": {
+     "type": "string"
+    },
+    "sign_in_backdrop_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "status_page_incident_history_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "status_page_instatus": {
+     "type": "boolean"
+    },
+    "status_page_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "symbol_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "theme_color": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "trusted_domains": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "upload_limit_message": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "wordmark_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "required": [
+    "custom_css",
+    "favicon_dark_url",
+    "favicon_url",
+    "icon_url",
+    "logo_url",
+    "premium_info_url",
+    "premium_page_color",
+    "premium_product_name",
+    "premium_showcase_expressions_url",
+    "premium_showcase_profile_url",
+    "premium_showcase_stream_url",
+    "premium_showcase_upload_url",
+    "product_name",
+    "sign_in_backdrop_url",
+    "status_page_incident_history_url",
+    "status_page_instatus",
+    "status_page_url",
+    "symbol_url",
+    "theme_color",
+    "trusted_domains",
+    "upload_limit_message",
+    "wordmark_url"
+   ],
+   "type": "object"
+  },
+  "InstanceBuiltInGuildBadgeImagesSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "discoverable": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "partnered": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "verified": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "required": [
+    "discoverable",
+    "partnered",
+    "verified"
+   ],
+   "type": "object"
+  },
+  "InstanceCaptchaSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "provider": {
+     "$ref": "CaptchaProviderSchema"
+    }
+   },
+   "required": [
+    "provider"
+   ],
+   "type": "object"
+  },
+  "InstanceCommunitySchema": {
+   "additionalProperties": false,
+   "properties": {
+    "direct_messages_disabled": {
+     "type": "boolean"
+    },
+    "friends_disabled": {
+     "type": "boolean"
+    },
+    "guild_create_access": {
+     "type": "boolean"
+    },
+    "personal_notes_enabled": {
+     "type": "boolean"
+    },
+    "single_community": {
+     "type": "boolean"
+    },
+    "single_community_guild_id": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "required": [
+    "direct_messages_disabled",
+    "guild_create_access",
+    "single_community",
+    "single_community_guild_id"
+   ],
+   "type": "object"
+  },
+  "InstanceConnectionProviderSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "icon_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "icon_url",
+    "id",
+    "name"
+   ],
+   "type": "object"
+  },
+  "InstanceEndpointsSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "admin": {
+     "type": "string"
+    },
+    "api": {
+     "type": "string"
+    },
+    "api_client": {
+     "type": "string"
+    },
+    "api_public": {
+     "type": "string"
+    },
+    "api_transport": {
+     "type": "string"
+    },
+    "docs": {
+     "type": "string"
+    },
+    "gateway": {
+     "type": "string"
+    },
+    "gift": {
+     "type": "string"
+    },
+    "invite": {
+     "type": "string"
+    },
+    "marketing": {
+     "type": "string"
+    },
+    "media": {
+     "type": "string"
+    },
+    "static_cdn": {
+     "type": "string"
+    },
+    "upload_relay": {
+     "type": "string"
+    },
+    "webapp": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "admin",
+    "api",
+    "api_client",
+    "api_public",
+    "gateway",
+    "gift",
+    "invite",
+    "marketing",
+    "media",
+    "static_cdn",
+    "webapp"
+   ],
+   "type": "object"
+  },
+  "InstanceFeaturesSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "account_deletion_grace_period_hours": {
+     "maximum": 8760,
+     "minimum": 1,
+     "type": "integer"
+    },
+    "account_identity": {
+     "$ref": "AccountIdentityModeSchema"
+    },
+    "date_of_birth_step": {
+     "type": "boolean"
+    },
+    "desktop_modules_enabled": {
+     "type": "boolean"
+    },
+    "discovery_enabled": {
+     "type": "boolean"
+    },
+    "email_codes": {
+     "type": "boolean"
+    },
+    "email_delivery_state": {
+     "$ref": "EmailDeliveryStateSchema"
+    },
+    "emails_enabled": {
+     "type": "boolean"
+    },
+    "guild_join_gate": {
+     "$ref": "GuildJoinGateSchema"
+    },
+    "identifier_first": {
+     "type": "boolean"
+    },
+    "instant_account_availability": {
+     "$ref": "InstantAccountAvailabilitySchema"
+    },
+    "instant_accounts": {
+     "type": "boolean"
+    },
+    "interaction_tier": {
+     "$ref": "InteractionTierModeSchema"
+    },
+    "phone_verification_enabled": {
+     "type": "boolean"
+    },
+    "premium_enabled": {
+     "type": "boolean"
+    },
+    "presigned_attachment_uploads": {
+     "type": "boolean"
+    },
+    "proxy_attachments_through_api": {
+     "type": "boolean"
+    },
+    "self_hosted": {
+     "type": "boolean"
+    },
+    "stripe_enabled": {
+     "type": "boolean"
+    },
+    "stripe_serviceable": {
+     "type": "boolean"
+    },
+    "tag_style": {
+     "$ref": "TagStyleSchema"
+    },
+    "verification_basis": {
+     "$ref": "EffectiveVerificationBasisSchema"
+    },
+    "voice_enabled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "emails_enabled",
+    "phone_verification_enabled",
+    "premium_enabled",
+    "presigned_attachment_uploads",
+    "self_hosted",
+    "stripe_enabled",
+    "stripe_serviceable",
+    "voice_enabled"
+   ],
+   "type": "object"
+  },
+  "InstanceGifSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "attribution_required": {
+     "type": "boolean"
+    },
+    "display_name": {
+     "type": "string"
+    },
+    "provider": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "attribution_required",
+    "display_name",
+    "provider"
+   ],
+   "type": "object"
+  },
+  "InstanceGuildBadgeSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "asset_url": {
+     "type": "string"
+    },
+    "description": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "href": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "id": {
+     "$ref": "SnowflakeStringType"
+    },
+    "name": {
+     "type": "string"
+    },
+    "position": {
+     "$ref": "CustomBadgePositionType"
+    }
+   },
+   "required": [
+    "asset_url",
+    "description",
+    "href",
+    "id",
+    "name"
+   ],
+   "type": "object"
+  },
+  "InstanceHiddenBuiltInGuildBadgesSchema": {
+   "items": {
+    "enum": [
+     "discoverable",
+     "partnered",
+     "verified"
+    ],
+    "type": "string"
+   },
+   "maxItems": 3,
+   "type": "array"
+  },
+  "InstanceNoticeSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "ends_at": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "id": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    },
+    "starts_at": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "required": [
+    "ends_at",
+    "id",
+    "message",
+    "starts_at",
+    "url"
+   ],
+   "type": "object"
+  },
+  "InstancePushDeliveryModeSchema": {
+   "enum": [
+    "direct",
+    "external_relay",
+    "hybrid"
+   ],
+   "type": "string"
+  },
+  "InstancePushSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "delivery_mode": {
+     "$ref": "InstancePushDeliveryModeSchema"
+    },
+    "event_resolution_path": {
+     "type": "string"
+    },
+    "external_relay_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "public_vapid_key": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "relay_signing_key_hashes": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "required": [
+    "public_vapid_key"
+   ],
+   "type": "object"
+  },
+  "InstanceRegistrationModeSchema": {
+   "enum": [
+    "approval",
+    "closed",
+    "open"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Anyone can register",
+    "Anyone can register, but admins must approve new accounts",
+    "Public registration is closed"
+   ],
+   "x-enumNames": [
+    "approval",
+    "closed",
+    "open"
+   ]
+  },
+  "InstanceRegistrationSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "admin_registration_urls_enabled": {
+     "type": "boolean"
+    },
+    "mode": {
+     "$ref": "InstanceRegistrationModeSchema"
+    }
+   },
+   "required": [
+    "admin_registration_urls_enabled",
+    "mode"
+   ],
+   "type": "object"
+  },
+  "InstanceServicesSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "bluesky_enabled": {
+     "type": "boolean"
+    },
+    "connection_providers": {
+     "items": {
+      "$ref": "InstanceConnectionProviderSchema"
+     },
+     "type": "array"
+    },
+    "gif_enabled": {
+     "type": "boolean"
+    },
+    "youtube_enabled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "bluesky_enabled",
+    "connection_providers",
+    "gif_enabled",
+    "youtube_enabled"
+   ],
+   "type": "object"
+  },
+  "InstanceSetupSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "account_identity_lock_reason": {
+     "anyOf": [
+      {
+       "$ref": "AccountIdentityLockReasonSchema"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "account_identity_locked": {
+     "type": "boolean"
+    },
+    "admin_url": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "configured": {
+     "type": "boolean"
+    },
+    "setup_token_required": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "admin_url",
+    "configured"
+   ],
+   "type": "object"
+  },
+  "InstanceSsoSchema": {
+   "additionalProperties": false,
+   "properties": {
+    "available": {
+     "type": "boolean"
+    },
+    "button_label": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "display_name": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "enforced": {
+     "type": "boolean"
+    },
+    "provider_trait": {
+     "type": "string"
+    },
+    "redirect_uri": {
+     "type": "string"
+    },
+    "username_from_provider": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "button_label",
+    "display_name",
+    "enabled",
+    "enforced",
+    "redirect_uri",
+    "username_from_provider"
+   ],
+   "type": "object"
+  },
+  "InstantAccountAvailabilitySchema": {
+   "enum": [
+    "approval_required",
+    "available",
+    "captcha_off",
+    "disabled",
+    "email_domains_restricted",
+    "registration_closed"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Accounts can be created from a display name",
+    "Instant accounts are turned off",
+    "Instant accounts need the captcha, which is off",
+    "New accounts need approval, so they need credentials to sign in once approved",
+    "Public registration is closed",
+    "Public sign-ups must use an email address on an allowed domain"
+   ],
+   "x-enumNames": [
+    "APPROVAL_REQUIRED",
+    "AVAILABLE",
+    "CAPTCHA_OFF",
+    "DISABLED",
+    "EMAIL_DOMAINS_RESTRICTED",
+    "REGISTRATION_CLOSED"
+   ]
+  },
   "Int32Type": {
    "format": "int32",
    "maximum": 2147483647,
    "minimum": 0,
    "type": "integer"
+  },
+  "InteractionTierModeSchema": {
+   "enum": [
+    "enforced",
+    "legacy"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Accounts that have not finished setting up keep the older limits",
+    "Accounts that have not finished setting up may only do things that do not reach other people"
+   ],
+   "x-enumNames": [
+    "ENFORCED",
+    "LEGACY"
+   ]
   },
   "InviteResponseSchema": {
    "anyOf": [
@@ -10540,6 +11669,18 @@
     }
    ]
   },
+  "PlutoniumPageAssignmentResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "enabled"
+   ],
+   "type": "object"
+  },
   "PresignedAttachmentUploadRequest": {
    "properties": {
     "attachments": {
@@ -11992,6 +13133,21 @@
      "name": "SUPPRESS_JOIN_NOTIFICATIONS",
      "value": "1"
     }
+   ]
+  },
+  "TagStyleSchema": {
+   "enum": [
+    "none",
+    "random"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Every account gets a random tag",
+    "Usernames are unique and shown without a tag"
+   ],
+   "x-enumNames": [
+    "NONE",
+    "RANDOM"
    ]
   },
   "ThreadAutoArchiveDurationSchema": {
@@ -14895,6 +16051,24 @@
   "UsernameType": {
    "type": "string"
   },
+  "VoiceP2pAssignmentResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "max_participants": {
+     "maximum": 4,
+     "minimum": 2,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "enabled",
+    "max_participants"
+   ],
+   "type": "object"
+  },
   "WebAuthnAuthenticationResponse": {
    "additionalProperties": {},
    "properties": {
@@ -14966,6 +16140,176 @@
     "rawId",
     "response",
     "type"
+   ],
+   "type": "object"
+  },
+  "WellKnownFluxerResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "age_policy": {
+     "$ref": "InstanceAgePolicySchema"
+    },
+    "api_code_version": {
+     "maximum": 9007199254740991,
+     "minimum": -9007199254740991,
+     "type": "integer"
+    },
+    "app_public": {
+     "$ref": "InstanceAppPublicSchema"
+    },
+    "built_in_guild_badge_images": {
+     "$ref": "InstanceBuiltInGuildBadgeImagesSchema"
+    },
+    "captcha": {
+     "$ref": "InstanceCaptchaSchema"
+    },
+    "codename": {
+     "type": "string"
+    },
+    "community": {
+     "$ref": "InstanceCommunitySchema"
+    },
+    "custom_badges_version": {
+     "maxLength": 64,
+     "type": "string"
+    },
+    "domain_migration": {
+     "$ref": "DomainMigrationDiscoveryResponse"
+    },
+    "endpoints": {
+     "$ref": "InstanceEndpointsSchema"
+    },
+    "features": {
+     "$ref": "InstanceFeaturesSchema"
+    },
+    "gif": {
+     "$ref": "InstanceGifSchema"
+    },
+    "guild_badges": {
+     "items": {
+      "$ref": "InstanceGuildBadgeSchema"
+     },
+     "maxItems": 100,
+     "type": "array"
+    },
+    "guild_badges_partial": {
+     "type": "boolean"
+    },
+    "hidden_built_in_guild_badges": {
+     "$ref": "InstanceHiddenBuiltInGuildBadgesSchema"
+    },
+    "limits": {
+     "additionalProperties": false,
+     "properties": {
+      "defaultsHash": {
+       "type": "string"
+      },
+      "rules": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "filters": {
+          "additionalProperties": false,
+          "properties": {
+           "guildFeatures": {
+            "items": {
+             "type": "string"
+            },
+            "type": "array"
+           },
+           "traits": {
+            "items": {
+             "type": "string"
+            },
+            "type": "array"
+           }
+          },
+          "type": "object"
+         },
+         "id": {
+          "type": "string"
+         },
+         "overrides": {
+          "additionalProperties": {
+           "type": "number"
+          },
+          "propertyNames": {
+           "type": "string"
+          },
+          "type": "object"
+         }
+        },
+        "required": [
+         "id",
+         "overrides"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "traitDefinitions": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "version": {
+       "const": 2,
+       "type": "number"
+      }
+     },
+     "required": [
+      "defaultsHash",
+      "rules",
+      "traitDefinitions",
+      "version"
+     ],
+     "type": "object"
+    },
+    "notice": {
+     "anyOf": [
+      {
+       "$ref": "InstanceNoticeSchema"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "push": {
+     "$ref": "InstancePushSchema"
+    },
+    "registration": {
+     "$ref": "InstanceRegistrationSchema"
+    },
+    "services": {
+     "$ref": "InstanceServicesSchema"
+    },
+    "sso": {
+     "$ref": "InstanceSsoSchema"
+    },
+    "voice_origins": {
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 1000,
+     "type": "array"
+    }
+   },
+   "required": [
+    "age_policy",
+    "api_code_version",
+    "app_public",
+    "captcha",
+    "community",
+    "endpoints",
+    "features",
+    "gif",
+    "limits",
+    "push",
+    "registration",
+    "services",
+    "sso"
    ],
    "type": "object"
   }

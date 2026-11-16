@@ -37,7 +37,11 @@ impl Render for Inlet {
         let root = self.search_keys(root, window, cx);
         if self.show_about {
             return root
-                .child(about::render(self.show_licences, cx))
+                .child(about::render(
+                    self.about_instance(cx),
+                    self.show_licences,
+                    cx,
+                ))
                 .into_any_element();
         }
         let content = match self.screen.clone() {
@@ -63,34 +67,44 @@ impl Render for Inlet {
             Screen::Main => self.render_main(cx).into_any_element(),
         };
         let overlays = self.render_overlays(cx);
-        root.child(content).children(overlays).into_any_element()
+        let banner_windows = self.render_banner_windows(window, cx);
+        root.child(content)
+            .children(overlays)
+            .children(banner_windows)
+            .into_any_element()
     }
 }
 
 impl Inlet {
     /// Signed in: rail, channel list and user panel on the left, the chat on the right.
     fn render_main(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .flex_row()
-            .child(
-                div()
-                    .h_full()
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .flex_row()
-                            .child(self.render_guild_rail(cx))
-                            .child(self.render_channel_list(cx)),
-                    )
-                    .child(self.render_user_panel(cx)),
-            )
-            .child(self.render_center(cx))
+        // The banners (connection, notices, the account's flags) lie across the top.
+        let banners = self.render_banners(cx);
+        div().size_full().flex().flex_col().children(banners).child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .flex()
+                .flex_row()
+                .child(
+                    div()
+                        .h_full()
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_h_0()
+                                .flex()
+                                .flex_row()
+                                .child(self.render_guild_rail(cx))
+                                .child(self.render_channel_list(cx)),
+                        )
+                        .child(self.render_user_panel(cx)),
+                )
+                .child(self.render_center(cx)),
+        )
     }
 }

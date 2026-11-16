@@ -134,6 +134,10 @@ impl State {
 /// The threads button in the channel header (see `ui/chat/header_buttons.rs`): for a
 /// text or announcement channel of a guild, it opens the thread list.
 pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement> {
+    // Without the instance's threads experiment the routes answer 404: no button.
+    if !this.has_cap(cx, inlet_state::Cap::ChannelThreads) {
+        return None;
+    }
     let open = this.selected_channel.as_ref()?;
     this.selected_guild.as_ref()?;
     let channel = this.channels.iter().find(|c| &c.id == open)?;

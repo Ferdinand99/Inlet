@@ -120,6 +120,10 @@ pub enum Scene {
     ProfilePopout,
     SearchResults,
     QuickSwitcher,
+    Banners,
+    BannersMaintenance,
+    BannersConnection,
+    Terms,
 }
 
 impl Scene {
@@ -164,6 +168,10 @@ impl Scene {
             "profile-popout" => Scene::ProfilePopout,
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
+            "banners" => Scene::Banners,
+            "banners-maintenance" => Scene::BannersMaintenance,
+            "banners-connection" => Scene::BannersConnection,
+            "terms" => Scene::Terms,
             _ => return None,
         })
     }

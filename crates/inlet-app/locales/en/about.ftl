@@ -1,6 +1,8 @@
 # The About view.
 
 about-version = version { $version }
+about-instance = You are connected to { $name } ({ $host }).
+about-instance-status = Status page: { $url }
 about-intro = A desktop client that works with Fluxer. Inlet is an independent project; it is not made or endorsed by Fluxer Platform AB. "Fluxer" is their trademark.
 about-copyright = Copyright © 2026 the Inlet contributors.
 about-licence = Inlet is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3 or (at your option) any later version. It comes with ABSOLUTELY NO WARRANTY.

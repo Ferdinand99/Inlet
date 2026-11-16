@@ -227,6 +227,12 @@ Run-Demo "38-picker-gif" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INL
 # Message search: the search panel with results; the quick switcher over every account.
 Run-Demo "41-search-results" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "search-results"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 Run-Demo "42-quick-switcher" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "quick-switcher"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+# The banners: a notice and the unconfirmed address; paused messaging and planned
+# maintenance; a lost connection with an incident; the updated terms.
+Run-Demo "100-banners" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "banners"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+Run-Demo "101-banners-maintenance" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "banners-maintenance"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+Run-Demo "102-banners-connection" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "banners-connection"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+Run-Demo "103-terms" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "terms"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 
 # A demo that quit before its screenshot crashed: fail the job, the pictures are not
 # worth checking.

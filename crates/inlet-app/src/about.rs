@@ -59,7 +59,21 @@ pub fn source_link() -> String {
     format!("{SOURCE_URL}/tree/{}", env!("INLET_SOURCE_REV"))
 }
 
-pub fn render(show_licences: bool, cx: &mut Context<Inlet>) -> impl IntoElement {
+/// The instance the active account is on, as it names itself (its branding).
+pub struct InstanceLine {
+    /// The product name the instance gives itself, or its address.
+    pub name: String,
+    /// Its address.
+    pub host: String,
+    /// Its status page, if it has one (opened after a confirmation).
+    pub status_page: Option<String>,
+}
+
+pub fn render(
+    instance: Option<InstanceLine>,
+    show_licences: bool,
+    cx: &mut Context<Inlet>,
+) -> impl IntoElement {
     let source = source_link();
     let header = div()
         .flex()
@@ -84,6 +98,21 @@ pub fn render(show_licences: bool, cx: &mut Context<Inlet>) -> impl IntoElement 
                         .child(t!("about-version", version = env!("CARGO_PKG_VERSION"))),
                 ),
         )
+        .children(instance.map(|i| {
+            div()
+                .flex()
+                .flex_col()
+                .child(div().child(t!("about-instance", name = i.name, host = i.host)))
+                .children(i.status_page.map(|url| {
+                    let shown = url.clone();
+                    div()
+                        .id("instance-status-page")
+                        .text_color(theme::link())
+                        .cursor_pointer()
+                        .child(t!("about-instance-status", url = shown))
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_link(&url, true, cx)))
+                }))
+        }))
         .child(div().child(t!("about-intro")))
         .child(div().child(t!("about-copyright")))
         .child(div().child(t!("about-licence")))

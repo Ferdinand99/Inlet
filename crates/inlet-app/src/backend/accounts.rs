@@ -700,6 +700,10 @@ impl Backend {
                 if let Some(r) = self.engine_mut(gen) {
                     r.policy.connected();
                 }
+                // A new connection: what the instance says may have changed.
+                if self.active_gen() == Some(gen) {
+                    super::instance::reconnected(self);
+                }
             }
             Internal::GatewayRestart { gen } => {
                 if self.engine(gen).is_some() {
@@ -955,7 +959,7 @@ impl Backend {
         }
 
         self.events = events.clone();
-        self.session_activated(&session);
+        self.session_activated(&session, gen);
         self.active = Some(Active::Real(RealActive {
             gen,
             key: key.clone(),
@@ -1033,6 +1037,9 @@ impl Backend {
         let guilds = Arc::new(Mutex::new(Vec::new()));
         let cache: ChannelCache = Arc::default();
         let names: SharedNames = Arc::default();
+        // The instance's flags for the account's state, from the document its session was
+        // built with (no request: a background account asks nothing).
+        super::instance::announce(&events, &session);
         let (gateway, forward) = self.spawn_gateway(
             gen,
             &session,
@@ -1095,6 +1102,7 @@ impl Backend {
     pub(super) fn demote_active(&mut self) {
         match self.active.take() {
             Some(Active::Real(mut r)) => {
+                super::instance::stop(self);
                 r.foreground.store(false, Ordering::Relaxed);
                 if let Some(guild) = r.active_guild.take() {
                     r.gateway.set_guild_active(&guild, false);
@@ -1151,7 +1159,7 @@ impl Backend {
             r.presence.to_front(&r.gateway);
         }
         self.events = r.events.clone();
-        self.session_activated(&r.session);
+        self.session_activated(&r.session, gen);
         self.active = Some(Active::Real(r));
         if restart && wait.is_zero() {
             self.restart_gateway(gen);
@@ -1175,8 +1183,10 @@ impl Backend {
     /// What every account needs when it becomes the active one, however it got there
     /// (sign-in, start-up, switch): the image client for its own media endpoint, sent
     /// with its tag so the UI never keeps the previous account's.
-    fn session_activated(&self, session: &p::Session) {
+    fn session_activated(&mut self, session: &p::Session, gen: u64) {
         super::media::session_started(self, session);
+        // The instance's flags and the account's experiments, polled while it is active.
+        super::instance::activated(self, session, gen);
     }
 
     /// Makes `key` the active account: a connected one at once, a stored one that is not
@@ -1301,6 +1311,7 @@ impl Backend {
     pub(super) fn teardown(&mut self, r: &RealActive) {
         Self::close_engine(r);
         self.stop_screen_tasks();
+        super::instance::stop(self);
         self.uploads.forget_gen(r.gen);
     }
 

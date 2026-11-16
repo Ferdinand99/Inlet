@@ -25,6 +25,7 @@
 pub mod accounts;
 pub mod composer;
 mod gateway;
+pub mod instance;
 pub mod media;
 pub mod messages;
 pub mod notifications;
@@ -67,6 +68,7 @@ pub enum Command {
     Notifications(notifications::Cmd),
     Voice(voice::Cmd),
     Platform(platform::Cmd),
+    Instance(instance::Cmd),
 }
 
 /// What the backend tells the UI, by domain.
@@ -84,6 +86,7 @@ pub enum Event {
     Notifications(notifications::Ev),
     Voice(voice::Ev),
     Platform(platform::Ev),
+    Instance(instance::Ev),
     /// An event sent by one account's tasks (its gateway, its REST calls). The UI hands
     /// it on as usual when `account` is the active account, and to that account's
     /// passive state otherwise.
@@ -122,6 +125,7 @@ domains! {
     Notifications => notifications,
     Voice => voice,
     Platform => platform,
+    Instance => instance,
 }
 
 /// The sender for UI events. Errors and status lines are coalesced: the same text again
@@ -488,6 +492,8 @@ struct Backend {
     threads: messages::threads::State,
     /// The member list subscription and the profile fetch of the active account.
     social: social::State,
+    /// What the instance says about itself: the active account's poller.
+    instance: instance::State,
 }
 
 impl Backend {
@@ -517,6 +523,7 @@ impl Backend {
             older: Default::default(),
             threads: Default::default(),
             social: Default::default(),
+            instance: Default::default(),
         }
     }
 
@@ -638,6 +645,7 @@ impl Backend {
             Command::Notifications(cmd) => notifications::handle(self, cmd),
             Command::Voice(cmd) => voice::handle(self, cmd),
             Command::Platform(cmd) => platform::handle(self, cmd),
+            Command::Instance(cmd) => instance::handle(self, cmd),
         }
     }
 }

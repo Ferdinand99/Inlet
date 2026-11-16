@@ -19,6 +19,7 @@ pub mod composer;
 mod emoji;
 mod guilds;
 pub mod inbox;
+pub mod instance;
 mod markdown;
 pub mod media;
 mod members;
@@ -390,6 +391,8 @@ impl MockSession {
         }
         social::start_typing(&events);
         let _ = events.unbounded_send(acc::Ev::Status("Demo mode".into()));
+        // The banners' scenes: what the instance and the account say.
+        instance::start(&events, scene, &ready);
 
         Self {
             events,

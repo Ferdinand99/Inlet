@@ -485,6 +485,26 @@ impl Instance {
         }
     }
 
+    /// Fetches the discovery document again, with `If-None-Match` when `etag` is given,
+    /// and returns it with its new `ETag`, or `None` when it has not changed. Unlike
+    /// [`Instance::refresh`] it builds no new instance, so a client can follow the
+    /// document's feature flags and notice for as long as a session lives without ever
+    /// moving the session's pinned hosts. Fails with [`Error::UnsupportedApiVersion`]
+    /// when the instance now needs a newer client.
+    pub async fn fetch_discovery(
+        &self,
+        etag: Option<&str>,
+    ) -> Result<Option<(Discovery, Option<String>)>> {
+        let i = &self.inner;
+        let fetched = fetch(&i.discovery_http, &i.anon_limiter, &i.origin, etag).await?;
+        if let Some((d, _)) = &fetched {
+            if d.api_code_version > SUPPORTED_API_CODE_VERSION {
+                return Err(Error::UnsupportedApiVersion(d.api_code_version));
+            }
+        }
+        Ok(fetched)
+    }
+
     /// The hosts a token for this instance goes to.
     pub fn pins(&self) -> EndpointPins {
         let api = Url::parse(&self.inner.api_base)
