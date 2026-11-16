@@ -70,7 +70,6 @@ impl Inlet {
 
     /// The person left the sign-in screen: what it kept goes, and so does the invite.
     pub(crate) fn sign_in_left(&mut self, cx: &mut Context<Self>) {
-        self.backend.send(Cmd::Entry(entry::Cmd::Leave));
         self.sign_in_reset_flow(cx);
         self.sign_in.invite = None;
     }

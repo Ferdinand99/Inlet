@@ -125,6 +125,16 @@ pub enum SignInResult {
     Error(ApiError),
 }
 
+/// `Accept-Language` for the sign-in requests, when the client names a language and it is
+/// a plain tag (letters, digits and hyphens).
+fn language_header(instance: &Instance) -> Option<(&'static str, String)> {
+    let tag = instance.client_info().locale.as_deref()?;
+    let plain = !tag.is_empty()
+        && tag.len() <= 35
+        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    plain.then(|| ("Accept-Language", tag.to_owned()))
+}
+
 fn client_properties(instance: &Instance) -> String {
     let props = json!({ "os": instance.client_info().os });
     base64::engine::general_purpose::STANDARD.encode(props.to_string())
@@ -160,6 +170,7 @@ async fn post_with_captcha(
     loop {
         let mut headers: Vec<(&'static str, String)> =
             vec![("X-Fluxer-Client-Properties", props.clone())];
+        headers.extend(language_header(instance));
         if let Some(t) = &captcha_token {
             headers.push(("X-Captcha-Token", t.clone()));
         }
@@ -359,12 +370,13 @@ async fn anon(
     body: Option<&Value>,
     origin_header: bool,
 ) -> Result<RawResponse> {
-    let headers: Vec<(&'static str, String)> = if origin_header {
+    let mut headers: Vec<(&'static str, String)> = if origin_header {
         // The official desktop shell sends the web app origin on handoff POSTs.
         vec![("Origin", web_origin(instance))]
     } else {
         Vec::new()
     };
+    headers.extend(language_header(instance));
     send(
         instance,
         &instance.inner.anon_limiter,

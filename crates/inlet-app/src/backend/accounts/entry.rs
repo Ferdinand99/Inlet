@@ -38,6 +38,9 @@ fn next_flow() -> u64 {
 // nothing but the keychain entry on disk, so it sends none and may be asked sooner.
 // Deviation: Fluxer sends the 6-digit email code as soon as the sixth digit is typed;
 // Inlet waits for Enter or the button.
+// Deviation: Fluxer's invite login page sends the invite code with the sign-in so the
+// instance joins the server at once. Inlet signs in first and asks about the invite link
+// again afterwards, which costs one click.
 // Deviation: a new address (sign-up), passkeys and single sign-on are not part of this
 // form yet; the browser sign-in covers passkeys and single sign-on.
 
@@ -157,6 +160,9 @@ impl Drop for Entry {
 /// An answer from a task, with the flow it was asked in.
 pub(in crate::backend) struct Done {
     flow: u64,
+    /// The instance the request went to (none for the first discovery). A session that
+    /// arrives after the person left is ended on it.
+    instance: Option<p::Instance>,
     what: Outcome,
 }
 
@@ -386,11 +392,15 @@ impl Backend {
             return self.entry_say(Ev::Lost);
         };
         let (flow, instance) = (entry.flow, entry.instance.clone());
-        let fut = work(instance);
+        let fut = work(instance.clone());
         let internal = self.internal.clone();
         self.spawn_guarded(what, None, async move {
             let what = fut.await;
-            let _ = internal.send(Internal::Entry(Done { flow, what }));
+            let _ = internal.send(Internal::Entry(Done {
+                flow,
+                instance: Some(instance),
+                what,
+            }));
         });
     }
 
@@ -413,6 +423,7 @@ impl Backend {
             let result = session::discover(&typed).await;
             let _ = internal.send(Internal::Entry(Done {
                 flow,
+                instance: None,
                 what: Outcome::Started(typed, result),
             }));
         });
@@ -489,12 +500,10 @@ impl Backend {
             return self.entry_say(Ev::Lost);
         };
         // Authenticator apps show "123 456"; backup codes have no spaces.
-        let cleaned = p::Secret::new(
-            code.expose_secret()
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect::<String>(),
-        );
+        // One allocation of the right size, so no half-built copy is left behind.
+        let mut kept = String::with_capacity(code.expose_secret().len());
+        kept.extend(code.expose_secret().chars().filter(|c| !c.is_whitespace()));
+        let cleaned = p::Secret::new(kept);
         drop(code);
         self.entry_task("entry mfa", move |instance| async move {
             let result = p::sign_in_totp(&instance, &ticket, &cleaned).await;
@@ -578,7 +587,11 @@ impl Backend {
                 }
                 tokio::time::sleep(IP_POLL_EVERY).await;
             };
-            let _ = internal.send(Internal::Entry(Done { flow, what: end }));
+            let _ = internal.send(Internal::Entry(Done {
+                flow,
+                instance: Some(instance),
+                what: end,
+            }));
         });
         if let Some(entry) = &mut self.entry {
             entry.ip = Some((ticket, poll));
@@ -617,7 +630,7 @@ impl Backend {
         let identity = self.identity();
         match &self.entry {
             Some(entry) if entry.flow == done.flow => {}
-            _ => return,
+            _ => return self.entry_discard(done),
         }
         match done.what {
             Outcome::Started(..) => {}
@@ -686,6 +699,10 @@ impl Backend {
                 resend_available_in,
             } => {
                 self.start_ip_wait(ticket);
+                // The address is the instance's text: cleaned like every name from a server.
+                let email = email
+                    .filter(|e| !e.trim().is_empty())
+                    .map(|e| model::clean_name(&e));
                 self.entry_say(Ev::Step(EntryStep::IpAuthorization {
                     email,
                     resend_in_secs: resend_available_in,
@@ -707,6 +724,23 @@ impl Backend {
                 field,
             ))),
         }
+    }
+
+    /// An answer for a sign-in the person has left (Back, another instance, the screen
+    /// closed). A session it carries is ended on the instance, as the browser sign-in does
+    /// on cancel, so no session stays alive that Inlet does not hold.
+    fn entry_discard(&mut self, done: Done) {
+        let signed_in = match done.what {
+            Outcome::SignedIn(Ok(p::SignInResult::Ok(signed_in)), _) => signed_in,
+            Outcome::IpDone(signed_in) => signed_in,
+            _ => return,
+        };
+        let Some(instance) = done.instance else {
+            return;
+        };
+        self.spawn_guarded("revoke a left sign-in", None, async move {
+            session::revoke(&p::Session::from_signed_in(instance, signed_in)).await;
+        });
     }
 
     /// A sign-in worked: the token goes through the same checks as a browser sign-in

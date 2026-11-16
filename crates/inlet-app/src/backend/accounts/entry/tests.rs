@@ -1129,3 +1129,94 @@ async fn a_throwaway_account_signs_in_with_its_password_and_then_with_a_totp_cod
     .await;
     println!("cleanup: {status} {}", gone["code"]);
 }
+
+// ---------- a session that arrives after the person left is ended ----------
+
+fn logout_route() -> Mock {
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/logout"))
+        .and(header("authorization", "tok-new"))
+        .respond_with(ResponseTemplate::new(204))
+}
+
+async fn wait_for_requests(server: &MockServer, route: &str, wanted: usize) {
+    for _ in 0..100 {
+        if count(server, route).await >= wanted {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_session_that_arrives_after_back_is_ended_on_the_server_and_never_stored() {
+    let server = instance(classic()).await;
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(token_response().set_delay(Duration::from_millis(300)))
+        .mount(&server)
+        .await;
+    logout_route().expect(1).mount(&server).await;
+    let (mut b, mut rx, mut irx, store) = backend();
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    // The person goes back while the instance is still answering.
+    handle(&mut b, Cmd::Back);
+    let mut signed_in = false;
+    while let Ok(Some(msg)) = timeout(Duration::from_millis(800), irx.recv()).await {
+        b.internal(msg);
+    }
+    while let Ok(ev) = rx.try_recv() {
+        signed_in |= matches!(ev, Event::Accounts(AccountsEv::SignedIn { .. }));
+    }
+    wait_for_requests(&server, "/api/v1/auth/logout", 1).await;
+    assert!(!signed_in, "a left sign-in must not sign the account in");
+    assert_eq!(count(&server, "/api/v1/auth/logout").await, 1);
+    assert!(store.entries.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_new_network_session_that_arrives_after_leaving_is_ended_too() {
+    let server = instance(classic()).await;
+    logout_route().expect(1).mount(&server).await;
+    let (mut b, _rx, _irx, _store) = backend();
+    let instance = p::Instance::discover(&server.uri()).await.unwrap();
+    // The poll's answer was already on its way when the person left.
+    b.entry_done(Done {
+        flow: 1,
+        instance: Some(instance),
+        what: Outcome::IpDone(p::SignedIn {
+            token: p::Token::new("tok-new"),
+            user_id: "77".into(),
+            user: None,
+        }),
+    });
+    wait_for_requests(&server, "/api/v1/auth/logout", 1).await;
+    assert_eq!(count(&server, "/api/v1/auth/logout").await, 1);
+}
+
+#[tokio::test]
+async fn the_address_of_the_new_network_email_is_cleaned_before_it_is_shown() {
+    let server = instance(classic()).await;
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "code": "IP_AUTHORIZATION_REQUIRED", "message": "Check your email",
+            "ticket": "ip-9", "email": "ana@exa\u{202e}mple.org", "resend_available_in": 30
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(path("/api/v1/auth/ip-authorization/poll"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"completed": false})))
+        .mount(&server)
+        .await;
+    let (mut b, mut rx, mut irx, _store) = backend();
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    match next_entry(&mut b, &mut irx, &mut rx).await {
+        Ev::Step(EntryStep::IpAuthorization { email, .. }) => {
+            assert_eq!(email.as_deref(), Some("ana@example.org"));
+        }
+        _ => panic!("no new network step"),
+    }
+}

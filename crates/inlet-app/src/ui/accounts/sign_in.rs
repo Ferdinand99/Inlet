@@ -210,7 +210,11 @@ impl Inlet {
     }
 
     /// Sends the person to the first step of the form, as "Use a different email" does.
-    fn entry_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn entry_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Not while a request is out: its answer would arrive for a form that moved on.
+        if self.sign_in.flow.busy() {
+            return;
+        }
         self.backend.send(Cmd::Entry(entry::Cmd::Back));
         self.sign_in.flow.restart();
         self.sign_in.flow.error = None;
@@ -221,8 +225,10 @@ impl Inlet {
     }
 
     /// Back to the instance step: forget what was found.
-    fn entry_change_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.backend.send(Cmd::Entry(entry::Cmd::Leave));
+    pub(super) fn entry_change_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sign_in.flow.busy() {
+            return;
+        }
         self.sign_in_reset_flow(cx);
         self.sign_in
             .instance_input
@@ -232,7 +238,7 @@ impl Inlet {
     }
 
     /// The sign-in in the browser, from any step: the same code flow as the browser tab.
-    fn entry_use_browser(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn entry_use_browser(&mut self, cx: &mut Context<Self>) {
         let instance = self
             .sign_in
             .instance_input
@@ -240,9 +246,12 @@ impl Inlet {
             .text()
             .trim()
             .to_string();
-        if instance.is_empty() || self.sign_in.busy {
+        if instance.is_empty() || self.sign_in.busy || self.sign_in.flow.busy() {
             return;
         }
+        // A password typed but not sent does not stay in its field.
+        self.sign_in.password_input.update(cx, |i, cx| i.clear(cx));
+        self.sign_in.code_input.update(cx, |i, cx| i.clear(cx));
         self.sign_in.busy = true;
         self.sign_in.error = None;
         self.backend.send(Cmd::SignInBrowser { instance });
@@ -251,6 +260,8 @@ impl Inlet {
 
     /// Everything the form kept: the step, the typed identifier and the codes.
     pub(crate) fn sign_in_reset_flow(&mut self, cx: &mut Context<Self>) {
+        // The backend forgets its instance and tickets too, and stops waiting for a link.
+        self.backend.send(Cmd::Entry(entry::Cmd::Leave));
         self.sign_in.flow.reset();
         for input in [
             &self.sign_in.identifier_input,

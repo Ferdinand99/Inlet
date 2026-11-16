@@ -635,4 +635,62 @@ mod tests {
             assert!(!this.sign_in.flow.busy());
         });
     }
+
+    /// Every in-app sign-in command sent, in order, with `Leave` and `Back` told apart.
+    fn names(commands: &[entry::Cmd]) -> Vec<&'static str> {
+        commands
+            .iter()
+            .map(|c| match c {
+                entry::Cmd::Start { .. } => "start",
+                entry::Cmd::Identify { .. } => "identify",
+                entry::Cmd::Password { .. } => "password",
+                entry::Cmd::SendCode => "send-code",
+                entry::Cmd::Code { .. } => "code",
+                entry::Cmd::Mfa { .. } => "mfa",
+                entry::Cmd::IpResend => "ip-resend",
+                entry::Cmd::IpRetry => "ip-retry",
+                entry::Cmd::Back => "back",
+                entry::Cmd::Leave => "leave",
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn resetting_the_form_tells_the_backend_to_forget_the_sign_in(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, _, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in_reset_flow(cx);
+        });
+        assert_eq!(names(&commands), ["leave"]);
+    }
+
+    #[gpui::test]
+    fn the_links_between_steps_do_nothing_while_a_request_is_out(cx: &mut TestAppContext) {
+        let commands = on_the_sign_in_screen(cx, |this, window, cx| {
+            this.sign_in.flow.started(info(true));
+            this.sign_in.flow.step = Step::Password;
+            assert!(this.sign_in.flow.begin(std::time::Instant::now()));
+            this.entry_restart(window, cx);
+            this.entry_change_instance(window, cx);
+            assert_eq!(this.sign_in.flow.step, Step::Password);
+            assert!(this.sign_in.flow.info.is_some());
+        });
+        assert!(commands.is_empty());
+    }
+
+    #[gpui::test]
+    fn the_browser_link_clears_a_password_that_was_typed_and_not_sent(cx: &mut TestAppContext) {
+        let _ = on_the_sign_in_screen(cx, |this, _, cx| {
+            this.sign_in.flow.started(info(false));
+            this.sign_in
+                .instance_input
+                .update(cx, |i, cx| i.set_text("chat.example", cx));
+            this.sign_in
+                .password_input
+                .update(cx, |i, cx| i.set_text("typed but not sent", cx));
+            this.entry_use_browser(cx);
+            assert_eq!(this.sign_in.password_input.read(cx).text(), "");
+            assert!(this.sign_in.busy);
+        });
+    }
 }

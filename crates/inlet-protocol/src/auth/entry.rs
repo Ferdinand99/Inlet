@@ -156,9 +156,18 @@ pub async fn verify_email_code(
     ticket: &Ticket,
     code: &Secret,
 ) -> Result<SignInResult> {
+    // The server takes exactly six digits; a code pasted as "123 456" or "123-456" is
+    // the same code (Fluxer's client keeps the digits too).
+    let mut digits = String::with_capacity(6);
+    digits.extend(
+        code.expose_secret()
+            .chars()
+            .filter(char::is_ascii_digit)
+            .take(6),
+    );
     let mut body = json!({
         "ticket": ticket.expose_secret(),
-        "code": code.expose_secret().trim(),
+        "code": digits,
         // Signing in only: a sign-up needs the terms, which this flow never accepts.
         "consent": false,
     });

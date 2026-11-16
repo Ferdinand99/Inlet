@@ -35,6 +35,14 @@ pub async fn instance() -> (MockServer, Instance) {
 
 /// Like [`instance`], with the `features` of the discovery document replaced.
 pub async fn instance_with_features(features: Option<Value>) -> (MockServer, Instance) {
+    instance_with(features, None).await
+}
+
+/// Like [`instance_with_features`], with the client's `Accept-Language` tag.
+pub async fn instance_with(
+    features: Option<Value>,
+    locale: Option<&str>,
+) -> (MockServer, Instance) {
     let server = MockServer::start().await;
     let mut doc = discovery_json(&server.uri(), "ws://127.0.0.1:1/gateway");
     if let Some(features) = features {
@@ -51,6 +59,7 @@ pub async fn instance_with_features(features: Option<Value>) -> (MockServer, Ins
         .await;
     let info = ClientInfo {
         installation_id: "00000000-0000-4000-a000-000000000000".into(),
+        locale: locale.map(str::to_owned),
         ..ClientInfo::default()
     };
     let instance = Instance::discover_with(&server.uri(), info)

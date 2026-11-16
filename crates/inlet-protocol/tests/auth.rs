@@ -671,3 +671,57 @@ async fn sign_in_options_follow_the_discovery_document() {
     assert_eq!(o.identity, inlet_protocol::Identity::Email);
     assert!(!o.identifier_first && !o.email_codes);
 }
+
+#[tokio::test]
+async fn an_email_code_pasted_with_a_space_or_a_hyphen_is_sent_as_its_digits() {
+    let (server, instance) = common::instance().await;
+    Mock::given(path("/api/v1/auth/email-code/verify"))
+        .and(body_json(
+            json!({"ticket": "t", "code": "123456", "consent": false}),
+        ))
+        .respond_with(token_response("tok-digits"))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let ticket = inlet_protocol::Ticket::for_tests("t");
+    for pasted in ["123 456", " 123-456\n"] {
+        match inlet_protocol::verify_email_code(&instance, &ticket, &Secret::new(pasted))
+            .await
+            .unwrap()
+        {
+            SignInResult::Ok(s) => assert_eq!(s.token.expose_secret(), "tok-digits"),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_sign_in_requests_carry_the_language_of_the_app() {
+    let (server, instance) = common::instance_with(None, Some("en")).await;
+    for route in ["/api/v1/auth/login", "/api/v1/auth/identify"] {
+        Mock::given(path(route))
+            .and(header("Accept-Language", "en"))
+            .respond_with(token_response("tok-lang"))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let _ = sign_in_password(&instance, "ana", &Secret::new("correct horse")).await;
+    let _ = inlet_protocol::identify(&instance, "ana").await;
+}
+
+#[tokio::test]
+async fn a_language_that_is_not_a_plain_tag_is_not_sent() {
+    let (server, instance) = common::instance_with(None, Some("en\r\nX-Evil: 1")).await;
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(token_response("tok-lang"))
+        .mount(&server)
+        .await;
+    let _ = sign_in_password(&instance, "ana", &Secret::new("correct horse")).await;
+    let seen = server.received_requests().await.unwrap();
+    let login = seen
+        .iter()
+        .find(|r| r.url.path().ends_with("/auth/login"))
+        .unwrap();
+    assert!(login.headers.get("Accept-Language").is_none());
+}

@@ -38,6 +38,10 @@ pub struct ClientInfo {
     /// domain differs from the instance's (for example `web.example.com` for an
     /// instance at `chat.example.org`). Empty by default.
     pub trusted_webapp_hosts: Vec<String>,
+    /// Language tag for `Accept-Language` on the sign-in requests (`en`), so the emails
+    /// the instance sends (codes, the new-network link) and its messages come in the
+    /// language the app shows. Anything that is not a plain tag is not sent.
+    pub locale: Option<String>,
 }
 
 impl Default for ClientInfo {
@@ -50,6 +54,7 @@ impl Default for ClientInfo {
             installation_id: random_uuid(),
             os: os_name().to_owned(),
             trusted_webapp_hosts: Vec::new(),
+            locale: None,
         }
     }
 }
