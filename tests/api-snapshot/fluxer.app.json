@@ -227,6 +227,23 @@
     "204": {}
    }
   },
+  "DELETE /invites/{}": {
+   "documentedPath": "/invites/{invite_code}",
+   "operationId": "delete_invite",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "invite_code",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    }
+   ],
+   "responses": {
+    "204": {}
+   }
+  },
   "DELETE /users/@me/channels/{}/pin": {
    "documentedPath": "/users/@me/channels/{channel_id}/pin",
    "operationId": "unpin_direct_message_channel",
@@ -329,6 +346,27 @@
     "200": {
      "application/json": {
       "$ref": "IpAuthorizationPollResponse"
+     }
+    }
+   }
+  },
+  "GET /channels/{}/invites": {
+   "documentedPath": "/channels/{channel_id}/invites",
+   "operationId": "list_channel_invites",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "channel_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "InviteMetadataListResponse"
      }
     }
    }
@@ -1869,6 +1907,35 @@
     }
    }
   },
+  "POST /channels/{}/invites": {
+   "documentedPath": "/channels/{channel_id}/invites",
+   "operationId": "create_channel_invite",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "channel_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "ChannelInviteCreateRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "InviteMetadataResponseSchema"
+     }
+    }
+   }
+  },
   "POST /channels/{}/messages": {
    "documentedPath": "/channels/{channel_id}/messages",
    "operationId": "send_message",
@@ -2625,6 +2692,51 @@
   },
   "Base64ImageType": {
    "type": "string"
+  },
+  "ChannelInviteCreateRequest": {
+   "properties": {
+    "max_age": {
+     "anyOf": [
+      {
+       "maximum": 604800,
+       "minimum": 0,
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": 0
+    },
+    "max_uses": {
+     "anyOf": [
+      {
+       "maximum": 100,
+       "minimum": 0,
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": 0
+    },
+    "temporary": {
+     "default": false,
+     "type": [
+      "boolean",
+      "null"
+     ]
+    },
+    "unique": {
+     "default": false,
+     "type": [
+      "boolean",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
   },
   "ChannelListResponse": {
    "items": {
@@ -6539,6 +6651,71 @@
     }
    ]
   },
+  "GroupDmInviteMetadataResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "channel": {
+     "$ref": "ChannelPartialResponse"
+    },
+    "code": {
+     "type": "string"
+    },
+    "created_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    },
+    "expires_at": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "inviter": {
+     "anyOf": [
+      {
+       "$ref": "UserPartialResponse"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "max_uses": {
+     "$ref": "Int32Type"
+    },
+    "member_count": {
+     "$ref": "Int32Type"
+    },
+    "temporary": {
+     "type": "boolean"
+    },
+    "type": {
+     "const": 1,
+     "type": "number"
+    },
+    "uses": {
+     "$ref": "Int32Type"
+    }
+   },
+   "required": [
+    "channel",
+    "code",
+    "created_at",
+    "max_uses",
+    "member_count",
+    "temporary",
+    "type",
+    "uses"
+   ],
+   "type": "object"
+  },
   "GroupDmInviteResponse": {
    "additionalProperties": false,
    "properties": {
@@ -6852,6 +7029,83 @@
     "SHIELD",
     "STAR"
    ]
+  },
+  "GuildInviteMetadataResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "channel": {
+     "$ref": "ChannelPartialResponse"
+    },
+    "code": {
+     "type": "string"
+    },
+    "created_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    },
+    "expires_at": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "guild": {
+     "$ref": "GuildPartialResponse"
+    },
+    "inviter": {
+     "anyOf": [
+      {
+       "$ref": "UserPartialResponse"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "max_age": {
+     "$ref": "Int32Type"
+    },
+    "max_uses": {
+     "$ref": "Int32Type"
+    },
+    "member_count": {
+     "$ref": "Int32Type"
+    },
+    "presence_count": {
+     "$ref": "Int32Type"
+    },
+    "temporary": {
+     "type": "boolean"
+    },
+    "type": {
+     "const": 0,
+     "type": "number"
+    },
+    "uses": {
+     "$ref": "Int32Type"
+    }
+   },
+   "required": [
+    "channel",
+    "code",
+    "created_at",
+    "guild",
+    "max_age",
+    "max_uses",
+    "member_count",
+    "presence_count",
+    "temporary",
+    "type",
+    "uses"
+   ],
+   "type": "object"
   },
   "GuildInviteResponse": {
    "additionalProperties": false,
@@ -7845,6 +8099,22 @@
    "maximum": 2147483647,
    "minimum": 0,
    "type": "integer"
+  },
+  "InviteMetadataListResponse": {
+   "items": {
+    "$ref": "InviteMetadataResponseSchema"
+   },
+   "type": "array"
+  },
+  "InviteMetadataResponseSchema": {
+   "anyOf": [
+    {
+     "$ref": "GroupDmInviteMetadataResponse"
+    },
+    {
+     "$ref": "GuildInviteMetadataResponse"
+    }
+   ]
   },
   "InviteResponseSchema": {
    "anyOf": [
