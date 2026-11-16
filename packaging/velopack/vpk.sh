@@ -10,6 +10,10 @@
 # below: the SHA-256 is the one GitHub shows for the release asset `vpk.<version>.nupkg`
 # of https://github.com/velopack/velopack/releases.
 #
+# The unpacking happens in a scratch folder that is renamed to $VPK_HOME only when it
+# is complete, so an interrupted or concurrent run never leaves a half-unpacked tool
+# behind.
+#
 # Needs a .NET runtime of version 8 or later (the runners have one) and curl.
 set -euo pipefail
 
@@ -20,24 +24,31 @@ home=${VPK_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/vpk-$VPK_VERSION}
 tool="$home/tools/net8.0/any/vpk.dll"
 
 if [ ! -f "$tool" ]; then
-  mkdir -p "$home"
-  nupkg="$home/vpk.$VPK_VERSION.zip"
+  scratch="$home.part.$$"
+  rm -rf "$scratch"
+  mkdir -p "$scratch"
+  trap 'rm -rf "$scratch"' EXIT
+  nupkg="$scratch.zip"
   curl -fsSL --retry 3 -o "$nupkg" \
     "https://github.com/velopack/velopack/releases/download/$VPK_VERSION/vpk.$VPK_VERSION.nupkg"
   echo "$VPK_SHA256  $nupkg" | sha256sum -c - >&2
   if command -v unzip >/dev/null 2>&1; then
-    unzip -q -o "$nupkg" -d "$home"
+    unzip -q -o "$nupkg" -d "$scratch"
   elif command -v 7z >/dev/null 2>&1; then
-    7z x -y -o"$home" "$nupkg" >/dev/null
+    7z x -y -o"$scratch" "$nupkg" >/dev/null
   else
-    # Git Bash on a Windows runner has neither; PowerShell can unpack a .zip.
-    # Paths go in as arguments so no quoting has to survive the shell.
-    powershell -NoProfile -Command \
-      'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force' \
-      "$(cygpath -w "$nupkg")" "$(cygpath -w "$home")"
+    # Git Bash on a Windows runner has neither; PowerShell can unpack a .zip. The paths
+    # go in through the environment so no quoting has to survive the shell.
+    NUPKG=$(cygpath -w "$nupkg") DEST=$(cygpath -w "$scratch") powershell -NoProfile -Command \
+      'Expand-Archive -LiteralPath $env:NUPKG -DestinationPath $env:DEST -Force'
   fi
   rm -f "$nupkg"
-  test -f "$tool" || { echo "error: $tool is missing after unpacking" >&2; exit 1; }
+  test -f "$scratch/tools/net8.0/any/vpk.dll" || {
+    echo "error: vpk.dll is missing after unpacking" >&2
+    exit 1
+  }
+  # Another run may have finished first; then its copy is as good as ours.
+  mv "$scratch" "$home" 2>/dev/null || test -f "$tool"
 fi
 
 # The tool is built for .NET 8; let a newer runtime run it when 8 is not installed.
@@ -46,4 +57,5 @@ export DOTNET_NOLOGO=1
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 # dotnet on Windows needs Windows paths, not the /d/a/... form Git Bash uses.
 if command -v cygpath >/dev/null 2>&1; then tool=$(cygpath -m "$tool"); fi
-exec dotnet "$tool" "$@"
+# Not exec: the exit trap above has to run.
+dotnet "$tool" "$@"

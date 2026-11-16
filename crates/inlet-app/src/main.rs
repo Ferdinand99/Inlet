@@ -27,9 +27,43 @@ fn early_exit(first_arg: Option<&str>) -> Option<EarlyExit> {
     }
 }
 
+/// Prints one line to standard output.
+///
+/// The Windows release build is a GUI program, which has no console of its own. When it
+/// is started from a terminal without redirected output it has no standard output at
+/// all, so the line goes to the terminal that started it (the parent's console). When
+/// the output is redirected to a pipe or a file, the redirection is used as usual.
+#[cfg(windows)]
+fn print_line(line: &str) {
+    use std::io::Write;
+    use std::os::windows::io::AsRawHandle;
+
+    extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+
+    let handle = std::io::stdout().as_raw_handle();
+    if handle.is_null() || handle as isize == -1 {
+        // SAFETY: a plain Win32 call that takes no pointers.
+        if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } != 0 {
+            if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+                let _ = writeln!(console, "{line}");
+            }
+        }
+        return;
+    }
+    println!("{line}");
+}
+
+#[cfg(not(windows))]
+fn print_line(line: &str) {
+    println!("{line}");
+}
+
 fn main() {
     match early_exit(std::env::args().nth(1).as_deref()) {
-        Some(EarlyExit::Version) => println!("inlet {}", env!("CARGO_PKG_VERSION")),
+        Some(EarlyExit::Version) => print_line(&format!("inlet {}", env!("CARGO_PKG_VERSION"))),
         Some(EarlyExit::InstallerHook) => {}
         None => inlet::run(),
     }
