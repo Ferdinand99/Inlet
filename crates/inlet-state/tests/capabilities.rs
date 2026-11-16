@@ -3,7 +3,7 @@
 
 mod common;
 
-use inlet_protocol::api::experiments::{Assignments, ChannelThreads, VoiceP2p};
+use inlet_protocol::api::experiments::{Assignments, VoiceP2p};
 use inlet_protocol::{Discovery, Experiments};
 use inlet_state::{
     AccountState, Cap, Capabilities, ExperimentState, GuildFeature, PolicyDates, TermsUpdate,
@@ -56,10 +56,11 @@ fn flag_cases() -> Vec<(Cap, Value, Value)> {
             f("voice_enabled", true),
             f("voice_enabled", false),
         ),
+        // Premium shows unless the instance is self-hosted without a premium tier.
         (
             Cap::Premium,
-            f("premium_enabled", true),
-            f("premium_enabled", false),
+            json!({"features": {"self_hosted": true, "premium_enabled": true}}),
+            json!({"features": {"self_hosted": true, "premium_enabled": false}}),
         ),
         (
             Cap::Stripe,
@@ -100,11 +101,6 @@ fn flag_cases() -> Vec<(Cap, Value, Value)> {
             Cap::PersonalNotes,
             community("personal_notes_enabled", true),
             community("personal_notes_enabled", false),
-        ),
-        (
-            Cap::GuildCreate,
-            community("guild_create_access", true),
-            community("guild_create_access", false),
         ),
         (
             Cap::Gif,
@@ -161,13 +157,34 @@ fn a_missing_flag_has_the_default_the_schema_gives_it() {
         (Cap::DirectMessages, true),
         (Cap::Friends, true),
         (Cap::PersonalNotes, true),
-        (Cap::GuildCreate, true),
+        // Not self-hosted: the premium features show.
+        (Cap::Premium, true),
     ] {
         assert_eq!(c.has(cap), expected, "{cap:?}");
     }
     // A flag with the wrong type counts as missing.
     let odd = caps_of(json!({"features": {"voice_enabled": "yes", "discovery_enabled": 3}}));
     assert!(!odd.has(Cap::Voice) && odd.has(Cap::Explore));
+}
+
+#[test]
+fn explore_needs_the_directory_and_more_than_one_community_and_premium_follows_self_hosting() {
+    let explore = |patch: Value| caps_of(patch).has(Cap::Explore);
+    assert!(explore(json!({"features": {"discovery_enabled": true}})));
+    assert!(!explore(
+        json!({"features": {"discovery_enabled": true}, "community": {"single_community": true}})
+    ));
+    assert!(!explore(json!({"features": {"discovery_enabled": false}})));
+    // Premium: shown unless the instance is self-hosted without a premium tier.
+    assert!(
+        caps_of(json!({"features": {"self_hosted": false, "premium_enabled": false}}))
+            .has(Cap::Premium)
+    );
+    assert!(!caps_of(json!({"features": {"self_hosted": true}})).has(Cap::Premium));
+    assert!(
+        caps_of(json!({"features": {"self_hosted": true, "premium_enabled": true}}))
+            .has(Cap::Premium)
+    );
 }
 
 #[test]
@@ -183,23 +200,6 @@ fn friends_are_off_with_direct_messages_unless_the_instance_says_otherwise() {
 fn experiment_cases() -> Vec<(Cap, Assignments, Assignments)> {
     let none = Assignments::default();
     vec![
-        (
-            Cap::ChannelThreads,
-            Assignments {
-                channel_threads: Some(ChannelThreads {
-                    active: true,
-                    config_version: 1,
-                }),
-                ..none
-            },
-            Assignments {
-                channel_threads: Some(ChannelThreads {
-                    active: false,
-                    config_version: 1,
-                }),
-                ..none
-            },
-        ),
         (
             Cap::GuildVisits,
             Assignments {
@@ -228,28 +228,6 @@ fn experiment_cases() -> Vec<(Cap, Assignments, Assignments)> {
                 ..none
             },
         ),
-        (
-            Cap::PlutoniumPage,
-            Assignments {
-                plutonium_page: Some(true),
-                ..none
-            },
-            Assignments {
-                plutonium_page: Some(false),
-                ..none
-            },
-        ),
-        (
-            Cap::DomainMigration,
-            Assignments {
-                domain_migration: Some(true),
-                ..none
-            },
-            Assignments {
-                domain_migration: Some(false),
-                ..none
-            },
-        ),
     ]
 }
 
@@ -275,10 +253,10 @@ fn every_experiment_switches_its_capability_on_and_off() {
 }
 
 #[test]
-fn before_the_first_answer_only_threads_are_assumed_on_and_without_the_route_none() {
+fn before_the_first_answer_and_without_the_route_no_experiment_is_on() {
     let mut c = Capabilities::new();
     for cap in Cap::ALL.into_iter().filter(|c| c.is_experiment()) {
-        assert_eq!(c.has(cap), cap == Cap::ChannelThreads, "pending {cap:?}");
+        assert!(!c.has(cap), "pending {cap:?}");
     }
     assert!(!c.set_experiments(ExperimentState::Pending), "no change");
     assert!(c.set_experiments(ExperimentState::Unavailable));
@@ -374,10 +352,14 @@ fn the_email_banner_follows_the_instance_and_the_account() {
         !c.notices(&me(json!({"verification_need": "add_email"})))
             .confirm_email
     );
-    // A bounced address is its own banner, not the confirm one.
+    // A bounced address of an account that has to confirm it is its own banner.
     let bounced = me(json!({"verification_need": "confirm_email", "email_bounced": true}));
     let n = c.notices(&bounced);
     assert!(n.email_bounced && !n.confirm_email);
+    // A verified account whose address bounces has no banner: Fluxer shows none.
+    let verified = me(json!({"verification_need": null, "email_bounced": true}));
+    let n = c.notices(&verified);
+    assert!(!n.email_bounced && !n.confirm_email);
 }
 
 #[test]
@@ -497,8 +479,42 @@ fn the_account_state_keeps_its_capabilities_across_a_new_ready_and_reports_chang
 #[test]
 fn an_account_state_built_alone_has_the_defaults() {
     let state: AccountState = common::state();
-    assert!(state.capabilities().has(Cap::ChannelThreads));
     assert!(state.capabilities().has(Cap::DirectMessages));
     assert!(!state.capabilities().has(Cap::Voice));
     assert_eq!(state.notices(), Default::default());
+}
+
+#[test]
+fn threads_follow_each_guilds_own_threads_list_and_not_the_experiment() {
+    let guild_with = |threads: Option<Value>| {
+        let mut g = common::guild_ready(
+            common::default_roles(),
+            common::default_channels(),
+            &[common::MOD_ROLE],
+        );
+        if let Some(t) = threads {
+            g["threads"] = t;
+        }
+        g
+    };
+    let ready = |g: Value| common::ready_from(common::ready_json(g, json!([]), json!([])));
+    // The guild carries no `threads`: the instance has threads off for it.
+    let mut state = AccountState::from_ready_at(&ready(guild_with(None)), 1);
+    assert!(!state.threads_active(common::g()));
+    // An empty list is enough: the gateway sent the key.
+    let state_on = AccountState::from_ready_at(&ready(guild_with(Some(json!([])))), 1);
+    assert!(state_on.threads_active(common::g()));
+    // The experiment makes no difference either way (also not when the route is missing).
+    state.set_experiments(ExperimentState::Unavailable);
+    assert!(!state.threads_active(common::g()));
+    let mut on = state_on;
+    on.set_experiments(ExperimentState::Unavailable);
+    assert!(on.threads_active(common::g()));
+    // GUILD_CREATE for a guild that now carries the key turns it on.
+    let mut g = guild_with(Some(json!([])));
+    g["id"] = json!("777");
+    let create = common::d("GUILD_CREATE", g);
+    state.apply(&create);
+    assert!(state.threads_active(inlet_state::GuildId::parse("777").unwrap()));
+    assert!(!state.threads_active(inlet_state::GuildId::parse("999").unwrap()));
 }

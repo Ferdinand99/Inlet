@@ -852,6 +852,13 @@ impl AccountState {
         self.caps.notices(&self.me)
     }
 
+    /// Whether threads are on for a guild: its READY or GUILD_CREATE carried a `threads`
+    /// list. The instance decides this per guild; the client never reads the
+    /// experiment for it.
+    pub fn threads_active(&self, guild: GuildId) -> bool {
+        self.guilds.get(&guild).is_some_and(|g| g.threads_active)
+    }
+
     /// Whether the guild has `feature`, as the instance lets it count
     /// ([`Capabilities::guild_has`]).
     pub fn guild_has(&self, guild: GuildId, feature: GuildFeature) -> bool {
@@ -1372,6 +1379,9 @@ impl AccountState {
         }
         // Its active threads (with the account's memberships), after their parents.
         self.ingest_threads(id, g.extra.get("threads"), &mut fresh, c);
+        if let Some(guild) = self.guilds.get_mut(&id) {
+            guild.threads_active = g.extra.get("threads").is_some_and(|t| !t.is_null());
+        }
         // Channels the guild no longer sends were hidden: keep their acks.
         for gone in old.difference(&fresh) {
             self.forget_channel(*gone, true, c);

@@ -359,6 +359,8 @@ fn ready(
                     "joined_at": "2026-01-01T00:00:00+00:00"
                 }],
                 "member_count": 5,
+                // The gateway sends a `threads` list for a guild that has threads on.
+                "threads": [],
                 "emojis": emojis,
                 "stickers": stickers
             })
@@ -589,6 +591,10 @@ mod tests {
             "profile-popout",
             "search-results",
             "quick-switcher",
+            "banners",
+            "banners-maintenance",
+            "banners-connection",
+            "terms",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);

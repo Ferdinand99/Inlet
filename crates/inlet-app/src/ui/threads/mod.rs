@@ -134,12 +134,16 @@ impl State {
 /// The threads button in the channel header (see `ui/chat/header_buttons.rs`): for a
 /// text or announcement channel of a guild, it opens the thread list.
 pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement> {
-    // Without the instance's threads experiment the routes answer 404: no button.
-    if !this.has_cap(cx, inlet_state::Cap::ChannelThreads) {
+    let open = this.selected_channel.as_ref()?;
+    let guild = this.selected_guild.as_ref()?;
+    // Threads are on per guild: the instance's gateway sends a `threads` list for the
+    // guilds that have them (Fluxer's `ThreadGuilds.isActive`), whatever `/experiments` says.
+    let on = inlet_state::GuildId::parse(guild)
+        .zip(this.account.as_ref())
+        .is_some_and(|(g, a)| a.read(cx).threads_active(g));
+    if !on {
         return None;
     }
-    let open = this.selected_channel.as_ref()?;
-    this.selected_guild.as_ref()?;
     let channel = this.channels.iter().find(|c| &c.id == open)?;
     if !matches!(
         channel.kind,

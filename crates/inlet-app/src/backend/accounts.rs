@@ -959,7 +959,7 @@ impl Backend {
         }
 
         self.events = events.clone();
-        self.session_activated(&session, gen);
+        self.session_activated(&key, &session, gen);
         self.active = Some(Active::Real(RealActive {
             gen,
             key: key.clone(),
@@ -1040,7 +1040,7 @@ impl Backend {
         let names: SharedNames = Arc::default();
         // The instance's flags for the account's state, from the document its session was
         // built with (no request: a background account asks nothing).
-        super::instance::announce(&events, &session);
+        super::instance::announce_background(self, &key, &events, &session);
         let (gateway, forward) = self.spawn_gateway(
             gen,
             &session,
@@ -1161,7 +1161,7 @@ impl Backend {
             r.presence.to_front(&r.gateway);
         }
         self.events = r.events.clone();
-        self.session_activated(&r.session, gen);
+        self.session_activated(&r.key, &r.session, gen);
         self.active = Some(Active::Real(r));
         if restart && wait.is_zero() {
             self.restart_gateway(gen);
@@ -1185,10 +1185,10 @@ impl Backend {
     /// What every account needs when it becomes the active one, however it got there
     /// (sign-in, start-up, switch): the image client for its own media endpoint, sent
     /// with its tag so the UI never keeps the previous account's.
-    fn session_activated(&mut self, session: &p::Session, gen: u64) {
+    fn session_activated(&mut self, key: &AccountKey, session: &p::Session, gen: u64) {
         super::media::session_started(self, session);
         // The instance's flags and the account's experiments, polled while it is active.
-        super::instance::activated(self, session, gen);
+        super::instance::activated(self, key, session, gen);
     }
 
     /// Makes `key` the active account: a connected one at once, a stored one that is not
@@ -1319,6 +1319,7 @@ impl Backend {
 
     /// Stops an account wherever it runs or waits (active, background, waiting start).
     fn drop_engine(&mut self, key: &AccountKey) {
+        super::instance::forget(self, key);
         if matches!(&self.active, Some(Active::Real(r)) if &r.key == key) {
             if let Some(Active::Real(r)) = self.active.take() {
                 self.teardown(&r);

@@ -110,7 +110,13 @@ pub fn render(
                         .text_color(theme::link())
                         .cursor_pointer()
                         .child(t!("about-instance-status", url = shown))
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_link(&url, true, cx)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            // About closes first: the confirmation is drawn over the
+                            // main screen, not over About.
+                            this.show_about = false;
+                            this.show_licences = false;
+                            this.open_link(&url, true, cx)
+                        }))
                 }))
         }))
         .child(div().child(t!("about-intro")))

@@ -4,9 +4,9 @@
 //! three answers of 404 in a row; [`Experiments`] carries what it needs for that
 //! ([`Experiments::next_poll`]).
 //!
-//! The document is read tolerantly: an assignment that has the wrong shape is
-//! left out, not an error, so one broken entry never hides the others, and an
-//! unknown assignment is ignored. The poll interval and jitter are clamped to
+//! The document is read as Fluxer's schema reads it: a wrong shape makes the whole
+//! answer [`ExperimentsAnswer::Malformed`] and the caller keeps what it had (the
+//! failure count is reset), and an unknown assignment is ignored. The poll interval and jitter are clamped to
 //! the limits of Fluxer's schema, so an instance cannot make the client poll
 //! faster than every 30 seconds.
 
@@ -89,53 +89,70 @@ impl Default for Experiments {
     }
 }
 
-fn flag(v: Option<&Value>, key: &str) -> Option<bool> {
-    v?.get(key)?.as_bool()
+/// An optional assignment: `Ok(None)` when it is not there, `Err` when it is there with
+/// the wrong shape (the whole answer is then refused, as Fluxer's schema does).
+fn entry<T>(
+    assignments: &serde_json::Map<String, Value>,
+    key: &str,
+    read: impl FnOnce(&Value) -> Option<T>,
+) -> Result<Option<T>, ()> {
+    match assignments.get(key) {
+        None => Ok(None),
+        Some(v) => read(v).map(Some).ok_or(()),
+    }
+}
+
+fn enabled(v: &Value) -> Option<bool> {
+    v.get("enabled")?.as_bool()
 }
 
 impl Experiments {
-    /// Reads an answer. A body that is not an object gives `None`.
+    /// Reads an answer the way Fluxer's schema does: the poll interval (an integer), the
+    /// jitter (an integer from 0 to 50) and `assignments` (an object) must be there, and
+    /// an assignment that is there must have its shape (`channel_threads.active` is
+    /// `true`, a flag is a boolean, `max_participants` an integer from 2). Anything else
+    /// gives `None`, and the caller keeps what it had. Unknown assignments and fields are
+    /// ignored. The interval is clamped to 60 s to 24 h afterwards.
     pub fn parse(body: &Value) -> Option<Experiments> {
         let obj = body.as_object()?;
-        let poll_interval_secs = obj
-            .get("poll_interval_seconds")
-            .and_then(Value::as_i64)
-            .map_or(DEFAULT_POLL_INTERVAL_SECS, |s| {
-                u64::try_from(s)
-                    .unwrap_or(MIN_POLL_INTERVAL_SECS)
-                    .clamp(MIN_POLL_INTERVAL_SECS, MAX_POLL_INTERVAL_SECS)
-            });
-        let poll_jitter_percent = obj
-            .get("poll_jitter_percent")
-            .and_then(Value::as_i64)
-            .map_or(DEFAULT_POLL_JITTER_PERCENT, |p| {
-                p.clamp(0, i64::from(MAX_POLL_JITTER_PERCENT)) as u8
-            });
-        let a = obj.get("assignments");
-        let channel_threads = a.and_then(|a| a.get("channel_threads")).and_then(|t| {
-            Some(ChannelThreads {
-                active: t.get("active")?.as_bool()?,
-                config_version: t.get("config_version").and_then(Value::as_u64).unwrap_or(0),
-            })
-        });
-        let voice_p2p = a.and_then(|a| a.get("voice_p2p")).and_then(|v| {
+        let interval = obj.get("poll_interval_seconds")?.as_i64()?;
+        let jitter = obj.get("poll_jitter_percent")?.as_i64()?;
+        if !(0..=i64::from(MAX_POLL_JITTER_PERCENT)).contains(&jitter) {
+            return None;
+        }
+        let a = obj.get("assignments")?.as_object()?;
+        let channel_threads = entry(a, "channel_threads", |t| {
+            // Only `active: true` exists on the wire.
+            if t.get("active")?.as_bool()? {
+                Some(ChannelThreads {
+                    active: true,
+                    config_version: t.get("config_version")?.as_u64()?,
+                })
+            } else {
+                None
+            }
+        })
+        .ok()?;
+        let voice_p2p = entry(a, "voice_p2p", |v| {
+            let max = v.get("max_participants")?.as_u64()?;
+            (max >= 2).then_some(())?;
             Some(VoiceP2p {
                 enabled: v.get("enabled")?.as_bool()?,
-                max_participants: v
-                    .get("max_participants")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| u32::try_from(n).ok()),
+                max_participants: u32::try_from(max).ok(),
             })
-        });
+        })
+        .ok()?;
         Some(Experiments {
-            poll_interval_secs,
-            poll_jitter_percent,
+            poll_interval_secs: u64::try_from(interval)
+                .unwrap_or(MIN_POLL_INTERVAL_SECS)
+                .clamp(MIN_POLL_INTERVAL_SECS, MAX_POLL_INTERVAL_SECS),
+            poll_jitter_percent: jitter as u8,
             assignments: Assignments {
                 channel_threads,
-                guild_visits: flag(a.and_then(|a| a.get("guild_visits")), "enabled"),
+                guild_visits: entry(a, "guild_visits", enabled).ok()?,
                 voice_p2p,
-                plutonium_page: flag(a.and_then(|a| a.get("plutonium_page")), "enabled"),
-                domain_migration: flag(a.and_then(|a| a.get("domain_migration")), "enabled"),
+                plutonium_page: entry(a, "plutonium_page", enabled).ok()?,
+                domain_migration: entry(a, "domain_migration", enabled).ok()?,
             },
         })
     }
@@ -248,33 +265,57 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_entry_is_left_out_and_the_others_stay() {
-        let e = Experiments::parse(&json!({
-            "poll_interval_seconds": 300, "poll_jitter_percent": 15,
-            "assignments": {"guild_visits": "yes", "channel_threads": {"config_version": 1},
-                            "plutonium_page": {"enabled": true}}
-        }))
-        .unwrap();
-        assert_eq!(e.assignments.guild_visits, None);
-        assert_eq!(e.assignments.channel_threads, None);
-        assert_eq!(e.assignments.plutonium_page, Some(true));
+    fn one_broken_entry_refuses_the_whole_answer_as_fluxers_schema_does() {
+        let ok = |a: Value| json!({"poll_interval_seconds": 300, "poll_jitter_percent": 15, "assignments": a});
+        assert!(Experiments::parse(&ok(json!({"plutonium_page": {"enabled": true}}))).is_some());
+        for broken in [
+            json!({"guild_visits": "yes"}),
+            json!({"channel_threads": {"config_version": 1}}),
+            // `active` is `true` or the entry is not there.
+            json!({"channel_threads": {"active": false, "config_version": 1}}),
+            json!({"voice_p2p": {"enabled": true, "max_participants": 1}}),
+            json!({"voice_p2p": {"enabled": true}}),
+            json!({"domain_migration": {"enabled": 1}}),
+        ] {
+            assert!(
+                Experiments::parse(&ok(broken.clone())).is_none(),
+                "{broken}"
+            );
+        }
+        // What is missing at the top is refused too.
+        assert!(Experiments::parse(&json!({})).is_none());
+        assert!(
+            Experiments::parse(&json!({"poll_jitter_percent": 15, "assignments": {}})).is_none()
+        );
+        assert!(
+            Experiments::parse(&json!({"poll_interval_seconds": 300, "assignments": {}})).is_none()
+        );
+        assert!(Experiments::parse(
+            &json!({"poll_interval_seconds": 300, "poll_jitter_percent": 15})
+        )
+        .is_none());
+        assert!(Experiments::parse(
+            &json!({"poll_interval_seconds": 300, "poll_jitter_percent": 51, "assignments": {}})
+        )
+        .is_none());
         assert!(Experiments::parse(&json!([1, 2])).is_none());
+        // No assignments at all is a valid answer.
         assert_eq!(
-            Experiments::parse(&json!({})).unwrap(),
-            Experiments::default()
+            Experiments::parse(&ok(json!({}))).unwrap().assignments,
+            Assignments::default()
         );
     }
 
     #[test]
     fn the_poll_cadence_is_clamped() {
         let fast = Experiments::parse(&json!({
-            "poll_interval_seconds": 1, "poll_jitter_percent": 99, "assignments": {}
+            "poll_interval_seconds": 1, "poll_jitter_percent": 50, "assignments": {}
         }))
         .unwrap();
         assert_eq!(fast.poll_interval_secs, MIN_POLL_INTERVAL_SECS);
         assert_eq!(fast.poll_jitter_percent, MAX_POLL_JITTER_PERCENT);
         let slow = Experiments::parse(&json!({
-            "poll_interval_seconds": 9_999_999, "poll_jitter_percent": -4, "assignments": {}
+            "poll_interval_seconds": 9_999_999, "poll_jitter_percent": 0, "assignments": {}
         }))
         .unwrap();
         assert_eq!(slow.poll_interval_secs, MAX_POLL_INTERVAL_SECS);

@@ -21,7 +21,6 @@ fn of_the_banners_that_apply_one_firm_and_one_dismissible_show_in_order() {
     assert_eq!(select(&[AccountLimited, Email]), vec![AccountLimited]);
     assert_eq!(select(&[Email, Connection, Terms]), vec![Connection]);
     // The dismissible ones: one of them, the lowest.
-    assert_eq!(select(&[DomainMoved, Maintenance]), vec![Maintenance]);
     assert_eq!(select(&[InstanceNotice, Maintenance]), vec![InstanceNotice]);
     // One of each kind, in order of priority.
     assert_eq!(
@@ -52,15 +51,6 @@ fn a_maintenance_length_is_said_in_the_largest_even_unit() {
     assert_eq!(duration_text(90), "90 minutes");
     assert_eq!(duration_text(1440), "1 day");
     assert_eq!(duration_text(0), "1 minute");
-}
-
-#[test]
-fn only_the_official_instances_have_a_new_domain() {
-    assert_eq!(moved_target("fluxer.app"), Some("fluxer.com"));
-    assert_eq!(moved_target("web.fluxer.app"), Some("fluxer.com"));
-    assert_eq!(moved_target("canary.fluxer.app"), Some("canary.fluxer.com"));
-    assert_eq!(moved_target("fluxer.opland.net"), None);
-    assert_eq!(moved_target("evil.example"), None);
 }
 
 #[test]
@@ -306,7 +296,7 @@ fn the_instance_notice_shows_while_live_and_until_it_is_dismissed(cx: &mut TestA
             cx,
         );
         assert_eq!(this.visible_banners(cx), vec![Banner::InstanceNotice]);
-        this.dismiss_banner(Banner::InstanceNotice, now_ms(), cx);
+        this.dismiss_banner(Banner::InstanceNotice, cx);
         assert_eq!(this.visible_banners(cx), vec![]);
         instance_says(
             this,
@@ -342,7 +332,7 @@ fn maintenance_shows_per_stage_and_is_dismissed_per_stage(cx: &mut TestAppContex
             cx,
         );
         assert_eq!(this.visible_banners(cx), vec![Banner::Maintenance]);
-        this.dismiss_banner(Banner::Maintenance, now_ms(), cx);
+        this.dismiss_banner(Banner::Maintenance, cx);
         assert_eq!(this.visible_banners(cx), vec![]);
         // It starts: a new stage, shown again.
         instance_says(
@@ -437,54 +427,35 @@ fn an_incident_explains_the_lost_connection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_domain_move_needs_the_switch_the_assignment_and_an_official_instance(
-    cx: &mut TestAppContext,
-) {
+fn the_domain_move_shows_no_banner_as_fluxers_own_desktop_app_has_none(cx: &mut TestAppContext) {
     let official = "https://fluxer.app";
-    let on = json!({"domain_migration": {"enabled": true}});
-    let assigned = |yes: bool| {
-        ExperimentState::Loaded(inlet_protocol::Experiments {
-            assignments: inlet_protocol::Assignments {
-                domain_migration: Some(yes),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-    };
     with_inlet(cx, official, json!({}), |this, cx| {
-        instance_says(this, official, Ev::Discovery(discovery(on.clone())), cx);
-        assert_eq!(this.visible_banners(cx), vec![], "the switch alone");
-        instance_says(this, official, Ev::Experiments(assigned(true)), cx);
-        assert_eq!(this.visible_banners(cx), vec![Banner::DomainMoved]);
-        instance_says(this, official, Ev::Experiments(assigned(false)), cx);
-        assert_eq!(this.visible_banners(cx), vec![], "the assignment off");
-        instance_says(this, official, Ev::Experiments(assigned(true)), cx);
         instance_says(
             this,
             official,
-            Ev::Discovery(discovery(json!({"domain_migration": {"enabled": false}}))),
+            Ev::Discovery(discovery(json!({"domain_migration": {"enabled": true}}))),
             cx,
         );
-        assert_eq!(this.visible_banners(cx), vec![], "the switch off");
-        // Dismissed for a week.
-        instance_says(this, official, Ev::Discovery(discovery(on.clone())), cx);
-        assert_eq!(this.visible_banners(cx), vec![Banner::DomainMoved]);
-        this.dismiss_banner(Banner::DomainMoved, now_ms(), cx);
-        assert_eq!(this.visible_banners(cx), vec![]);
-        this.banners
-            .prefs()
-            .moved_dismissed_at
-            .insert(official.into(), now_ms() - DOMAIN_MOVED_DISMISS_MS - 1);
-        assert_eq!(
-            this.visible_banners(cx),
-            vec![Banner::DomainMoved],
-            "after a week"
+        instance_says(
+            this,
+            official,
+            Ev::Experiments(ExperimentState::Loaded(inlet_protocol::Experiments {
+                assignments: inlet_protocol::Assignments {
+                    domain_migration: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+            cx,
         );
-    });
-    // An instance Fluxer has no new domain for never shows it.
-    with_inlet(cx, HOME, json!({}), |this, cx| {
-        instance_says(this, HOME, Ev::Discovery(discovery(on)), cx);
-        instance_says(this, HOME, Ev::Experiments(assigned(true)), cx);
+        // The capability is on, and nothing is drawn for it.
+        assert!(this
+            .account
+            .clone()
+            .unwrap()
+            .read(cx)
+            .capabilities()
+            .domain_moved());
         assert_eq!(this.visible_banners(cx), vec![]);
     });
 }
@@ -521,20 +492,38 @@ fn an_answer_that_comes_before_the_account_state_is_given_to_it_later(cx: &mut T
         let other = AccountKey::new("https://other.example", "77").unwrap();
         this.on_instance_event(
             Some(other.clone()),
-            Ev::Discovery(discovery(json!({"features": {"premium_enabled": true}}))),
+            Ev::Discovery(discovery(json!({"features": {"stripe_enabled": true}}))),
             cx,
         );
-        assert!(!this.has_cap(cx, Cap::Premium));
+        assert!(!this.has_cap(cx, Cap::Stripe));
         this.switcher.active = Some(other);
         this.account = Some(cx.new(|_| AccountState::from_ready_at(&ready(json!({})), 1)));
         this.sync_instance_info(cx);
-        assert!(this.has_cap(cx, Cap::Premium) && !this.has_cap(cx, Cap::Voice));
+        assert!(this.has_cap(cx, Cap::Stripe) && !this.has_cap(cx, Cap::Voice));
         drop(first);
     });
 }
 
+/// A READY whose guild "100" has threads on (a `threads` list) or not.
+fn ready_with_guild(threads: bool) -> p::Ready {
+    let mut guild = json!({
+        "id": "100", "properties": {"id": "100", "name": "Guild", "owner_id": "1"},
+        "channels": [], "roles": [], "members": [], "member_count": 1
+    });
+    if threads {
+        guild["threads"] = json!([]);
+    }
+    serde_json::from_value(json!({
+        "session_id": "s", "user": {"id": ME, "username": "me"}, "guilds": [guild],
+        "users": [], "private_channels": [], "read_states": [], "user_guild_settings": []
+    }))
+    .unwrap()
+}
+
 #[gpui::test]
-fn the_thread_button_follows_the_threads_experiment(cx: &mut TestAppContext) {
+fn the_thread_button_follows_the_guilds_own_threads_list_and_not_the_experiment(
+    cx: &mut TestAppContext,
+) {
     with_inlet(cx, HOME, json!({}), |this, cx| {
         this.selected_guild = Some("100".into());
         this.selected_channel = Some("200".into());
@@ -547,42 +536,29 @@ fn the_thread_button_follows_the_threads_experiment(cx: &mut TestAppContext) {
             topic: None,
             slowmode_secs: 0,
         }];
-        let threads = ExperimentState::Loaded(inlet_protocol::Experiments {
-            assignments: inlet_protocol::Assignments {
-                channel_threads: Some(inlet_protocol::api::experiments::ChannelThreads {
-                    active: true,
-                    config_version: 1,
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
         let button = |this: &Inlet, cx: &mut Context<Inlet>| {
             crate::ui::threads::header_button(this, cx).is_some()
         };
-        // Not asked yet: threads are assumed on, as before.
-        assert!(button(this, cx));
-        instance_says(this, HOME, Ev::Experiments(threads), cx);
-        assert!(button(this, cx));
-        // The instance assigned it off, or has no experiments at all: no button.
-        instance_says(
-            this,
-            HOME,
-            Ev::Experiments(ExperimentState::Loaded(
-                inlet_protocol::Experiments::default(),
-            )),
-            cx,
-        );
+        // The guild arrived without a `threads` list: the instance has threads off for it.
+        this.account = Some(cx.new(|_| AccountState::from_ready_at(&ready_with_guild(false), 1)));
         assert!(!button(this, cx));
-        instance_says(
-            this,
-            HOME,
-            Ev::Experiments(ExperimentState::Unavailable),
-            cx,
-        );
-        assert!(!button(this, cx));
-        instance_says(this, HOME, Ev::Experiments(threads), cx);
+        // With the list the button shows, whatever `/experiments` says or does not say:
+        // before the first answer, with the threads assignment gone, or without the route.
+        this.account = Some(cx.new(|_| AccountState::from_ready_at(&ready_with_guild(true), 1)));
         assert!(button(this, cx));
+        for state in [
+            ExperimentState::Loaded(inlet_protocol::Experiments::default()),
+            ExperimentState::Unavailable,
+            ExperimentState::Pending,
+        ] {
+            instance_says(this, HOME, Ev::Experiments(state), cx);
+            assert!(button(this, cx), "{state:?}");
+        }
+        // A guild that is not on screen, or a direct message, has none.
+        this.selected_guild = Some("999".into());
+        assert!(!button(this, cx));
+        this.selected_guild = None;
+        assert!(!button(this, cx));
     });
 }
 

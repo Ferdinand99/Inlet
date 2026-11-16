@@ -13,8 +13,8 @@
 //!
 //! | What | When |
 //! | --- | --- |
-//! | Discovery (anonymous, `If-None-Match`) | every 24 hours, and on a new connection of the gateway, at most once per 5 minutes |
-//! | `GET /experiments` (`If-None-Match`) | at once for a new active account, then at the instance's own cadence (60 s to 24 h, with its jitter, doubled after a failure up to four times), a forced one at most every 30 s; three answers of 404 in a row stop it for the session |
+//! | Discovery (anonymous, `If-None-Match`) | every 24 hours (every 5 minutes while the window has the focus on a self-hosted instance, so an administrator's notice shows soon, as in Fluxer); on a new connection of the gateway and when the account becomes the active one, at most once per 5 minutes |
+//! | `GET /experiments` (`If-None-Match`) | at once for a new active account, then at the instance's own cadence (60 s to 24 h, with its jitter, doubled after a failure up to four times), a forced one (the window in use again) at most every 30 s, and none on a reconnect; three answers of 404 in a row stop it for the session |
 //! | The status page (`summary.json`) | only when the instance says it is an Instatus page: every 60 to 75 s while the window has the focus and the status is quiet, and after 1, 5, 15, 30 minutes after failures; nothing while the window is not in use |
 //! | `POST /auth/verify/resend` | on a click, and at most once a minute |
 //! | `POST /users/@me/terms-acceptance` | on a click |
@@ -28,6 +28,7 @@ pub mod status_page;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,7 @@ use tokio::time::Instant;
 use super::session::{Failure, FailureKind};
 use poller::Poller;
 
+use super::accounts::AccountKey;
 use super::{Active, Backend, Internal, Ui};
 
 /// How often the discovery document is read again.
@@ -85,12 +87,29 @@ pub enum Ev {
     TermsAccepted(Result<Box<p::CurrentUser>, String>),
 }
 
+/// The newest discovery document an account has had, with its ETag and when it was
+/// read. Kept per account for as long as it is signed in, so becoming the active one
+/// again continues from it and never from the document its session was built with.
+#[derive(Clone)]
+pub(super) struct Latest {
+    pub(super) doc: p::Discovery,
+    pub(super) etag: Option<String>,
+    pub(super) at: Instant,
+}
+
+/// The newest documents by account, shared with the poller.
+pub(super) type LatestMap = Arc<Mutex<HashMap<AccountKey, Latest>>>;
+
 /// The backend's state of this domain.
 pub struct State {
     poller: Option<AbortHandle>,
     wake: Arc<Notify>,
+    /// Set by the window coming back into use: the wake may also bring the experiments
+    /// forward (a reconnect brings only the discovery document and the status page).
+    wake_experiments: Arc<AtomicBool>,
     window_active: Arc<AtomicBool>,
     last_resend: Mutex<Option<Instant>>,
+    latest: LatestMap,
 }
 
 impl Default for State {
@@ -98,8 +117,10 @@ impl Default for State {
         State {
             poller: None,
             wake: Arc::default(),
+            wake_experiments: Arc::default(),
             window_active: Arc::new(AtomicBool::new(true)),
             last_resend: Mutex::new(None),
+            latest: Arc::default(),
         }
     }
 }
@@ -124,12 +145,14 @@ pub(super) fn unit() -> f64 {
     (bits as f64 / u64::MAX as f64) * 2.0 - 1.0
 }
 
-/// An account became the active one: it is announced, and its poller starts. The
-/// previous poller (of the account it replaces) stops first.
-pub(super) fn activated(b: &mut Backend, session: &p::Session, gen: u64) {
+/// An account became the active one: it is announced with its newest document, and its
+/// poller starts (it revalidates that document at once when it is more than five
+/// minutes old). The previous poller (of the account it replaces) stops first.
+pub(super) fn activated(b: &mut Backend, key: &AccountKey, session: &p::Session, gen: u64) {
     stop(b);
     let events = b.events.clone();
-    announce(&events, session);
+    let seed = remember(&b.instance.latest, key, session, false);
+    announce_document(&events, &seed.doc);
     let wake = Arc::new(Notify::new());
     b.instance.wake = wake.clone();
     let poller = Poller::new(
@@ -139,8 +162,29 @@ pub(super) fn activated(b: &mut Backend, session: &p::Session, gen: u64) {
         gen,
         wake,
         b.instance.window_active.clone(),
+        b.instance.wake_experiments.clone(),
+        key.clone(),
+        b.instance.latest.clone(),
+        seed,
     );
     b.instance.poller = Some(b.spawn_guarded("instance poller", None, poller.run()));
+}
+
+/// The newest document of `key`: what is kept, or (the first time, or with `reset`) the
+/// one its session was built with, as of now.
+fn remember(map: &LatestMap, key: &AccountKey, session: &p::Session, reset: bool) -> Latest {
+    let mut map = map.lock().unwrap_or_else(|e| e.into_inner());
+    if reset || !map.contains_key(key) {
+        map.insert(
+            key.clone(),
+            Latest {
+                doc: session.instance().discovery().clone(),
+                etag: session.instance().etag().map(str::to_owned),
+                at: Instant::now(),
+            },
+        );
+    }
+    map[key].clone()
 }
 
 /// The account goes to the background: its poller stops.
@@ -150,17 +194,34 @@ pub(super) fn stop(b: &mut Backend) {
     }
 }
 
+/// An account is gone: its newest document is forgotten.
+pub(super) fn forget(b: &Backend, key: &AccountKey) {
+    b.instance
+        .latest
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(key);
+}
+
 /// A background account's discovery document, from the session it was built with. No
-/// request.
-pub(super) fn announce(events: &Ui, session: &p::Session) {
-    announce_document(events, session.instance().discovery());
+/// request. It is noted as read now, so becoming the active one revalidates it when it
+/// has been in the background for more than five minutes.
+pub(super) fn announce_background(
+    b: &Backend,
+    key: &AccountKey,
+    events: &Ui,
+    session: &p::Session,
+) {
+    let seed = remember(&b.instance.latest, key, session, true);
+    announce_document(events, &seed.doc);
 }
 
 fn announce_document(events: &Ui, doc: &p::Discovery) {
     let _ = events.unbounded_send(Ev::Discovery(Box::new(doc.clone())));
 }
 
-/// The active account's gateway connected (again): ask what is due.
+/// The active account's gateway connected (again): ask what is due (the discovery
+/// document and the status page; the experiments wait for their own cadence).
 pub(super) fn reconnected(b: &Backend) {
     b.instance.wake.notify_one();
 }
@@ -170,6 +231,8 @@ pub(super) fn handle(b: &mut Backend, cmd: Cmd) {
         Cmd::WindowActive(active) => {
             let was = b.instance.window_active.swap(active, Ordering::Relaxed);
             if active && !was {
+                // Coming back: Fluxer's client refreshes everything that is stale.
+                b.instance.wake_experiments.store(true, Ordering::Relaxed);
                 b.instance.wake.notify_one();
             }
         }

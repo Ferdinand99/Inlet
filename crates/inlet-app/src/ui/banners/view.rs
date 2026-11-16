@@ -9,12 +9,12 @@
 //! the instance's accent.
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, ClickEvent, ClipboardItem, Context, Div, FontWeight,
-    Hsla, SharedString, Stateful, Window,
+    div, prelude::*, px, rgb, AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, SharedString,
+    Stateful,
 };
 use inlet_state::TermsUpdate;
 
-use super::{duration_text, moved_target, now_ms, tidy, Banner};
+use super::{duration_text, tidy, Banner};
 use crate::app::Inlet;
 use crate::backend::instance::status_page::MaintenanceState;
 use crate::theme;
@@ -54,12 +54,6 @@ fn maintenance_active() -> Tone {
 }
 fn legal() -> Tone {
     tone(0x4338ca)
-}
-fn brand() -> Tone {
-    Tone {
-        bg: theme::brand(),
-        fg: theme::on_brand(),
-    }
 }
 
 /// One action on a banner: an inverted button.
@@ -149,7 +143,7 @@ impl Inlet {
             .hover(|s| s.opacity(0.7))
             .child(ThreadIcon::Close.el(px(20.), tone.fg))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.dismiss_banner(banner, now_ms(), cx);
+                this.dismiss_banner(banner, cx);
             }))
             .into_any_element()
     }
@@ -166,7 +160,8 @@ impl Inlet {
                 .switcher
                 .active
                 .as_ref()
-                .map(|k| tidy(&k.origin.to_string(), 60))
+                .and_then(|k| url::Url::parse(&k.origin.to_string()).ok())
+                .and_then(|u| u.host_str().map(|h| tidy(h, 60)))
                 .unwrap_or_default(),
         }
     }
@@ -198,7 +193,12 @@ impl Inlet {
             .map(|(_, s)| s.clone());
         let el = match banner {
             Banner::Connection => {
-                let t = neutral();
+                // Maintenance on the status page explains the outage, in its own tone.
+                let t = if status.as_ref().is_some_and(|s| s.maintenance.is_some()) {
+                    self::maintenance()
+                } else {
+                    neutral()
+                };
                 // Maintenance or an incident on the status page explains the outage.
                 let (message, link) = match &status {
                     Some(s) if s.maintenance.is_some() => {
@@ -215,8 +215,15 @@ impl Inlet {
                             i.url.clone().map(|u| (t!("banner-view-incident"), u)),
                         )
                     }
+                    // Stopped, and nothing on the status page: "Connection issues?" with the
+                    // status page, if the instance has one (Fluxer's wording).
                     _ => match self.chat.gateway_down.clone() {
-                        Some(why) => (t!("chat-disconnected", message = tidy(&why, 200)), None),
+                        Some(_) => (
+                            t!("banner-connection-issues"),
+                            caps.branding()
+                                .status_page_url
+                                .map(|u| (t!("banner-view-status-page"), u)),
+                        ),
                         None => (t!("banner-connection-lost"), None),
                     },
                 };
@@ -366,54 +373,16 @@ impl Inlet {
                     )),
                 )
             }
-            Banner::DomainMoved => {
-                let t = brand();
-                let host = self.moved_host()?;
-                bar(
-                    "banner-moved",
-                    t,
-                    t!(
-                        "banner-domain-moved",
-                        product = self.product_name(cx),
-                        host = host
-                    ),
-                    vec![action("banner-moved-steps", t!("banner-show-me-how"), t)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.banners.steps_open = true;
-                            cx.notify();
-                        }))
-                        .into_any_element()],
-                    Some(self.dismiss_button("banner-moved-dismiss", Banner::DomainMoved, t, cx)),
-                )
-            }
         };
         Some(el.into_any_element())
     }
 
-    /// The new address of the instance the account is on, when it has moved.
-    fn moved_host(&self) -> Option<&'static str> {
-        let origin = self.switcher.active.as_ref()?.origin.to_string();
-        let host = url::Url::parse(&origin).ok()?.host_str()?.to_owned();
-        moved_target(&host)
-    }
-
-    /// The windows the banners open, drawn over the app.
-    pub(crate) fn render_banner_windows(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    /// The window the banners open (the updated terms), drawn over the app. It is a layer
+    /// of its own: it has the keyboard, and Escape closes it.
+    pub(crate) fn render_banner_windows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
-        if self.screen != crate::app::Screen::Main {
-            return out;
-        }
-        if self.banners.terms_open {
+        if self.banner_window_open() {
             if let Some(w) = self.render_terms_window(cx) {
-                out.push(w);
-            }
-        }
-        if self.banners.steps_open {
-            if let Some(w) = self.render_moved_steps_window(cx) {
                 out.push(w);
             }
         }
@@ -525,66 +494,11 @@ impl Inlet {
                 )
                 .into_any_element(),
         );
-        Some(modal("terms-window", 520., children).into_any_element())
-    }
-
-    fn render_moved_steps_window(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let host = self.moved_host()?;
-        let product = self.product_name(cx);
-        let step = |n: u32, text: String| {
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(theme::text_muted())
-                        .child(format!("{n}.")),
-                )
-                .child(div().text_color(theme::text()).child(text))
-        };
-        let children = vec![
-            div()
-                .font_weight(FontWeight::BOLD)
-                .text_size(px(18.))
-                .text_color(theme::text_strong())
-                .child(t!("moved-title", product = product.clone()))
-                .into_any_element(),
-            div()
-                .text_color(theme::text())
-                .child(t!("moved-intro", product = product, host = host))
-                .into_any_element(),
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(step(1, t!("moved-step-add")))
-                .child(step(2, t!("moved-step-address", host = host)))
-                .child(step(3, t!("moved-step-sign-in")))
-                .into_any_element(),
-            div()
-                .flex()
-                .flex_row()
-                .justify_end()
-                .gap_2()
-                .child(
-                    button("moved-copy", t!("moved-copy-address"), false).on_click(cx.listener(
-                        move |_, _, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(host.to_string()));
-                        },
-                    )),
-                )
-                .child(
-                    button("moved-close", t!("banner-close"), true).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.banners.steps_open = false;
-                            cx.notify();
-                        },
-                    )),
-                )
-                .into_any_element(),
-        ];
-        Some(modal("moved-window", 520., children).into_any_element())
+        let card = modal("terms-window", 520., children);
+        Some(if self.is_top_layer(crate::desktop::Layer::BannerWindow) {
+            self.layer_keys(card, cx).into_any_element()
+        } else {
+            card.into_any_element()
+        })
     }
 }

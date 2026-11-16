@@ -17,6 +17,7 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 use super::poller::{Clocks, Poller};
 use super::*;
+use crate::backend::accounts::AccountKey;
 use crate::backend::accounts::Accounts;
 use crate::backend::Event;
 use crate::token_store::MemoryStore;
@@ -41,6 +42,10 @@ fn discovery(base: &str) -> Value {
 /// A client for a mock instance whose discovery has `ETag` "v1". Each fixture has its own
 /// token, because the protocol shares the limiter between clients of one token.
 async fn fixture() -> (MockServer, p::Client) {
+    fixture_with(false).await
+}
+
+async fn fixture_with(self_hosted: bool) -> (MockServer, p::Client) {
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -48,7 +53,11 @@ async fn fixture() -> (MockServer, p::Client) {
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("ETag", "\"v1\"")
-                .set_body_json(discovery(&server.uri())),
+                .set_body_json({
+                    let mut d = discovery(&server.uri());
+                    d["features"]["self_hosted"] = json!(self_hosted);
+                    d
+                }),
         )
         .mount(&server)
         .await;
@@ -87,7 +96,9 @@ async fn count(server: &MockServer, route: &str) -> usize {
 struct Running {
     events: UnboundedReceiver<Event>,
     wake: Arc<Notify>,
+    wake_experiments: Arc<AtomicBool>,
     window: Arc<AtomicBool>,
+    latest: LatestMap,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -97,11 +108,36 @@ impl Drop for Running {
     }
 }
 
+fn account() -> AccountKey {
+    AccountKey::new("https://fluxer.test", "1").unwrap()
+}
+
+/// The document the session was built with, read just now.
+fn fresh_seed(client: &p::Client) -> Latest {
+    Latest {
+        doc: client.instance().discovery().clone(),
+        etag: client.instance().etag().map(str::to_owned),
+        at: Instant::now(),
+    }
+}
+
 fn start(client: p::Client, scale: u32) -> Running {
+    let seed = fresh_seed(&client);
+    start_with(client, scale, LatestMap::default(), seed, true)
+}
+
+fn start_with(
+    client: p::Client,
+    scale: u32,
+    latest: LatestMap,
+    seed: Latest,
+    window_in_use: bool,
+) -> Running {
     let (tx, events) = futures::channel::mpsc::unbounded();
     let (internal, _) = tokio::sync::mpsc::unbounded_channel();
     let wake = Arc::new(Notify::new());
-    let window = Arc::new(AtomicBool::new(true));
+    let wake_experiments = Arc::new(AtomicBool::new(false));
+    let window = Arc::new(AtomicBool::new(window_in_use));
     let poller = Poller::new(
         client,
         Ui::new(tx),
@@ -109,12 +145,18 @@ fn start(client: p::Client, scale: u32) -> Running {
         1,
         wake.clone(),
         window.clone(),
+        wake_experiments.clone(),
+        account(),
+        latest.clone(),
+        seed,
     )
     .for_test(scale);
     Running {
         events,
         wake,
+        wake_experiments,
         window,
+        latest,
         task: tokio::spawn(poller.run()),
     }
 }
@@ -380,6 +422,192 @@ fn a_background_account_is_announced_from_its_own_document() {
         Ok(Event::Instance(Ev::Discovery(sent))) => assert_eq!(*sent, doc),
         _ => panic!("expected the document"),
     }
+}
+
+/// Switching back to an account must continue from the newest document it had, with its
+/// ETag, and never go back to the one its session was built with.
+#[tokio::test]
+async fn an_account_that_becomes_active_again_continues_from_its_newest_document() {
+    let (server, client) = fixture().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/experiments"))
+        .respond_with(ResponseTemplate::new(304))
+        .mount(&server)
+        .await;
+    server_discovery_script(&server).await;
+    // First stay as the active account: the document changes (v1 to v2 with a notice).
+    let mut first = start(client.clone(), 1_000_000);
+    let doc = loop {
+        if let Ev::Discovery(doc) = next_event(&mut first).await {
+            break doc;
+        }
+    };
+    assert_eq!(doc.notice().unwrap().message, "Planned maintenance");
+    let kept = first
+        .latest
+        .lock()
+        .unwrap()
+        .get(&account())
+        .cloned()
+        .unwrap();
+    assert_eq!(kept.etag.as_deref(), Some("\"v2\""));
+    assert_eq!(kept.doc.notice().unwrap().message, "Planned maintenance");
+    let latest = first.latest.clone();
+    drop(first);
+
+    // It sat in the background for ten minutes. Becoming active again starts from that
+    // newest document and revalidates it at once, with its own ETag.
+    let before = count(&server, "/.well-known/fluxer").await;
+    let seed = Latest {
+        at: Instant::now() - Duration::from_secs(600),
+        ..kept
+    };
+    let mut second = start_with(client, 1, latest, seed, true);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let tags: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.url.path() == "/.well-known/fluxer")
+        .skip(before)
+        .map(|r| {
+            r.headers
+                .get("if-none-match")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        tags,
+        vec!["\"v2\"".to_string()],
+        "one revalidation, with the newest ETag"
+    );
+    // A 304 reports nothing: the UI keeps the newest document.
+    assert!(tokio::time::timeout(Duration::from_millis(50), async {
+        loop {
+            if let Some(Event::Instance(Ev::Discovery(_))) = second.events.next().await {
+                break;
+            }
+        }
+    })
+    .await
+    .is_err());
+}
+
+/// A reconnect brings the discovery document and the status page forward, never the
+/// experiments; only the window coming back does. A window that starts unused waits.
+#[tokio::test]
+async fn only_the_window_coming_back_brings_the_experiments_forward() {
+    let (server, client) = fixture().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/experiments"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("ETag", "\"e1\"")
+                .set_body_json(experiments_body(300)),
+        )
+        .mount(&server)
+        .await;
+    let seed = fresh_seed(&client);
+    let run = start_with(client, 1, LatestMap::default(), seed, false);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        count(&server, "/api/v1/experiments").await,
+        0,
+        "a window that starts unused does not ask at once"
+    );
+    // A reconnect: not the experiments.
+    run.wake.notify_one();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(count(&server, "/api/v1/experiments").await, 0);
+    // The window comes back.
+    run.window.store(true, std::sync::atomic::Ordering::Relaxed);
+    run.wake_experiments
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    run.wake.notify_one();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(count(&server, "/api/v1/experiments").await, 1);
+}
+
+/// Only answers of 404 in a row count towards giving up: a 500 in between starts over.
+#[tokio::test]
+async fn any_other_answer_resets_the_streak_of_404() {
+    let (server, client) = fixture().await;
+    let route = "/api/v1/experiments";
+    for (status, times) in [(404u16, 1u64), (500, 1), (404, 2)] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({"code": "X"})))
+            .up_to_n_times(times)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(route))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("ETag", "\"e1\"")
+                .set_body_json(experiments_body(300)),
+        )
+        .mount(&server)
+        .await;
+    let mut run = start(client, 100_000);
+    // 404, 500, 404, 404 is four answers that are not 200 and only two 404 in a row: the
+    // polling goes on and reaches the document.
+    assert!(matches!(
+        next_event(&mut run).await,
+        Ev::Experiments(ExperimentState::Loaded(_))
+    ));
+}
+
+/// A self-hosted instance is read every five minutes while the window is in use, so an
+/// administrator's notice shows soon; an unused window asks nothing.
+#[tokio::test]
+async fn a_self_hosted_instance_is_read_often_only_while_the_window_is_in_use() {
+    let (server, client) = fixture_with(true).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/experiments"))
+        .respond_with(ResponseTemplate::new(304))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/fluxer"))
+        .respond_with(ResponseTemplate::new(304))
+        .mount(&server)
+        .await;
+    // A reading seen at an unused window's start-up is a minute old: due at once, but
+    // the window is not in use, so nothing is asked.
+    let seed = Latest {
+        at: Instant::now() - Duration::from_secs(600),
+        ..fresh_seed(&client)
+    };
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/.well-known/fluxer"))
+        .respond_with(ResponseTemplate::new(304))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/experiments"))
+        .respond_with(ResponseTemplate::new(304))
+        .mount(&server)
+        .await;
+    let idle = start_with(
+        client.clone(),
+        100_000,
+        LatestMap::default(),
+        seed.clone(),
+        false,
+    );
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(count(&server, "/.well-known/fluxer").await, 0);
+    drop(idle);
+    // In use: a read every few milliseconds at this scale (five minutes in real life).
+    let _busy = start_with(client, 100_000, LatestMap::default(), seed, true);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(count(&server, "/.well-known/fluxer").await >= 3);
 }
 
 mod status {

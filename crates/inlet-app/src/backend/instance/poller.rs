@@ -15,11 +15,17 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 
 use super::{
-    status_page, Ev, DISCOVERY_EVERY, DISCOVERY_MIN_GAP, DISCOVERY_RETRY, EXPERIMENTS_MIN_GAP,
-    HIDDEN_FACTOR,
+    status_page, Ev, Latest, LatestMap, DISCOVERY_EVERY, DISCOVERY_MIN_GAP, DISCOVERY_RETRY,
+    EXPERIMENTS_MIN_GAP, HIDDEN_FACTOR,
 };
+use crate::backend::accounts::AccountKey;
 use crate::backend::session::{Failure, FailureKind};
 use crate::backend::{Internal, Ui};
+
+/// How often the discovery document is read again on a self-hosted instance while the
+/// window has the focus, so an administrator's notice shows soon (Fluxer's client does
+/// the same: `InstanceNoticeState`).
+pub(super) const SELF_HOSTED_EVERY: Duration = Duration::from_secs(300);
 
 /// The poller of the active account.
 pub(super) struct Poller {
@@ -28,7 +34,12 @@ pub(super) struct Poller {
     internal: TokioSender<Internal>,
     gen: u64,
     wake: Arc<Notify>,
+    /// Set when the wake may also bring the experiments forward.
+    wake_experiments: Arc<AtomicBool>,
     window_active: Arc<AtomicBool>,
+    key: AccountKey,
+    latest: LatestMap,
+    seed: Latest,
     /// Draws the jitter (-1 to 1); a fixed one in the tests.
     jitter: fn() -> f64,
     /// Every wait is divided by this (1 in the app; large in the tests).
@@ -86,6 +97,7 @@ struct Experiments {
 }
 
 impl Poller {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         client: p::Client,
         events: Ui,
@@ -93,6 +105,10 @@ impl Poller {
         gen: u64,
         wake: Arc<Notify>,
         window_active: Arc<AtomicBool>,
+        wake_experiments: Arc<AtomicBool>,
+        key: AccountKey,
+        latest: LatestMap,
+        seed: Latest,
     ) -> Self {
         Poller {
             client,
@@ -100,7 +116,11 @@ impl Poller {
             internal,
             gen,
             wake,
+            wake_experiments,
             window_active,
+            key,
+            latest,
+            seed,
             jitter: super::unit,
             scale: 1,
         }
@@ -128,11 +148,45 @@ impl Poller {
         status_page::base_url(&b.status_page_url?)
     }
 
+    /// Notes the newest document, so a later activation of this account continues from it.
+    fn note(&self, doc: &p::Discovery, etag: &Option<String>, at: Instant) {
+        self.latest
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                self.key.clone(),
+                Latest {
+                    doc: doc.clone(),
+                    etag: etag.clone(),
+                    at,
+                },
+            );
+    }
+
     pub(super) async fn run(self) {
         let instance = self.client.instance().clone();
-        let mut disc_etag = instance.etag().map(str::to_owned);
+        // Where the account's discovery document stands: its newest copy, not the one the
+        // session was built with. One that is more than the minimum gap old is read again
+        // at once (with its ETag: usually a 304).
+        let mut doc = self.seed.doc.clone();
+        let mut disc_etag = self.seed.etag.clone();
+        let mut self_hosted = doc.instance_features().self_hosted;
         let mut disc_retry = DISCOVERY_RETRY;
-        let mut clocks = Clocks::new(Instant::now(), self.scaled(DISCOVERY_EVERY));
+        let start = Instant::now();
+        let every = |self_hosted: bool| {
+            self.scaled(if self_hosted {
+                SELF_HOSTED_EVERY
+            } else {
+                DISCOVERY_EVERY
+            })
+        };
+        let mut clocks = Clocks::new(start, every(self_hosted));
+        clocks.last_disc = self.seed.at;
+        clocks.disc_due = if start.saturating_duration_since(self.seed.at) >= DISCOVERY_MIN_GAP {
+            start
+        } else {
+            self.seed.at + every(self_hosted)
+        };
         let mut exp = Experiments {
             current: p::Experiments::default(),
             etag: None,
@@ -141,7 +195,15 @@ impl Poller {
             known: false,
             polling: true,
         };
-        let mut status_url = Self::status_page(instance.discovery());
+        // Started while the window is not in use: the first poll waits its turn, as in
+        // Fluxer's client.
+        if !self.window_active.load(Ordering::Relaxed) {
+            clocks.exp_due = start
+                + self.scaled(Duration::from_secs(
+                    exp.current.poll_interval_secs * HIDDEN_FACTOR,
+                ));
+        }
+        let mut status_url = Self::status_page(&doc);
         let mut status_http = status_url.as_ref().and_then(|_| status_page::client());
         let mut status_failures = 0u32;
         let mut shown_status = status_page::Status::default();
@@ -157,41 +219,56 @@ impl Poller {
             }
             tokio::select! {
                 () = tokio::time::sleep_until(next) => {}
-                () = self.wake.notified() => clocks.wake(Instant::now(), exp.polling, status_on),
+                () = self.wake.notified() => {
+                    // Only the window coming back brings the experiments forward.
+                    let experiments = self.wake_experiments.swap(false, Ordering::Relaxed);
+                    clocks.wake(Instant::now(), exp.polling && experiments, status_on);
+                }
             }
             let now = Instant::now();
             if now >= clocks.disc_due {
-                clocks.last_disc = now;
-                match instance.fetch_discovery(disc_etag.as_deref()).await {
-                    Ok(None) => {
-                        disc_retry = DISCOVERY_RETRY;
-                        clocks.disc_due = now + self.scaled(DISCOVERY_EVERY);
-                    }
-                    Ok(Some((doc, etag))) => {
-                        disc_retry = DISCOVERY_RETRY;
-                        clocks.disc_due = now + self.scaled(DISCOVERY_EVERY);
-                        disc_etag = etag;
-                        let url = Self::status_page(&doc);
-                        if url != status_url {
-                            // The instance moved or dropped its status page.
-                            status_http = url
-                                .as_ref()
-                                .and_then(|_| status_http.take().or_else(status_page::client));
-                            status_url = url;
-                            clocks.status_due = now;
-                            clocks.last_status = None;
-                            status_failures = 0;
-                            shown_status = status_page::Status::default();
+                if self_hosted && !self.window_active.load(Ordering::Relaxed) {
+                    // The quick refresh is for a window in use; asked again when it is.
+                    clocks.disc_due = now + every(true);
+                } else {
+                    clocks.last_disc = now;
+                    match instance.fetch_discovery(disc_etag.as_deref()).await {
+                        Ok(None) => {
+                            disc_retry = DISCOVERY_RETRY;
+                            clocks.disc_due = now + every(self_hosted);
+                            self.note(&doc, &disc_etag, now);
+                        }
+                        Ok(Some((fresh, etag))) => {
+                            disc_retry = DISCOVERY_RETRY;
+                            self_hosted = fresh.instance_features().self_hosted;
+                            clocks.disc_due = now + every(self_hosted);
+                            disc_etag = etag;
+                            doc = fresh;
+                            self.note(&doc, &disc_etag, now);
+                            let url = Self::status_page(&doc);
+                            if url != status_url {
+                                // The instance moved or dropped its status page.
+                                status_http = url
+                                    .as_ref()
+                                    .and_then(|_| status_http.take().or_else(status_page::client));
+                                status_url = url;
+                                clocks.status_due = now;
+                                clocks.last_status = None;
+                                status_failures = 0;
+                                shown_status = status_page::Status::default();
+                                let _ = self
+                                    .events
+                                    .unbounded_send(Ev::StatusPage(shown_status.clone()));
+                            }
                             let _ = self
                                 .events
-                                .unbounded_send(Ev::StatusPage(shown_status.clone()));
+                                .unbounded_send(Ev::Discovery(Box::new(doc.clone())));
                         }
-                        let _ = self.events.unbounded_send(Ev::Discovery(Box::new(doc)));
-                    }
-                    Err(err) => {
-                        log::warn!("discovery could not be read again: {err}");
-                        clocks.disc_due = now + self.scaled(disc_retry);
-                        disc_retry = (disc_retry * 2).min(Duration::from_secs(3600));
+                        Err(err) => {
+                            log::warn!("discovery could not be read again: {err}");
+                            clocks.disc_due = now + self.scaled(disc_retry);
+                            disc_retry = (disc_retry * 2).min(Duration::from_secs(3600));
+                        }
                     }
                 }
             }
@@ -262,7 +339,10 @@ impl Poller {
                 exp.failures = 0;
                 exp.not_found = 0;
             }
-            Ok(p::ExperimentsAnswer::Malformed) => exp.failures = 0,
+            Ok(p::ExperimentsAnswer::Malformed) => {
+                exp.failures = 0;
+                exp.not_found = 0;
+            }
             Ok(p::ExperimentsAnswer::NotFound) => {
                 exp.not_found += 1;
                 exp.failures += 1;
@@ -287,6 +367,8 @@ impl Poller {
                 }
                 log::warn!("the experiments could not be read: {}", failure.message);
                 exp.failures += 1;
+                // Only 404 in a row count towards giving up (as in Fluxer's client).
+                exp.not_found = 0;
             }
         }
         let hidden = !self.window_active.load(Ordering::Relaxed);

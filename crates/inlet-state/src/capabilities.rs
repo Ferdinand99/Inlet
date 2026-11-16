@@ -2,7 +2,7 @@
 //!
 //! Fluxer's own client asks its runtime config, the experiment assignments and
 //! the account's flags in many places and hides or locks what is off. Inlet asks
-//! one value instead: `caps.has(Cap::ChannelThreads)`. A capability is built from
+//! one value instead: `caps.has(Cap::Friends)`. A capability is built from
 //!
 //! - the instance's discovery document (`/.well-known/fluxer`): its features,
 //!   community policy and services ([`Capabilities::set_discovery`]),
@@ -15,10 +15,11 @@
 //!
 //! Until a discovery document is known, an instance flag has the value Fluxer's
 //! schema gives a flag that is missing (voice off, direct messages, friends and
-//! personal notes on). Until the first answer of `/experiments` arrives, only
-//! threads are assumed on, as before this module; an instance that never answers
-//! the route (404 three times) has none of them. A flag the document has with a
-//! value of the wrong type counts as missing.
+//! personal notes on). Until the first answer of `/experiments` arrives, and on an
+//! instance that never answers the route (404 three times), no experiment is on.
+//! Threads are not one of them for the client: they follow each guild's own
+//! `threads` list ([`crate::AccountState::threads_active`]), as in Fluxer. A flag
+//! the document has with a value of the wrong type counts as missing.
 //!
 //! The value is plain data and has no clock, so every flag can be switched on
 //! and off in a test.
@@ -32,23 +33,19 @@ use inlet_protocol::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Cap {
-    /// Threads and forums (`assignments.channel_threads`). Without it the routes answer 404.
-    ChannelThreads,
     /// Visiting a community without joining (`assignments.guild_visits`).
     GuildVisits,
     /// Peer-to-peer voice calls (`assignments.voice_p2p`).
     VoiceP2p,
-    /// The new premium page (`assignments.plutonium_page`).
-    PlutoniumPage,
-    /// The domain move reaches this account (`assignments.domain_migration`).
-    DomainMigration,
     /// Voice and video (`features.voice_enabled`).
     Voice,
-    /// A premium tier (`features.premium_enabled`).
+    /// Premium features show: not a self-hosted instance, or one with a premium tier
+    /// (Fluxer's `shouldShowPremiumFeatures`).
     Premium,
     /// Purchases through Stripe (`features.stripe_enabled`).
     Stripe,
-    /// The Explore directory (`features.discovery_enabled`).
+    /// The Explore directory: the instance is not one single community and has the
+    /// directory on (Fluxer's `isDiscoveryAvailable`).
     Explore,
     /// The instance sends email (`features.emails_enabled`).
     Email,
@@ -63,8 +60,6 @@ pub enum Cap {
     Friends,
     /// Personal notes (`community.personal_notes_enabled`).
     PersonalNotes,
-    /// Every account can create communities (`community.guild_create_access`).
-    GuildCreate,
     /// The GIF picker (`services.gif_enabled`).
     Gif,
     /// YouTube link previews (`services.youtube_enabled`).
@@ -75,12 +70,9 @@ pub enum Cap {
 
 impl Cap {
     /// Every capability, in declaration order.
-    pub const ALL: [Cap; 19] = [
-        Cap::ChannelThreads,
+    pub const ALL: [Cap; 15] = [
         Cap::GuildVisits,
         Cap::VoiceP2p,
-        Cap::PlutoniumPage,
-        Cap::DomainMigration,
         Cap::Voice,
         Cap::Premium,
         Cap::Stripe,
@@ -91,7 +83,6 @@ impl Cap {
         Cap::DirectMessages,
         Cap::Friends,
         Cap::PersonalNotes,
-        Cap::GuildCreate,
         Cap::Gif,
         Cap::YouTube,
         Cap::Bluesky,
@@ -99,21 +90,14 @@ impl Cap {
 
     /// Whether this capability comes from an experiment assignment.
     pub fn is_experiment(self) -> bool {
-        matches!(
-            self,
-            Cap::ChannelThreads
-                | Cap::GuildVisits
-                | Cap::VoiceP2p
-                | Cap::PlutoniumPage
-                | Cap::DomainMigration
-        )
+        matches!(self, Cap::GuildVisits | Cap::VoiceP2p)
     }
 }
 
 /// Where the account's experiment assignments stand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExperimentState {
-    /// Not asked yet, or the last asks failed: only threads are assumed on.
+    /// Not asked yet, or the last asks failed: no experiment is on.
     #[default]
     Pending,
     /// The instance answered.
@@ -368,9 +352,9 @@ impl Capabilities {
         let s = self.snapshot();
         match cap {
             Cap::Voice => s.features.voice_enabled,
-            Cap::Premium => s.features.premium_enabled,
+            Cap::Premium => !s.features.self_hosted || s.features.premium_enabled,
             Cap::Stripe => s.features.stripe_enabled,
-            Cap::Explore => s.features.discovery_enabled,
+            Cap::Explore => !s.community.single_community && s.features.discovery_enabled,
             Cap::Email => s.features.emails_enabled,
             Cap::EmailCodes => s.features.email_codes,
             Cap::SelfHosted => s.features.self_hosted,
@@ -379,33 +363,26 @@ impl Capabilities {
             Cap::DirectMessages => !s.community.direct_messages_disabled,
             Cap::Friends => !s.community.friends_disabled,
             Cap::PersonalNotes => s.community.personal_notes_enabled,
-            Cap::GuildCreate => s.community.guild_create_access,
             Cap::Gif => s.services.gif_enabled,
             Cap::YouTube => s.services.youtube_enabled,
             Cap::Bluesky => s.services.bluesky_enabled,
-            Cap::ChannelThreads
-            | Cap::GuildVisits
-            | Cap::VoiceP2p
-            | Cap::PlutoniumPage
-            | Cap::DomainMigration => false,
+            Cap::GuildVisits | Cap::VoiceP2p => false,
         }
     }
 
     fn experiment_on(&self, cap: Cap) -> bool {
-        match self.experiments {
-            ExperimentState::Pending => cap == Cap::ChannelThreads,
-            ExperimentState::Unavailable => false,
-            ExperimentState::Loaded(e) => {
-                let a = e.assignments;
-                match cap {
-                    Cap::ChannelThreads => a.channel_threads.is_some_and(|t| t.active),
-                    Cap::GuildVisits => a.guild_visits == Some(true),
-                    Cap::VoiceP2p => a.voice_p2p.is_some_and(|p| p.enabled),
-                    Cap::PlutoniumPage => a.plutonium_page == Some(true),
-                    Cap::DomainMigration => a.domain_migration == Some(true),
-                    _ => false,
-                }
-            }
+        // Not asked yet, or the instance has no route: no experiment is on. Threads and
+        // the premium page are not experiments for the client (Fluxer's never reads
+        // them; the server always sends them on): threads follow the guild's own
+        // `threads` list (`AccountState::threads_active`).
+        let ExperimentState::Loaded(e) = self.experiments else {
+            return false;
+        };
+        let a = e.assignments;
+        match cap {
+            Cap::GuildVisits => a.guild_visits == Some(true),
+            Cap::VoiceP2p => a.voice_p2p.is_some_and(|p| p.enabled),
+            _ => false,
         }
     }
 
@@ -442,21 +419,26 @@ impl Capabilities {
     }
 
     /// The domain move is switched on in the discovery document and reaches this
-    /// account. Fluxer shows its "moved" banner only then.
+    /// account. Inlet shows no banner for it: Fluxer's own desktop app never does (the
+    /// banner is for its installed web app), so this is only kept for later.
     pub fn domain_moved(&self) -> bool {
-        self.snapshot().domain_migration.enabled && self.has(Cap::DomainMigration)
+        let assigned = matches!(
+            self.experiments,
+            ExperimentState::Loaded(e) if e.assignments.domain_migration == Some(true)
+        );
+        self.snapshot().domain_migration.enabled && assigned
     }
 
     /// What the account's own flags ask the person to do.
     pub fn notices(&self, me: &CurrentUser) -> AccountNotices {
         let s = self.snapshot();
-        let confirm_email = s.features.emails_enabled
-            && !me.email_bounced()
-            && me.verification_need() == Some("confirm_email");
-        let email_bounced = s.features.emails_enabled && me.email_bounced();
+        // Fluxer's `needsEmailConfirmation`: emails on, and the account needs to confirm
+        // its address. A bounced address only changes the text of that banner.
+        let needs_confirm =
+            s.features.emails_enabled && me.verification_need() == Some("confirm_email");
         AccountNotices {
-            confirm_email,
-            email_bounced,
+            confirm_email: needs_confirm && !me.email_bounced(),
+            email_bounced: needs_confirm && me.email_bounced(),
             limited: me.account_limited(),
             terms: self.terms_update(me),
         }

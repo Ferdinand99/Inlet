@@ -3,6 +3,8 @@
 ## The connection
 
 banner-connection-lost = Connection lost. Reconnecting…
+banner-connection-issues = Connection issues?
+banner-view-status-page = View status page
 banner-try-again = Try again
 banner-switch-account = Switch account
 banner-view-incident = View incident details
@@ -50,14 +52,3 @@ terms-link-privacy = Privacy policy
 terms-agreement = By using { $product }, you agree to the updated terms.
 terms-agree = I agree to the updated terms
 terms-got-it = Got it
-
-## A new domain
-
-banner-domain-moved = { $product } has moved to { $host }. Add your account there to keep chatting.
-banner-show-me-how = Show me how
-moved-title = { $product } has a new address
-moved-intro = { $product } is now at { $host }. To keep using it in Inlet, add your account again with the new address.
-moved-step-add = Open the account switcher and choose Add an account.
-moved-step-address = Enter { $host } as the instance.
-moved-step-sign-in = Sign in, then sign out of the old account.
-moved-copy-address = Copy address

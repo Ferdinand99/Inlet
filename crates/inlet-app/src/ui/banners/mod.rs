@@ -14,19 +14,21 @@
 //! | Limited account | messaging is paused on the account | no |
 //! | Maintenance | the status page has running or planned maintenance | yes, per maintenance and stage |
 //! | Instance notice | the administrator's notice is live | yes, per text |
-//! | Domain moved | the instance moves to a new domain and reaches this account | yes, for 7 days |
 //!
 //! The capabilities live in each account's [`inlet_state::AccountState`]; the answers of
 //! the backend (`backend::instance`) are kept per account here until the state has them
 //! ([`Inlet::sync_instance_info`]), so a discovery document that arrives before READY, or
 //! for an account in the background, is not lost.
 //!
+//! Fluxer's "domain moved" banner is not here on purpose: it is for its installed web
+//! app, and Fluxer's own desktop app never shows it.
+//!
 //! Dismissals are kept in the `"banners"` section of `settings.json`, capped, so a notice
 //! stays away after a restart.
 
 mod view;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use gpui::{Context, EntityId};
 use inlet_protocol as p;
@@ -39,8 +41,6 @@ use crate::backend::instance::{status_page, Ev};
 
 /// How long the connection must be down before the banner shows.
 pub const CONNECTION_GRACE_MS: u64 = 3_000;
-/// How long a dismissed "domain moved" banner stays away.
-pub const DOMAIN_MOVED_DISMISS_MS: i64 = 7 * 24 * 3_600_000;
 /// Most dismissals remembered.
 const MAX_DISMISSED: usize = 200;
 /// Longest wait before the clock is looked at again for a notice's start or end.
@@ -62,8 +62,6 @@ pub enum Banner {
     Email,
     /// Messaging is paused on the account.
     AccountLimited,
-    /// The instance moved to a new domain.
-    DomainMoved,
 }
 
 impl Banner {
@@ -76,16 +74,12 @@ impl Banner {
             Banner::Email => -3.,
             Banner::InstanceNotice => -1.5,
             Banner::Maintenance => -1.,
-            Banner::DomainMoved => 3.,
         }
     }
 
     /// Whether the person can dismiss it.
     pub fn dismissible(self) -> bool {
-        matches!(
-            self,
-            Banner::Maintenance | Banner::InstanceNotice | Banner::DomainMoved
-        )
+        matches!(self, Banner::Maintenance | Banner::InstanceNotice)
     }
 }
 
@@ -117,8 +111,6 @@ pub struct Info {
 pub struct Prefs {
     /// Dismissed notices and maintenance, as `kind|instance|id`.
     pub dismissed: Vec<String>,
-    /// When the "domain moved" banner was dismissed, per instance (Unix milliseconds).
-    pub moved_dismissed_at: BTreeMap<String, i64>,
 }
 
 impl Prefs {
@@ -159,14 +151,15 @@ pub struct State {
     connection_seen: Option<(String, std::time::Instant)>,
     /// Re-renders after the grace time, or at the next start or end of a notice.
     timer: Option<(i64, gpui::Task<()>)>,
+    /// Counts the saves of the dismissals; only the newest is written, so two quick
+    /// dismissals never reach the file in the wrong order.
+    save_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// The terms window is open.
     pub terms_open: bool,
     /// Accepting the terms is on its way.
     pub terms_busy: bool,
     /// Why accepting the terms failed.
     pub terms_error: Option<String>,
-    /// The "domain moved" steps window is open.
-    pub steps_open: bool,
     /// Sending the verification email is on its way.
     pub verify_busy: bool,
     /// The demo's terms scene has been set up.
@@ -180,22 +173,11 @@ impl State {
         self.terms_open = false;
         self.terms_busy = false;
         self.terms_error = None;
-        self.steps_open = false;
         self.verify_busy = false;
     }
 
     fn prefs(&mut self) -> &mut Prefs {
         self.prefs.get_or_insert_with(Prefs::current)
-    }
-}
-
-/// The official instances' new domains (Fluxer's `DOMAIN_MIGRATION_SOURCE_TO_TARGET`),
-/// by the host of the instance's address or of its web app.
-pub fn moved_target(host: &str) -> Option<&'static str> {
-    match host.to_ascii_lowercase().as_str() {
-        "fluxer.app" | "web.fluxer.app" => Some("fluxer.com"),
-        "canary.fluxer.app" | "web.canary.fluxer.app" => Some("canary.fluxer.com"),
-        _ => None,
     }
 }
 
@@ -402,13 +384,7 @@ impl Inlet {
     }
 
     /// Dismisses a banner, and remembers it.
-    pub(crate) fn dismiss_banner(&mut self, banner: Banner, now_ms: i64, cx: &mut Context<Self>) {
-        let origin = self
-            .switcher
-            .active
-            .as_ref()
-            .map(|k| k.origin.to_string())
-            .unwrap_or_default();
+    pub(crate) fn dismiss_banner(&mut self, banner: Banner, cx: &mut Context<Self>) {
         let id = match banner {
             Banner::InstanceNotice => self
                 .account
@@ -420,13 +396,6 @@ impl Inlet {
                     .as_ref()
                     .map(|m| self.dismissal_id("maintenance", &format!("{}:{:?}", m.id, m.state)))
             }),
-            Banner::DomainMoved => {
-                self.banners
-                    .prefs()
-                    .moved_dismissed_at
-                    .insert(origin, now_ms);
-                None
-            }
             _ => return,
         };
         if let Some(id) = id {
@@ -438,12 +407,18 @@ impl Inlet {
 
     fn save_banner_prefs(&mut self, cx: &mut Context<Self>) {
         let prefs = self.banners.prefs().clone();
+        let seq = self.banners.save_seq.clone();
+        let mine = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         // Saved off the UI thread; a failed write only loses the dismissal.
         if cfg!(test) || (cfg!(feature = "demo") && std::env::var_os("INLET_DEMO").is_some()) {
             return;
         }
         cx.background_executor()
             .spawn(async move {
+                // A newer save has been asked for meanwhile: it writes the whole list.
+                if seq.load(std::sync::atomic::Ordering::SeqCst) != mine {
+                    return;
+                }
                 if let Some(path) = crate::backend::platform::prefs::settings_path() {
                     if let Err(e) =
                         crate::backend::platform::prefs::save_section(&path, SETTINGS_KEY, &prefs)
@@ -509,13 +484,9 @@ impl Inlet {
             return Vec::new();
         };
         let now = now_ms();
-        let (notices, caps, origin_host) = {
+        let (notices, caps) = {
             let state = account.read(cx);
-            (
-                state.notices(),
-                state.capabilities().clone(),
-                self.switcher.active.as_ref().map(|k| k.origin.to_string()),
-            )
+            (state.notices(), state.capabilities().clone())
         };
         let mut out = Vec::new();
         if self.connection_lost(cx) {
@@ -564,23 +535,6 @@ impl Inlet {
                 out.push(Banner::Maintenance);
             }
         }
-        if let Some(origin) = origin_host {
-            let host = url::Url::parse(&origin)
-                .ok()
-                .and_then(|u| u.host_str().map(str::to_owned))
-                .unwrap_or_default();
-            if caps.domain_moved() && moved_target(&host).is_some() {
-                let dismissed = self
-                    .banners
-                    .prefs()
-                    .moved_dismissed_at
-                    .get(&origin)
-                    .is_some_and(|at| now - *at < DOMAIN_MOVED_DISMISS_MS);
-                if !dismissed {
-                    out.push(Banner::DomainMoved);
-                }
-            }
-        }
         out
     }
 
@@ -590,8 +544,26 @@ impl Inlet {
             return Vec::new();
         }
         self.sync_instance_info(cx);
+        // The terms window closes by itself when the account has nothing left to take in
+        // (accepted elsewhere, or another account is on screen), so it never holds the
+        // keyboard with nothing drawn.
+        if self.banners.terms_open {
+            let behind = self
+                .account
+                .as_ref()
+                .is_some_and(|a| a.read(cx).notices().terms != inlet_state::TermsUpdate::None);
+            if !behind {
+                self.banners.terms_open = false;
+            }
+        }
         let applying = self.applying_banners(cx);
         select(&applying)
+    }
+
+    /// Whether the terms window is open: a layer of its own (it has the keyboard and
+    /// Escape closes it).
+    pub(crate) fn banner_window_open(&self) -> bool {
+        self.screen == Screen::Main && self.banners.terms_open
     }
 
     /// Sends the verification email again.

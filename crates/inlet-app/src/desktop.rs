@@ -930,6 +930,7 @@ impl Inlet {
         OpenLayers {
             link_prompt: self.overlays.link_prompt.is_some(),
             link_confirm: self.overlays.pending_link.is_some(),
+            banner_window: self.banner_window_open(),
             quick_switcher: self.quick_switcher_open(),
             social_confirm: main && self.social.confirm.is_some(),
             dm_menu: main && self.social.dm_menu.is_some(),
@@ -1046,6 +1047,7 @@ impl Inlet {
         match self.open_layers().topmost() {
             Some(Layer::LinkPrompt) => self.overlays.link_prompt = None,
             Some(Layer::LinkConfirm) => self.overlays.pending_link = None,
+            Some(Layer::BannerWindow) => self.banners.terms_open = false,
             Some(layer @ (Layer::QuickSwitcher | Layer::Search)) => self.close_search_layer(layer),
             Some(Layer::SocialConfirm) => self.social.confirm = None,
             Some(Layer::DmMenu) => self.social.dm_menu = None,
@@ -1157,6 +1159,8 @@ impl Inlet {
 pub(crate) enum Layer {
     LinkPrompt,
     LinkConfirm,
+    /// The updated-terms window opened from a banner.
+    BannerWindow,
     /// The quick switcher (Ctrl+K).
     QuickSwitcher,
     /// A question before removing a friend, blocking or leaving a group.
@@ -1198,6 +1202,7 @@ pub(crate) enum Layer {
 pub(crate) struct OpenLayers {
     pub link_prompt: bool,
     pub link_confirm: bool,
+    pub banner_window: bool,
     pub quick_switcher: bool,
     pub social_confirm: bool,
     pub dm_menu: bool,
@@ -1223,6 +1228,8 @@ impl OpenLayers {
             Some(Layer::LinkPrompt)
         } else if self.link_confirm {
             Some(Layer::LinkConfirm)
+        } else if self.banner_window {
+            Some(Layer::BannerWindow)
         } else if self.quick_switcher {
             Some(Layer::QuickSwitcher)
         } else if self.social_confirm {
@@ -1268,6 +1275,7 @@ impl OpenLayers {
         match self.topmost() {
             Some(Layer::LinkPrompt) => self.link_prompt = false,
             Some(Layer::LinkConfirm) => self.link_confirm = false,
+            Some(Layer::BannerWindow) => self.banner_window = false,
             Some(Layer::QuickSwitcher) => self.quick_switcher = false,
             Some(Layer::SocialConfirm) => self.social_confirm = false,
             Some(Layer::DmMenu) => self.dm_menu = false,
@@ -1433,6 +1441,28 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         assert_eq!(rem(cx), BASE_REM);
+    }
+
+    /// The updated-terms window is a layer: it has the keyboard, Escape closes it, and
+    /// a link confirmation opened from it lies over it and closes first.
+    #[test]
+    fn the_terms_window_is_a_layer_under_the_link_confirmation() {
+        let alone = OpenLayers {
+            banner_window: true,
+            ..OpenLayers::default()
+        };
+        assert_eq!(alone.topmost(), Some(Layer::BannerWindow));
+        assert_eq!(alone.after_escape().topmost(), None);
+        let with_link = OpenLayers {
+            banner_window: true,
+            link_confirm: true,
+            ..OpenLayers::default()
+        };
+        assert_eq!(with_link.topmost(), Some(Layer::LinkConfirm));
+        assert_eq!(
+            with_link.after_escape().topmost(),
+            Some(Layer::BannerWindow)
+        );
     }
 
     /// Escape with a masked-link confirmation over the image viewer closes the
@@ -1647,6 +1677,7 @@ mod tests {
         let mut layers = OpenLayers {
             link_prompt: true,
             link_confirm: true,
+            banner_window: true,
             quick_switcher: true,
             social_confirm: true,
             dm_menu: true,
@@ -1675,6 +1706,7 @@ mod tests {
             [
                 Layer::LinkPrompt,
                 Layer::LinkConfirm,
+                Layer::BannerWindow,
                 Layer::QuickSwitcher,
                 Layer::SocialConfirm,
                 Layer::DmMenu,

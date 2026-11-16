@@ -10,6 +10,17 @@
 //! and an answer larger than [`MAX_BYTES`] is dropped. The text of the answer is cut
 //! before it is shown. A page that is not an Instatus page (an error that is not a
 //! passing one, or a document of another shape) is given up for good.
+//!
+//! This is a request to a third party: while the window has the focus, the person's
+//! address goes to a host the instance names every minute or so. Fluxer's own client
+//! does the same from the browser, and it is not the case of a link posted in a chat
+//! (the media proxy rule), but it is worth knowing.
+//!
+//! Known limit: the host is a name, and the name may resolve to an address on the
+//! person's network. Only a fixed path (`summary.json`, `components.json`) is asked, no
+//! credential is sent and the answer is dropped unless it is an Instatus document, but a
+//! resolver that refuses loopback, private, link-local and CGNAT addresses would close it
+//! (about 30 lines with `reqwest::dns::Resolve`); not done yet.
 
 use std::time::Duration;
 
@@ -247,6 +258,13 @@ pub enum Fetched {
     Unsupported,
 }
 
+/// Whether a redirect is followed: at most three hops, and every hop passes the checks
+/// of the first address ([`base_url`]), so a status page cannot send the client on to an
+/// address literal, `localhost` or a name of the local network.
+pub fn redirect_allowed(previous_hops: usize, to: &Url) -> bool {
+    previous_hops < 3 && base_url(to.as_str()).is_some()
+}
+
 /// The HTTP client for status pages: no cookies, https only through redirects, a short
 /// timeout.
 pub fn client() -> Option<reqwest::Client> {
@@ -258,10 +276,10 @@ pub fn client() -> Option<reqwest::Client> {
         .timeout(TIMEOUT)
         .connect_timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 3 || attempt.url().scheme() != "https" {
-                attempt.stop()
-            } else {
+            if redirect_allowed(attempt.previous().len(), attempt.url()) {
                 attempt.follow()
+            } else {
+                attempt.stop()
             }
         }))
         .build()
@@ -419,6 +437,30 @@ mod tests {
         }
         let u = base_url("https://status.example.org/p/?q=1#f").unwrap();
         assert_eq!(u.as_str(), "https://status.example.org/p");
+    }
+
+    #[test]
+    fn a_redirect_is_followed_only_to_an_address_the_first_hop_could_have_been() {
+        let url = |s: &str| Url::parse(s).unwrap();
+        assert!(redirect_allowed(
+            0,
+            &url("https://status.example.org/other/path?x=1")
+        ));
+        assert!(redirect_allowed(2, &url("https://eu.status.example.org/")));
+        assert!(!redirect_allowed(3, &url("https://status.example.org/")));
+        for to in [
+            "http://status.example.org/",
+            "https://127.0.0.1/summary.json",
+            "https://192.168.1.1/any?x",
+            "https://[::1]/",
+            "https://localhost/",
+            "https://nas.local/",
+            "https://printer/",
+            "https://status.example.org:8443/",
+            "https://user:pw@status.example.org/",
+        ] {
+            assert!(!redirect_allowed(0, &url(to)), "{to}");
+        }
     }
 
     #[test]

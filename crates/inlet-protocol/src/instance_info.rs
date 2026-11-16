@@ -125,13 +125,16 @@ pub struct InstanceFeatures {
 /// `community`: the instance's policy for conversations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InstanceCommunity {
+    /// The instance is one community every account joins (Explore is then off).
+    pub single_community: bool,
     /// Direct messages are off instance-wide.
     pub direct_messages_disabled: bool,
     /// Friend requests are off. Missing means `direct_messages_disabled` decides.
     pub friends_disabled: bool,
     /// People can use personal notes. Missing means yes.
     pub personal_notes_enabled: bool,
-    /// Every account can create communities.
+    /// Every account can create communities. Informational: Fluxer's client never reads it,
+    /// "create" stays visible and the server decides.
     pub guild_create_access: bool,
 }
 
@@ -243,6 +246,7 @@ impl Discovery {
         let f = |k: &str| flag(c.and_then(|c| c.get(k)));
         let direct_messages_disabled = f("direct_messages_disabled").unwrap_or(false);
         InstanceCommunity {
+            single_community: f("single_community").unwrap_or(false),
             direct_messages_disabled,
             friends_disabled: f("friends_disabled").unwrap_or(direct_messages_disabled),
             personal_notes_enabled: f("personal_notes_enabled").unwrap_or(true),

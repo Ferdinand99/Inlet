@@ -69,11 +69,7 @@ impl Render for Inlet {
             Screen::Main => self.render_main(cx).into_any_element(),
         };
         let overlays = self.render_overlays(cx);
-        let banner_windows = self.render_banner_windows(window, cx);
-        root.child(content)
-            .children(overlays)
-            .children(banner_windows)
-            .into_any_element()
+        root.child(content).children(overlays).into_any_element()
     }
 }
 
