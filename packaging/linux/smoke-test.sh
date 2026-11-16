@@ -44,7 +44,7 @@ trap 'rm -rf "$list"' EXIT
 (cd "$list" && "$appimage" --appimage-extract >/dev/null)
 root="$list/squashfs-root"
 for f in no.opland.inlet.desktop no.opland.inlet.png AppRun usr/bin/inlet usr/bin/UpdateNix \
-         usr/share/doc/inlet/LICENSE usr/share/icons/hicolor/256x256/apps/no.opland.inlet.png; do
+         usr/share/doc/inlet/LICENSE usr/share/doc/inlet/THIRD-PARTY-NOTICES usr/share/icons/hicolor/256x256/apps/no.opland.inlet.png; do
   test -e "$root/$f" || { echo "error: the AppImage has no $f" >&2; exit 1; }
 done
 grep -qx 'MimeType=x-scheme-handler/inlet;' "$root/no.opland.inlet.desktop"

@@ -33,6 +33,16 @@ The binary answers `--version` (prints `inlet <version>`) and the installer's `-
 
 The packages are laid out for Velopack auto-update, but nothing in the app checks for updates yet. `build-packages.sh` also writes a `velopack/` folder next to the packages in the build artifact (`inlet-windows-x86_64-packages`, `inlet-linux-x86_64`). It holds the full package (`*-full.nupkg`) and the release feed (`releases.<channel>.json`). Publishing an update feed means keeping those files with each release and passing the previous ones to `vpk` as input; the package layout does not change.
 
-### Deep links
+### Running the AppImage
 
-The app registers `inlet://` itself when it starts (`crates/inlet-platform/src/deep_link.rs`). The desktop entry also declares the scheme so that tools that integrate AppImages register it.
+The AppImage uses the standard AppImage runtime, which needs FUSE 2. Ubuntu 24.04 does not install it by default: run `sudo apt install libfuse2t64` (older releases: `libfuse2`), or start the image with `./inlet-<version>-linux-x86_64.AppImage --appimage-extract-and-run`, which needs no FUSE. The CI smoke test uses the second form.
+
+### Deep links and login item
+
+The app registers `inlet://` and its login item itself when it starts (`crates/inlet-platform/src/deep_link.rs`, `autostart.rs`). Inside an AppImage the running executable is in a temporary mount, so both register the `.AppImage` file instead, taken from the `APPIMAGE` variable the AppImage runtime sets (`launch_path.rs`). The desktop entry also declares the scheme so that tools that integrate AppImages register it.
+
+On Windows the uninstaller removes the install folder, the shortcut and the uninstall entry, but not the `inlet://` keys under `HKCUSoftwareClasses` that the app wrote itself; they point at a deleted file. Removing them belongs in the Velopack uninstall hook, which comes with the auto-update work.
+
+### Taskbar identity
+
+The Start menu shortcut carries the AppUserModelID `no.opland.inlet` (`--aumid`), the same id the running app sets, so notifications and taskbar grouping use one identity.

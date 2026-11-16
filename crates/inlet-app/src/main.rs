@@ -8,6 +8,8 @@
 // Release builds on Windows are GUI apps: no console window next to Inlet.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::ffi::OsStr;
+
 /// What to do instead of starting the app, for the given first command-line argument.
 #[derive(Debug, PartialEq, Eq)]
 enum EarlyExit {
@@ -19,10 +21,16 @@ enum EarlyExit {
     InstallerHook,
 }
 
-fn early_exit(first_arg: Option<&str>) -> Option<EarlyExit> {
-    match first_arg? {
+/// Only these exact names count. Any other argument, including other `--veloapp-*`
+/// ones such as the first-run marker, starts the app as usual, and so does an argument
+/// that is not valid Unicode (it cannot be one of them).
+fn early_exit(first_arg: Option<&OsStr>) -> Option<EarlyExit> {
+    match first_arg?.to_str()? {
         "--version" | "-V" => Some(EarlyExit::Version),
-        arg if arg.starts_with("--veloapp-") => Some(EarlyExit::InstallerHook),
+        "--veloapp-install"
+        | "--veloapp-updated"
+        | "--veloapp-obsolete"
+        | "--veloapp-uninstall" => Some(EarlyExit::InstallerHook),
         _ => None,
     }
 }
@@ -32,7 +40,8 @@ fn early_exit(first_arg: Option<&str>) -> Option<EarlyExit> {
 /// The Windows release build is a GUI program, which has no console of its own. When it
 /// is started from a terminal without redirected output it has no standard output at
 /// all, so the line goes to the terminal that started it (the parent's console). When
-/// the output is redirected to a pipe or a file, the redirection is used as usual.
+/// the output is redirected to a pipe or a file, the redirection is used as usual. A
+/// closed pipe is not an error worth a panic.
 #[cfg(windows)]
 fn print_line(line: &str) {
     use std::io::Write;
@@ -53,16 +62,19 @@ fn print_line(line: &str) {
         }
         return;
     }
-    println!("{line}");
+    let _ = writeln!(std::io::stdout(), "{line}");
 }
 
+/// Prints one line to standard output; a closed pipe is not an error worth a panic.
 #[cfg(not(windows))]
 fn print_line(line: &str) {
-    println!("{line}");
+    use std::io::Write;
+
+    let _ = writeln!(std::io::stdout(), "{line}");
 }
 
 fn main() {
-    match early_exit(std::env::args().nth(1).as_deref()) {
+    match early_exit(std::env::args_os().nth(1).as_deref()) {
         Some(EarlyExit::Version) => print_line(&format!("inlet {}", env!("CARGO_PKG_VERSION"))),
         Some(EarlyExit::InstallerHook) => {}
         None => inlet::run(),
@@ -72,11 +84,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{early_exit, EarlyExit};
+    use std::ffi::OsStr;
+
+    fn exit_for(arg: &str) -> Option<EarlyExit> {
+        early_exit(Some(OsStr::new(arg)))
+    }
 
     #[test]
     fn version_flags_print_the_version() {
-        assert_eq!(early_exit(Some("--version")), Some(EarlyExit::Version));
-        assert_eq!(early_exit(Some("-V")), Some(EarlyExit::Version));
+        assert_eq!(exit_for("--version"), Some(EarlyExit::Version));
+        assert_eq!(exit_for("-V"), Some(EarlyExit::Version));
     }
 
     #[test]
@@ -87,15 +104,28 @@ mod tests {
             "--veloapp-obsolete",
             "--veloapp-uninstall",
         ] {
-            assert_eq!(early_exit(Some(hook)), Some(EarlyExit::InstallerHook));
+            assert_eq!(exit_for(hook), Some(EarlyExit::InstallerHook));
         }
     }
 
     #[test]
     fn everything_else_starts_the_app() {
         assert_eq!(early_exit(None), None);
-        assert_eq!(early_exit(Some("inlet://invite/abc")), None);
-        assert_eq!(early_exit(Some("--url")), None);
-        assert_eq!(early_exit(Some("--versions")), None);
+        assert_eq!(exit_for("inlet://invite/abc"), None);
+        assert_eq!(exit_for("--url"), None);
+        assert_eq!(exit_for("--versions"), None);
+        assert_eq!(exit_for(""), None);
+        // Other Velopack arguments are not hooks: the app starts normally.
+        assert_eq!(exit_for("--veloapp-firstrun"), None);
+        assert_eq!(exit_for("--veloapp-"), None);
+        assert_eq!(exit_for("--veloapp-install-now"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_argument_that_is_not_unicode_starts_the_app() {
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(early_exit(Some(OsStr::from_bytes(b"--version\xff"))), None);
+        assert_eq!(early_exit(Some(OsStr::from_bytes(b"\xff"))), None);
     }
 }

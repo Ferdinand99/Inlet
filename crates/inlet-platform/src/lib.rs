@@ -27,6 +27,7 @@ mod events;
 mod icon;
 mod idle;
 pub mod jump_list;
+mod launch_path;
 #[cfg(target_os = "linux")]
 mod linux_bus;
 mod motion;
@@ -49,6 +50,7 @@ pub use error::{Error, Result};
 pub use events::{events, PlatformEvent};
 pub use icon::Icon;
 pub use idle::idle_time;
+pub use launch_path::launch_exe;
 pub use motion::reduce_motion;
 pub use notify::{
     clean_text, dismiss, escape_markup, notify, Notification, Preview, BODY_MAX_GRAPHEMES,

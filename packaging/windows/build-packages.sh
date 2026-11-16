@@ -69,7 +69,11 @@ cp "$binary" "$stage/inlet.exe"
 cp "$root/LICENSE" "$stage/LICENSE"
 cp "$root/THIRD-PARTY-NOTICES" "$stage/THIRD-PARTY-NOTICES"
 
+# --runtime: the binary is x86_64 only; without it vpk warns and guesses.
 # --shortcuts: the Start menu only, no desktop shortcut.
+# --aumid: the shortcut carries the same AppUserModelID as the running app (see
+#   inlet_platform::APP_ID), so notifications and taskbar grouping match; Velopack's
+#   default would be "velopack.no.opland.inlet".
 # No signing options: the files are not code-signed yet.
 "$root/packaging/velopack/vpk.sh" pack \
   --packId no.opland.inlet \
@@ -79,7 +83,9 @@ cp "$root/THIRD-PARTY-NOTICES" "$stage/THIRD-PARTY-NOTICES"
   --packDir "$(native "$stage")" \
   --mainExe inlet.exe \
   --icon "$(native "$root/assets/brand/windows/inlet.ico")" \
+  --runtime win-x64 \
   --shortcuts StartMenuRoot \
+  --aumid no.opland.inlet \
   --outputDir "$(native "$feed")"
 
 ls -l "$feed" >&2

@@ -50,6 +50,9 @@ if ($install.ExitCode -ne 0) { Fail "Setup exited with code $($install.ExitCode)
 
 if (-not (Test-Path $exe)) { Fail "$exe was not installed" }
 if (-not (Test-Path $update)) { Fail "$update (the updater) was not installed" }
+foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES')) {
+    if (-not (Test-Path (Join-Path $current $name))) { Fail "$name was not installed next to inlet.exe" }
+}
 if (-not (Test-Path $uninstallKey)) { Fail "no uninstall entry at $uninstallKey" }
 if (-not (Get-InletShortcuts)) { Fail "no Inlet shortcut under $programs" }
 
