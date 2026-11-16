@@ -40,3 +40,13 @@ keys-escape = Esc
 
 settings-keybinds-title = Keyboard shortcuts
 settings-keybinds-note = These are Fluxer's default shortcuts. Choosing your own keys comes later.
+
+keys-mention-previous = Previous channel with a mention
+keys-mention-next = Next channel with a mention
+keys-oldest-unread = Jump to the oldest unread message
+keys-search = Search messages
+keys-member-list = Show or hide the member list
+keys-account-switcher = Switch account
+keys-new-direct-message = New direct message or group
+keys-or = or
+keys-tab = Tab

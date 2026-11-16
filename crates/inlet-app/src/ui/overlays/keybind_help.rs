@@ -21,27 +21,50 @@ pub const WIDTH: f32 = 560.;
 /// list scrolls.
 pub const MAX_HEIGHT: f32 = 640.;
 
-/// The key caps of one shortcut.
-fn caps(keys: Vec<String>) -> AnyElement {
+/// The key caps of one shortcut, and after "or" those of its second key.
+fn caps(keys: Vec<String>, also: Option<Vec<String>>) -> AnyElement {
+    let one = |keys: Vec<String>| {
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .gap(px(4.))
+            .children(keys.into_iter().map(|key| {
+                div()
+                    .min_w(px(24.))
+                    .h(px(24.))
+                    .px(px(6.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .bg(theme::bg_app())
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme::text_secondary())
+                    .child(key)
+            }))
+    };
     div()
         .flex_none()
         .flex()
         .flex_row()
-        .gap(px(4.))
-        .children(keys.into_iter().map(|key| {
+        .items_center()
+        .gap(px(6.))
+        .child(one(keys))
+        .children(also.map(|also| {
             div()
-                .min_w(px(24.))
-                .h(px(24.))
-                .px(px(6.))
                 .flex()
+                .flex_row()
                 .items_center()
-                .justify_center()
-                .rounded(px(4.))
-                .bg(theme::bg_app())
-                .text_size(px(12.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme::text_secondary())
-                .child(key)
+                .gap(px(6.))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(theme::text_muted())
+                        .child(t!("keys-or")),
+                )
+                .child(one(also))
         }))
         .into_any_element()
 }
@@ -81,7 +104,7 @@ pub fn list(rows: Vec<Row>) -> Vec<AnyElement> {
                             .text_color(theme::text_strong())
                             .child(row.label.clone()),
                     )
-                    .child(caps(row.keys.clone()))
+                    .child(caps(row.keys.clone(), row.also.clone()))
                     .into_any_element(),
             );
         }

@@ -943,7 +943,7 @@ impl Inlet {
             switcher: self.switcher_layer_open(),
             panel: self.inbox.open.is_some(),
             settings: self.settings.view.is_some(),
-            keybind_help: self.overlays.keybind_help,
+            keybind_help: self.keybind_help_open(),
             picker: self.composer.pickers.is_open(),
             viewer: self.media.viewer.is_some(),
             search: self.search_panel_open(),

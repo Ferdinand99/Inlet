@@ -19,13 +19,18 @@
 //!
 //! Own keys come later: [`Shortcut::keys`] is where they will replace the defaults.
 
-use gpui::{actions, Action, App, Context, InteractiveElement, KeyBinding, Window};
+use gpui::{
+    actions, Action, App, Context, Entity, Focusable, InteractiveElement, KeyBinding, Window,
+};
 use inlet_state::ChannelId;
 
 use crate::app::{Inlet, Screen};
 use crate::desktop::Layer;
+use crate::ui::chat::messages::Row as MessageRow;
+use crate::ui::composer::editor::ComposerView;
 use crate::ui::inbox::Panel;
 use crate::ui::sidebar::dm_list::dm_rows_of;
+use crate::ui::social::group_dm::Mode;
 
 actions!(
     inlet_keys,
@@ -41,7 +46,15 @@ actions!(
         UploadFile,
         ScrollPageUp,
         ScrollPageDown,
-        ShowKeybindHelp
+        ShowKeybindHelp,
+        PreviousMentionChannel,
+        NextMentionChannel,
+        OpenSearch,
+        OpenSettings,
+        ToggleMemberList,
+        ToggleAccountSwitcher,
+        NewDirectMessage,
+        JumpToOldestUnread
     ]
 );
 
@@ -102,6 +115,44 @@ const HELP: Keys = Keys {
     mac: "cmd-/",
     other: "ctrl-/",
 };
+/// Fluxer's other key for the list, for layouts where the slash needs Shift.
+const HELP_ALSO: Keys = Keys {
+    mac: "cmd-.",
+    other: "ctrl-.",
+};
+const MENTION_PREVIOUS: Keys = Keys {
+    mac: "cmd-alt-shift-up",
+    other: "ctrl-alt-shift-up",
+};
+const MENTION_NEXT: Keys = Keys {
+    mac: "cmd-alt-shift-down",
+    other: "ctrl-alt-shift-down",
+};
+/// Fluxer also steps through the servers with Ctrl+Tab (Control on macOS too).
+const SERVER_PREVIOUS_ALSO: Keys = Keys::same("ctrl-shift-tab");
+const SERVER_NEXT_ALSO: Keys = Keys::same("ctrl-tab");
+const SEARCH: Keys = Keys {
+    mac: "cmd-f",
+    other: "ctrl-f",
+};
+/// Bound, but not in the list: Fluxer hides it there too.
+const SETTINGS: Keys = Keys {
+    mac: "cmd-,",
+    other: "ctrl-,",
+};
+const MEMBER_LIST: Keys = Keys {
+    mac: "cmd-u",
+    other: "ctrl-u",
+};
+const ACCOUNT_SWITCHER: Keys = Keys {
+    mac: "cmd-shift-o",
+    other: "ctrl-shift-o",
+};
+const NEW_DIRECT_MESSAGE: Keys = Keys {
+    mac: "cmd-shift-t",
+    other: "ctrl-shift-t",
+};
+const OLDEST_UNREAD: Keys = Keys::same("shift-pageup");
 /// Keys whose binding is made by another domain.
 const QUICK_SWITCHER: Keys = Keys {
     mac: "cmd-k",
@@ -152,6 +203,8 @@ pub struct Shortcut {
     pub group: Group,
     /// The default keys.
     pub keys: Keys,
+    /// A second key that does the same, where Fluxer has one.
+    pub also: Option<Keys>,
     /// The name of the gpui action the keys run (the tests check it is bound).
     #[cfg_attr(not(test), allow(dead_code))]
     pub action: &'static str,
@@ -177,6 +230,7 @@ pub fn shortcuts() -> Vec<Shortcut> {
                 id: $id,
                 group: Group::$group,
                 keys: $keys,
+                also: None,
                 action: action_name!($action),
                 label: $label,
             }
@@ -224,16 +278,39 @@ pub fn shortcuts() -> Vec<Shortcut> {
             SERVER_PREVIOUS,
             PreviousServer,
             || t!("keys-server-previous")
-        ),
+        )
+        .with_also(SERVER_PREVIOUS_ALSO),
         shortcut!("server-next", Navigation, SERVER_NEXT, NextServer, || t!(
             "keys-server-next"
-        )),
+        ))
+        .with_also(SERVER_NEXT_ALSO),
         shortcut!("scroll-up", Navigation, PAGE_UP, ScrollPageUp, || t!(
             "keys-scroll-up"
         )),
         shortcut!("scroll-down", Navigation, PAGE_DOWN, ScrollPageDown, || t!(
             "keys-scroll-down"
         )),
+        shortcut!(
+            "mention-previous",
+            Navigation,
+            MENTION_PREVIOUS,
+            PreviousMentionChannel,
+            || t!("keys-mention-previous")
+        ),
+        shortcut!(
+            "mention-next",
+            Navigation,
+            MENTION_NEXT,
+            NextMentionChannel,
+            || t!("keys-mention-next")
+        ),
+        shortcut!(
+            "oldest-unread",
+            Navigation,
+            OLDEST_UNREAD,
+            JumpToOldestUnread,
+            || t!("keys-oldest-unread")
+        ),
         shortcut!(
             "mark-channel-read",
             Messages,
@@ -275,8 +352,33 @@ pub fn shortcuts() -> Vec<Shortcut> {
         ),
         shortcut!("inbox", Panels, INBOX, ToggleInbox, || t!("keys-inbox")),
         shortcut!("pins", Panels, PINS, TogglePins, || t!("keys-pins")),
-        shortcut!("help", Panels, HELP, ShowKeybindHelp, || t!("keys-help")),
+        shortcut!("search", Panels, SEARCH, OpenSearch, || t!("keys-search")),
+        shortcut!("member-list", Panels, MEMBER_LIST, ToggleMemberList, || t!(
+            "keys-member-list"
+        )),
+        shortcut!(
+            "account-switcher",
+            Panels,
+            ACCOUNT_SWITCHER,
+            ToggleAccountSwitcher,
+            || t!("keys-account-switcher")
+        ),
+        shortcut!(
+            "new-direct-message",
+            Panels,
+            NEW_DIRECT_MESSAGE,
+            NewDirectMessage,
+            || t!("keys-new-direct-message")
+        ),
+        shortcut!("help", Panels, HELP, ShowKeybindHelp, || t!("keys-help")).with_also(HELP_ALSO),
     ]
+}
+
+impl Shortcut {
+    fn with_also(mut self, also: Keys) -> Shortcut {
+        self.also = Some(also);
+        self
+    }
 }
 
 /// One line of the help: a shortcut as a person reads it.
@@ -285,6 +387,8 @@ pub struct Row {
     pub label: String,
     /// The keys one by one as the platform writes them: `["Ctrl", "Alt", "↑"]`.
     pub keys: Vec<String>,
+    /// The second key that does the same, if there is one.
+    pub also: Option<Vec<String>>,
 }
 
 /// The rows of the help and of the settings, in the order of [`shortcuts`].
@@ -296,6 +400,7 @@ pub fn rows() -> Vec<Row> {
             group: s.group,
             label: (s.label)(),
             keys: key_names(s.keys.now(), mac),
+            also: s.also.map(|k| key_names(k.now(), mac)),
         })
         .collect()
 }
@@ -315,27 +420,40 @@ pub fn key_names(keys: &str, mac: bool) -> Vec<String> {
             "down" => t!("keys-down"),
             "pageup" => t!("keys-page-up"),
             "pagedown" => t!("keys-page-down"),
+            "tab" => t!("keys-tab"),
             "escape" => t!("keys-escape"),
             other => other.to_uppercase(),
         })
         .collect()
 }
 
-/// Binds the shortcuts that are new here. The others are bound by their domains.
+/// Binds the shortcuts that are new here, and the second keys of the ones that have
+/// one. The others are bound by their domains.
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(CHANNEL_PREVIOUS.now(), PreviousChannel, None),
         KeyBinding::new(CHANNEL_NEXT.now(), NextChannel, None),
         KeyBinding::new(UNREAD_PREVIOUS.now(), PreviousUnreadChannel, None),
         KeyBinding::new(UNREAD_NEXT.now(), NextUnreadChannel, None),
+        KeyBinding::new(MENTION_PREVIOUS.now(), PreviousMentionChannel, None),
+        KeyBinding::new(MENTION_NEXT.now(), NextMentionChannel, None),
         KeyBinding::new(SERVER_PREVIOUS.now(), PreviousServer, None),
         KeyBinding::new(SERVER_NEXT.now(), NextServer, None),
+        KeyBinding::new(SERVER_PREVIOUS_ALSO.now(), PreviousServer, None),
+        KeyBinding::new(SERVER_NEXT_ALSO.now(), NextServer, None),
         KeyBinding::new(INBOX.now(), ToggleInbox, None),
         KeyBinding::new(PINS.now(), TogglePins, None),
         KeyBinding::new(UPLOAD.now(), UploadFile, None),
         KeyBinding::new(PAGE_UP.now(), ScrollPageUp, None),
         KeyBinding::new(PAGE_DOWN.now(), ScrollPageDown, None),
+        KeyBinding::new(OLDEST_UNREAD.now(), JumpToOldestUnread, None),
+        KeyBinding::new(SEARCH.now(), OpenSearch, None),
+        KeyBinding::new(SETTINGS.now(), OpenSettings, None),
+        KeyBinding::new(MEMBER_LIST.now(), ToggleMemberList, None),
+        KeyBinding::new(ACCOUNT_SWITCHER.now(), ToggleAccountSwitcher, None),
+        KeyBinding::new(NEW_DIRECT_MESSAGE.now(), NewDirectMessage, None),
         KeyBinding::new(HELP.now(), ShowKeybindHelp, None),
+        KeyBinding::new(HELP_ALSO.now(), ShowKeybindHelp, None),
     ]);
 }
 
@@ -370,26 +488,77 @@ pub(crate) fn step<'a, T: PartialEq>(
     step_where(items, current, forward, |_| true)
 }
 
+/// Where Ctrl+Shift+U opens the file dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UploadTarget {
+    /// Nowhere: the message box is not on screen (a forum).
+    Nowhere,
+    /// The main message box.
+    Chat,
+    /// The thread panel's message box, which has the keyboard.
+    ThreadPanel,
+}
+
+/// The message box an upload key is for, by the same rule as the picker keys: the thread
+/// panel's when it has the keyboard, the main one otherwise, and none while a forum
+/// replaces the chat (its message box is hidden).
+fn upload_target(forum_open: bool, thread_composer_focused: bool) -> UploadTarget {
+    if forum_open {
+        UploadTarget::Nowhere
+    } else if thread_composer_focused {
+        UploadTarget::ThreadPanel
+    } else {
+        UploadTarget::Chat
+    }
+}
+
 impl Inlet {
     /// Whether a shortcut that acts on the chat may act now: signed in on the main
     /// screen, with nothing over the chat that has the keyboard (a layer, a message menu
     /// or dialog) and not under the About view.
     fn shortcuts_allowed(&self) -> bool {
+        self.keys_allowed_over(None)
+    }
+
+    /// Like [`Inlet::shortcuts_allowed`], but `own` may be the layer that is open: the
+    /// key of a panel or a window closes it, and another panel's key swaps it.
+    fn keys_allowed_over(&self, own: Option<Layer>) -> bool {
+        let top = self.open_layers().topmost();
         self.screen == Screen::Main
             && self.account.is_some()
             && !self.show_about
-            && !self.layer_open()
+            && (top.is_none() || top == own)
             && self.chat.actions.overlay.is_none()
     }
 
-    /// Like [`Inlet::shortcuts_allowed`], but a panel (the pins or the inbox) may be
-    /// the layer that is open: its own key closes it and the other one swaps it.
-    fn panel_keys_allowed(&self) -> bool {
-        self.screen == Screen::Main
-            && self.account.is_some()
-            && !self.show_about
-            && matches!(self.open_layers().topmost(), None | Some(Layer::Panel))
-            && self.chat.actions.overlay.is_none()
+    /// Whether a field has the keyboard that a key like Ctrl+I or PageUp must leave to
+    /// the person typing: any other text field, or a message box with text in it. Fluxer
+    /// lets these keys through only from an empty message box.
+    fn typing_in_a_field(&self, window: &Window, cx: &App) -> bool {
+        let stack = window.context_stack();
+        if stack.iter().any(|c| c.contains("TextInput")) {
+            return true;
+        }
+        if !stack.iter().any(|c| c.contains(inlet_editor::KEY_CONTEXT)) {
+            return false;
+        }
+        let empty =
+            |view: &Entity<ComposerView>| view.read(cx).editor.read(cx).buffer().text().is_empty();
+        if self
+            .composer
+            .view
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            return !empty(&self.composer.view);
+        }
+        if let Some(view) = &self.threads.composer {
+            if view.focus_handle(cx).contains_focused(window, cx) {
+                return !empty(view);
+            }
+        }
+        // Any other editor (the box that edits a message): it has text.
+        true
     }
 
     /// The channels the arrow keys step through, in the order the list shows them:
@@ -426,8 +595,16 @@ impl Inlet {
     }
 
     /// Alt+Shift+Up and Alt+Shift+Down: the next or previous channel with something
-    /// unread (a mention, or unread messages when it is not muted).
-    fn step_unread_channel(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// unread (a mention, or unread messages when it is not muted). With
+    /// `mentions_only` (Ctrl+Alt+Shift+Up and Down) only a channel with a mention
+    /// counts.
+    fn step_unread_channel(
+        &mut self,
+        forward: bool,
+        mentions_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.shortcuts_allowed() {
             return;
         }
@@ -440,7 +617,7 @@ impl Inlet {
             step_where(&ids, self.selected_channel.as_ref(), forward, |id| {
                 ChannelId::parse(id).is_some_and(|ch| {
                     let u = state.unread(ch);
-                    (u.unread && !u.muted) || u.mentions > 0
+                    u.mentions > 0 || (!mentions_only && u.unread && !u.muted)
                 })
             })
             .cloned()
@@ -450,9 +627,9 @@ impl Inlet {
         }
     }
 
-    /// Ctrl+Alt+Up and Ctrl+Alt+Down: the next or previous server, the direct messages
-    /// first, as the rail lists them.
-    fn step_server(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ctrl+Alt+Up and Ctrl+Alt+Down (and Ctrl+Tab): the next or previous server, the
+    /// direct messages first, as the rail lists them.
+    fn step_server(&mut self, forward: bool, cx: &mut Context<Self>) {
         if !self.shortcuts_allowed() {
             return;
         }
@@ -462,16 +639,13 @@ impl Inlet {
         let next = step(&rail, Some(&self.selected_guild), forward).cloned();
         if let Some(guild) = next {
             self.select_guild(guild, cx);
-            // The message box is gone until the new server's channel opens (and for
-            // good in a server without one): the window keeps the keyboard, so the
-            // next shortcut still works.
-            window.focus(&self.focus, cx);
         }
     }
 
-    /// PageUp and PageDown: the message list scrolls by most of a screen.
-    fn scroll_page(&mut self, down: bool, cx: &mut Context<Self>) {
-        if !self.shortcuts_allowed() {
+    /// PageUp and PageDown: the message list scrolls by most of a screen, unless
+    /// something is being typed.
+    fn scroll_page(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.shortcuts_allowed() || self.typing_in_a_field(window, cx) {
             return;
         }
         let list = self.chat.message_list.clone();
@@ -491,29 +665,106 @@ impl Inlet {
         cx.notify();
     }
 
-    /// Ctrl+I and Ctrl+P: the inbox or the pins of the open channel, opened or closed.
-    fn toggle_panel_key(&mut self, panel: Panel, cx: &mut Context<Self>) {
-        if self.panel_keys_allowed() {
-            self.toggle_panel(panel, cx);
+    /// Shift+PageUp: the list scrolls to the line where the unread messages start, when
+    /// the messages loaded have it (the same as the banner's "new messages").
+    fn jump_to_oldest_unread(&mut self, cx: &mut Context<Self>) {
+        if !self.shortcuts_allowed() {
+            return;
+        }
+        let divider = self
+            .chat
+            .view
+            .rows
+            .iter()
+            .position(|r| matches!(r, MessageRow::Unread | MessageRow::Day { new: true, .. }));
+        if let Some(divider) = divider {
+            self.chat.view.divider_above = false;
+            self.chat.message_list.pause_following_tail();
+            self.chat.message_list.scroll_to_reveal_item(divider);
+            cx.notify();
         }
     }
 
-    /// Ctrl+Shift+U: the file dialog of the message box.
-    fn upload_key(&mut self, cx: &mut Context<Self>) {
+    /// Ctrl+I and Ctrl+P: the inbox or the pins of the open channel, opened or closed.
+    /// The inbox key leaves a field that is being typed in alone.
+    fn toggle_panel_key(&mut self, panel: Panel, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.keys_allowed_over(Some(Layer::Panel)) {
+            return;
+        }
+        if panel == Panel::Inbox && self.typing_in_a_field(window, cx) {
+            return;
+        }
+        self.toggle_panel(panel, cx);
+    }
+
+    /// Ctrl+Shift+U: the file dialog of the message box that has the keyboard.
+    fn upload_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.shortcuts_allowed() || self.open_channel_id().is_none() {
             return;
         }
-        self.composer
-            .view
-            .update(cx, |view, cx| view.pick_files(cx));
+        let in_panel = self
+            .threads
+            .composer
+            .as_ref()
+            .is_some_and(|v| v.focus_handle(cx).contains_focused(window, cx));
+        let view = match upload_target(self.forum_is_open(), in_panel) {
+            UploadTarget::Nowhere => return,
+            UploadTarget::Chat => self.composer.view.clone(),
+            UploadTarget::ThreadPanel => match self.threads.composer.clone() {
+                Some(view) => view,
+                None => return,
+            },
+        };
+        view.update(cx, |view, cx| view.pick_files(cx));
     }
 
-    /// Ctrl+/: the list of shortcuts, opened or closed. It never opens over another
-    /// layer.
+    /// Ctrl+F: the search panel, with the keyboard in its field.
+    fn search_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.keys_allowed_over(Some(Layer::Panel)) {
+            self.open_search(window, cx);
+        }
+    }
+
+    /// Ctrl+,: the settings.
+    fn settings_key(&mut self, cx: &mut Context<Self>) {
+        if self.shortcuts_allowed() {
+            self.open_settings(None, cx);
+        }
+    }
+
+    /// Ctrl+U: the member list, shown or hidden.
+    fn member_list_key(&mut self, cx: &mut Context<Self>) {
+        if self.shortcuts_allowed() {
+            self.toggle_member_list(cx);
+        }
+    }
+
+    /// Ctrl+Shift+O: the account switcher, opened or closed.
+    fn account_switcher_key(&mut self, cx: &mut Context<Self>) {
+        if self.keys_allowed_over(Some(Layer::AccountSwitcher)) {
+            self.switcher.open = !self.switcher.open;
+            cx.notify();
+        }
+    }
+
+    /// Ctrl+Shift+T: the window for a new direct message or group.
+    fn new_direct_message_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.shortcuts_allowed() {
+            self.open_group_dm(Mode::Create, window, cx);
+        }
+    }
+
+    /// Whether the list of shortcuts is up (it shows over the main screen only).
+    pub(crate) fn keybind_help_open(&self) -> bool {
+        self.overlays.keybind_help && self.screen == Screen::Main
+    }
+
+    /// Ctrl+/ (and Ctrl+.): the list of shortcuts, opened or closed. It opens over the
+    /// main screen only, and never over another layer.
     pub(crate) fn toggle_keybind_help(&mut self, cx: &mut Context<Self>) {
-        if self.overlays.keybind_help {
+        if self.keybind_help_open() {
             self.overlays.keybind_help = false;
-        } else if !self.show_about && !self.layer_open() {
+        } else if self.screen == Screen::Main && !self.show_about && !self.layer_open() {
             self.overlays.keybind_help = true;
         } else {
             return;
@@ -541,26 +792,44 @@ impl Inlet {
             cx.listener(|this, _: &NextChannel, window, cx| this.step_channel(true, window, cx)),
         )
         .on_action(cx.listener(|this, _: &PreviousUnreadChannel, window, cx| {
-            this.step_unread_channel(false, window, cx)
+            this.step_unread_channel(false, false, window, cx)
         }))
         .on_action(cx.listener(|this, _: &NextUnreadChannel, window, cx| {
-            this.step_unread_channel(true, window, cx)
+            this.step_unread_channel(true, false, window, cx)
         }))
+        .on_action(cx.listener(|this, _: &PreviousMentionChannel, window, cx| {
+            this.step_unread_channel(false, true, window, cx)
+        }))
+        .on_action(cx.listener(|this, _: &NextMentionChannel, window, cx| {
+            this.step_unread_channel(true, true, window, cx)
+        }))
+        .on_action(cx.listener(|this, _: &PreviousServer, _, cx| this.step_server(false, cx)))
+        .on_action(cx.listener(|this, _: &NextServer, _, cx| this.step_server(true, cx)))
+        .on_action(cx.listener(|this, _: &ToggleInbox, window, cx| {
+            this.toggle_panel_key(Panel::Inbox, window, cx)
+        }))
+        .on_action(cx.listener(|this, _: &TogglePins, window, cx| {
+            this.toggle_panel_key(Panel::Pins, window, cx)
+        }))
+        .on_action(cx.listener(|this, _: &UploadFile, window, cx| this.upload_key(window, cx)))
         .on_action(
-            cx.listener(|this, _: &PreviousServer, window, cx| this.step_server(false, window, cx)),
+            cx.listener(|this, _: &ScrollPageUp, window, cx| this.scroll_page(false, window, cx)),
         )
         .on_action(
-            cx.listener(|this, _: &NextServer, window, cx| this.step_server(true, window, cx)),
+            cx.listener(|this, _: &ScrollPageDown, window, cx| this.scroll_page(true, window, cx)),
         )
         .on_action(
-            cx.listener(|this, _: &ToggleInbox, _, cx| this.toggle_panel_key(Panel::Inbox, cx)),
+            cx.listener(|this, _: &JumpToOldestUnread, _, cx| this.jump_to_oldest_unread(cx)),
         )
+        .on_action(cx.listener(|this, _: &OpenSearch, window, cx| this.search_key(window, cx)))
+        .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.settings_key(cx)))
+        .on_action(cx.listener(|this, _: &ToggleMemberList, _, cx| this.member_list_key(cx)))
         .on_action(
-            cx.listener(|this, _: &TogglePins, _, cx| this.toggle_panel_key(Panel::Pins, cx)),
+            cx.listener(|this, _: &ToggleAccountSwitcher, _, cx| this.account_switcher_key(cx)),
         )
-        .on_action(cx.listener(|this, _: &UploadFile, _, cx| this.upload_key(cx)))
-        .on_action(cx.listener(|this, _: &ScrollPageUp, _, cx| this.scroll_page(false, cx)))
-        .on_action(cx.listener(|this, _: &ScrollPageDown, _, cx| this.scroll_page(true, cx)))
+        .on_action(cx.listener(|this, _: &NewDirectMessage, window, cx| {
+            this.new_direct_message_key(window, cx)
+        }))
         .on_action(cx.listener(|this, _: &ShowKeybindHelp, _, cx| this.toggle_keybind_help(cx)))
     }
 
@@ -596,7 +865,9 @@ mod tests {
     /// Bindings that only work inside a field, a dialog or a list that has the keyboard
     /// (a text field's editing keys, moving in a list, closing a window). They are not
     /// shortcuts for the whole window, so the help does not list them.
-    const INSIDE_A_FIELD: [&str; 7] = [
+    const INSIDE_A_FIELD: [&str; 8] = [
+        // Bound, but Fluxer hides it from its list too.
+        "inlet_keys::OpenSettings",
         "inlet_composer::AcceptCompletion",
         "inlet_composer::Cancel",
         "inlet_message_actions::CloseMessageOverlay",
@@ -621,18 +892,28 @@ mod tests {
             let list = shortcuts();
             let ids: BTreeSet<_> = list.iter().map(|s| s.id).collect();
             assert_eq!(ids.len(), list.len(), "two shortcuts share an id");
+            let bound = |action: &str, keys: &'static str| {
+                let typed = [Keystroke::parse(keys).expect("keys parse")];
+                keymap.bindings().any(|b| {
+                    b.action().name() == action && b.match_keystrokes(&typed) == Some(false)
+                })
+            };
             for s in &list {
-                let typed = [Keystroke::parse(s.keys.now()).expect("keys parse")];
-                assert!(
-                    keymap.bindings().any(|b| b.action().name() == s.action
-                        && b.match_keystrokes(&typed) == Some(false)),
-                    "{} ({}) is not bound to {}",
-                    s.id,
-                    s.keys.now(),
-                    s.action
-                );
+                for keys in std::iter::once(s.keys).chain(s.also) {
+                    assert!(
+                        bound(s.action, keys.now()),
+                        "{} ({}) is not bound to {}",
+                        s.id,
+                        keys.now(),
+                        s.action
+                    );
+                }
                 assert!(!(s.label)().trim().is_empty(), "{} has no label", s.id);
             }
+            assert!(
+                bound("inlet_keys::OpenSettings", SETTINGS.now()),
+                "the settings key is not bound"
+            );
             let rows = rows();
             assert_eq!(rows.len(), list.len());
             assert!(
@@ -656,12 +937,20 @@ mod tests {
     #[test]
     fn bindings_never_use_secondary_modifier() {
         for s in shortcuts() {
-            for keys in [s.keys.mac, s.keys.other] {
-                assert!(!keys.contains("secondary"), "{keys}");
-                assert!(Keystroke::parse(keys).is_ok(), "{keys} does not parse");
+            for set in std::iter::once(s.keys).chain(s.also) {
+                for keys in [set.mac, set.other] {
+                    assert!(!keys.contains("secondary"), "{keys}");
+                    assert!(Keystroke::parse(keys).is_ok(), "{keys} does not parse");
+                }
+                // Command where the others use Control, and nothing else differs
+                // (Fluxer's Ctrl+Tab is Control on macOS too).
+                let same = set.mac == set.other;
+                assert!(
+                    same || set.mac.replace("cmd", "ctrl") == set.other,
+                    "{}",
+                    s.id
+                );
             }
-            // Command where the others use Control, and nothing else differs.
-            assert_eq!(s.keys.mac.replace("cmd", "ctrl"), s.keys.other, "{}", s.id);
         }
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = Vec::new();
@@ -776,7 +1065,7 @@ mod tests {
             "read_states": [
                 {"id": "301", "mention_count": 0, "last_message_id": mid(10)},
                 {"id": "302", "mention_count": 0, "last_message_id": mid(20)},
-                {"id": "303", "mention_count": 0, "last_message_id": mid(20)}
+                {"id": "303", "mention_count": 2, "last_message_id": mid(20)}
             ],
             "user_guild_settings": []
         }))
@@ -894,10 +1183,13 @@ mod tests {
         };
         cx.simulate_keystrokes(SERVER_NEXT.now());
         assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
+        first_channel_opens(&inlet, "401", cx);
         cx.simulate_keystrokes(SERVER_NEXT.now());
         assert_eq!(guild(&inlet, cx), None, "the direct messages come first");
+        first_channel_opens(&inlet, "401", cx);
         cx.simulate_keystrokes(SERVER_PREVIOUS.now());
         assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
+        first_channel_opens(&inlet, "401", cx);
         cx.simulate_keystrokes(SERVER_PREVIOUS.now());
         assert_eq!(guild(&inlet, cx).as_deref(), Some(GUILD));
     }
@@ -1012,5 +1304,161 @@ mod tests {
         inlet.read_with(cx, |i, _| {
             assert_eq!(i.selected_channel.as_deref(), Some("301"))
         });
+    }
+
+    /// The new server's channel list arrives and its first channel opens, as it does a moment
+    /// after a server key (the message box is on screen again and takes the keyboard).
+    fn first_channel_opens(inlet: &Entity<Inlet>, id: &str, cx: &mut VisualTestContext) {
+        inlet.update_in(cx, |this, window, cx| {
+            this.select_channel(id.into(), window, cx)
+        });
+        cx.run_until_parked();
+    }
+
+    fn composer_focused(inlet: &Entity<Inlet>, cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, cx| {
+            inlet
+                .read(cx)
+                .composer
+                .view
+                .focus_handle(cx)
+                .is_focused(window)
+        })
+    }
+
+    /// The server keys leave the keyboard where it is: the message box keeps it (and
+    /// takes it back for the channel that opens), and Ctrl+Tab steps like Ctrl+Alt+Down.
+    #[gpui::test]
+    fn the_server_keys_leave_the_keyboard_in_the_message_box(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        assert!(composer_focused(&inlet, cx));
+        cx.simulate_keystrokes(SERVER_NEXT.now());
+        assert!(
+            composer_focused(&inlet, cx),
+            "Ctrl+Alt+Down took the keyboard"
+        );
+        first_channel_opens(&inlet, "401", cx);
+        assert!(
+            composer_focused(&inlet, cx),
+            "the box takes the keyboard back"
+        );
+        cx.simulate_keystrokes(SERVER_NEXT_ALSO.now());
+        let guild = inlet.read_with(cx, |i, _| i.selected_guild.clone());
+        assert_eq!(guild, None, "Ctrl+Tab steps to the next server");
+        first_channel_opens(&inlet, "401", cx);
+        cx.simulate_keystrokes(SERVER_PREVIOUS_ALSO.now());
+        let guild = inlet.read_with(cx, |i, _| i.selected_guild.clone());
+        assert_eq!(guild.as_deref(), Some(OTHER_GUILD));
+    }
+
+    /// Ctrl+Alt+Shift+Down goes to the next channel with a mention, not to one that is
+    /// only unread.
+    #[gpui::test]
+    fn mention_keys_step_through_the_channels_with_a_mention(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes(MENTION_NEXT.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("303"));
+        // Only one channel has a mention: nowhere else to go.
+        cx.simulate_keystrokes(MENTION_NEXT.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("303"));
+        cx.simulate_keystrokes(MENTION_PREVIOUS.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("303"));
+    }
+
+    /// Ctrl+. opens the list like Ctrl+/ (Fluxer's key where the slash needs Shift), and
+    /// neither opens it on the sign-in screen.
+    #[gpui::test]
+    fn the_help_has_a_second_key_and_stays_off_the_sign_in_screen(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        let help = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
+            inlet.read_with(cx, |i, _| i.keybind_help_open())
+        };
+        cx.simulate_keystrokes(HELP_ALSO.now());
+        cx.run_until_parked();
+        assert!(help(&inlet, cx), "Ctrl+. did not open the list");
+        cx.simulate_keystrokes(HELP_ALSO.now());
+        assert!(!help(&inlet, cx));
+        inlet.update(cx, |this, cx| {
+            this.screen = Screen::SignIn;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes(HELP.now());
+        cx.simulate_keystrokes(HELP_ALSO.now());
+        assert!(!help(&inlet, cx), "the list opened on the sign-in screen");
+        assert!(!inlet.read_with(cx, |i, _| i.layer_open()));
+    }
+
+    /// The picker keys do nothing behind the list of shortcuts.
+    #[gpui::test]
+    fn picker_keys_do_nothing_behind_the_help(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes(HELP.now());
+        cx.run_until_parked();
+        assert!(inlet.read_with(cx, |i, _| i.keybind_help_open()));
+        cx.simulate_keystrokes(&format!(
+            "{} {} {}",
+            EMOJI_PICKER.now(),
+            GIF_PICKER.now(),
+            STICKER_PICKER.now()
+        ));
+        inlet.read_with(cx, |i, _| {
+            assert!(
+                !i.composer.pickers.is_open(),
+                "a picker opened behind the list"
+            );
+        });
+        // With the list closed the same key opens the picker.
+        cx.simulate_keystrokes(HELP.now());
+        cx.simulate_keystrokes(EMOJI_PICKER.now());
+        cx.run_until_parked();
+        assert!(inlet.read_with(cx, |i, _| i.composer.pickers.is_open()));
+    }
+
+    /// Ctrl+I and PageUp leave a message box with text in it alone, as Fluxer does, and
+    /// work from an empty one; the pins key works either way.
+    #[gpui::test]
+    fn ctrl_i_waits_for_an_empty_message_box(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes("a b");
+        cx.simulate_keystrokes(INBOX.now());
+        assert_eq!(inlet.read_with(cx, |i, _| i.inbox.open), None);
+        cx.simulate_keystrokes(PINS.now());
+        assert_eq!(inlet.read_with(cx, |i, _| i.inbox.open), Some(Panel::Pins));
+        cx.simulate_keystrokes("escape backspace backspace");
+        cx.simulate_keystrokes(INBOX.now());
+        assert_eq!(inlet.read_with(cx, |i, _| i.inbox.open), Some(Panel::Inbox));
+    }
+
+    /// Ctrl+Shift+U goes to the message box that has the keyboard, and to none while a
+    /// forum replaces the chat.
+    #[test]
+    fn upload_goes_to_the_box_that_has_the_keyboard() {
+        assert_eq!(upload_target(false, false), UploadTarget::Chat);
+        assert_eq!(upload_target(false, true), UploadTarget::ThreadPanel);
+        assert_eq!(upload_target(true, false), UploadTarget::Nowhere);
+        assert_eq!(upload_target(true, true), UploadTarget::Nowhere);
+    }
+
+    /// Ctrl+F, Ctrl+, Ctrl+Shift+O and Ctrl+Shift+T open the search, the settings, the
+    /// account switcher and the new direct message window, and the switcher's key
+    /// closes it again.
+    #[gpui::test]
+    fn the_window_keys_open_their_windows(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes(SETTINGS.now());
+        assert!(inlet.read_with(cx, |i, _| i.settings.view.is_some()));
+        cx.simulate_keystrokes("escape");
+        assert!(inlet.read_with(cx, |i, _| i.settings.view.is_none()));
+        cx.simulate_keystrokes(ACCOUNT_SWITCHER.now());
+        assert!(inlet.read_with(cx, |i, _| i.switcher.open));
+        cx.simulate_keystrokes(ACCOUNT_SWITCHER.now());
+        assert!(!inlet.read_with(cx, |i, _| i.switcher.open));
+        cx.simulate_keystrokes(NEW_DIRECT_MESSAGE.now());
+        cx.run_until_parked();
+        assert!(inlet.read_with(cx, |i, _| i.social.group_dm.is_some()));
+        // Nothing opens behind it.
+        cx.simulate_keystrokes(SETTINGS.now());
+        assert!(inlet.read_with(cx, |i, _| i.settings.view.is_none()));
     }
 }

@@ -54,7 +54,7 @@ impl Inlet {
         }
         // The list of shortcuts (Ctrl+/): over the settings view, under the notification
         // settings window.
-        if self.overlays.keybind_help {
+        if self.keybind_help_open() {
             out.push(self.render_keybind_help(cx));
         }
         if self.notifications.settings.is_some() {
