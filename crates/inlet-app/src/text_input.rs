@@ -85,6 +85,8 @@ pub struct TextInput {
     placeholder: SharedString,
     masked: bool,
     max_chars: usize,
+    /// An extra limit in UTF-16 units, for text a server counts that way.
+    max_units: Option<usize>,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -103,6 +105,7 @@ impl TextInput {
             placeholder: placeholder.into(),
             masked: false,
             max_chars: 4_000,
+            max_units: None,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -122,14 +125,24 @@ impl TextInput {
         self
     }
 
-    /// Cuts inserted text so the content stays within `max_chars`.
+    /// Also limits the content to `max` UTF-16 units (a character outside the Basic
+    /// Multilingual Plane, such as most emoji, counts two), for text the server counts
+    /// that way: what is typed or pasted is cut here, instead of the end of the text
+    /// disappearing when it is saved.
+    pub fn max_utf16(mut self, max: usize) -> Self {
+        self.max_units = Some(max);
+        self
+    }
+
+    /// Cuts inserted text so the content stays within `max_chars` and `max_utf16`.
     fn limit<'a>(&self, replaced: &Range<usize>, new_text: &'a str) -> &'a str {
-        let kept = self.content.chars().count() - self.content[replaced.clone()].chars().count();
-        let room = self.max_chars.saturating_sub(kept);
-        match new_text.char_indices().nth(room) {
-            Some((ix, _)) => &new_text[..ix],
-            None => new_text,
-        }
+        let removed = &self.content[replaced.clone()];
+        let kept = self.content.chars().count() - removed.chars().count();
+        let room_units = self.max_units.map(|max| {
+            let kept = self.content.encode_utf16().count() - removed.encode_utf16().count();
+            max.saturating_sub(kept)
+        });
+        fit(new_text, self.max_chars.saturating_sub(kept), room_units)
     }
 
     pub fn with_text(mut self, text: impl Into<SharedString>) -> Self {
@@ -792,8 +805,48 @@ impl Render for TextInput {
     }
 }
 
+/// The start of `text` that fits in `room_chars` characters and, when given, `room_units`
+/// UTF-16 units, cut on a character boundary.
+fn fit(text: &str, room_chars: usize, room_units: Option<usize>) -> &str {
+    let mut units = 0;
+    for (n, (at, c)) in text.char_indices().enumerate() {
+        units += c.len_utf16();
+        if n >= room_chars || room_units.is_some_and(|room| units > room) {
+            return &text[..at];
+        }
+    }
+    text
+}
+
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit;
+
+    #[test]
+    fn characters_are_cut_at_the_room_left() {
+        assert_eq!(fit("abcdef", 3, None), "abc");
+        assert_eq!(fit("abc", 3, None), "abc");
+        assert_eq!(fit("abc", 0, None), "");
+    }
+
+    #[test]
+    fn utf16_units_count_emoji_twice() {
+        let grin = "\u{1F600}";
+        // Room for 5 units: two emoji (4) and one letter, not three emoji.
+        assert_eq!(
+            fit("\u{1F600}\u{1F600}a\u{1F600}", 100, Some(5)),
+            "\u{1F600}\u{1F600}a"
+        );
+        // An emoji that would straddle the limit is left out whole.
+        assert_eq!(fit(grin, 100, Some(1)), "");
+        assert_eq!(fit("ab", 100, Some(2)), "ab");
+        // The character limit still applies as well.
+        assert_eq!(fit("abcdef", 2, Some(10)), "ab");
     }
 }
