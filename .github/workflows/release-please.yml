@@ -50,7 +50,12 @@ jobs:
     # The secrets of the environment "release" only reach the signing workflow when
     # the callers let secrets through. The repository holds no others.
     secrets: inherit
+    # A called workflow cannot use more than its caller grants. release.yml signs build
+    # provenance in one job (attest), which needs the last two; every job in release.yml
+    # sets its own permissions, so these are only the ceiling.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}

@@ -10,7 +10,7 @@ Every Inlet release is a pre-release (a beta) and is never marked as the latest 
 4. release-please creates the tag `vX.Y.Z` and a draft pre-release for it. The draft holds the changelog as its notes and is not visible to the public.
 5. `release-please.yml` then calls `release.yml` with the tag. It builds the three platforms, then pauses before macOS signing.
 6. The maintainer approves the signing job in the protected environment `release` (Actions run page, "Review deployments"). Only `main` and `v*` tags may use that environment.
-7. `release.yml` attaches the files and `SHA256SUMS.txt` to the draft and publishes it as a pre-release. It fails if the result is not a published pre-release, or if it is the latest release.
+7. `release.yml` collects the three downloads, an SBOM for each platform (CycloneDX, `*.cdx.json`), `LICENSE`, `THIRD-PARTY-NOTICES` and `SHA256SUMS.txt`, checks that the licence files are in place, and signs build provenance for every one of those files. Only then does it attach them to the draft and publish it as a pre-release. It fails if the result is not a published pre-release, or if it is the latest release. A download can be checked with `gh attestation verify <file> --repo Ferdinand99/Inlet`.
 
 ## Version numbers
 
@@ -31,6 +31,7 @@ Changelog sections: `feat` is Features, `fix` is Bug Fixes, `perf` is Performanc
 
 - The build or signing failed for a reason outside the code (a network error, a missing secret, an approval that timed out): use "Re-run failed jobs" on the `Release Please` run. The draft and the tag stay; assets with the same name are replaced. A re-run uses the same commit and the same workflow files, so a fix in code or in a workflow needs a new commit and the release becomes the next version.
 - The tag does not point at the commit of the run (another commit reached `main`, or another `Release Please` run was in flight, when the release PR was merged): `release.yml` stops at its first job. The tag is on the right commit; only the run is on another one. Keep the draft. Delete the remote tag and push it again at the same commit with your own credentials: `git fetch --tags && git push origin :refs/tags/vX.Y.Z && git push origin vX.Y.Z`. That push starts `release.yml` through the tag path, which fills the existing draft, changelog included. Do not delete the draft: release-please would then propose the next version, not this one.
+- The `Build provenance` job failed (Sigstore or the attestation service had a problem): nothing was published yet, because publishing waits for it. Use "Re-run failed jobs"; the collected files are kept for 7 days.
 - A release was published by mistake: edit it on GitHub and mark it as a pre-release; never as the latest.
 - A manual tag (`git tag vX.Y.Z && git push origin vX.Y.Z`) runs the same workflow and creates the release itself. Use it only to recover from a problem as above.
 
