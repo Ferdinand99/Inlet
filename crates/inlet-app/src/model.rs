@@ -325,7 +325,7 @@ impl Message {
     }
 }
 
-pub(crate) fn floor_char_boundary(s: &str, mut ix: usize) -> usize {
+fn floor_char_boundary(s: &str, mut ix: usize) -> usize {
     while ix > 0 && !s.is_char_boundary(ix) {
         ix -= 1;
     }

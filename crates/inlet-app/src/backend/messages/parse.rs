@@ -183,9 +183,17 @@ fn to_reply(v: &serde_json::Value, names: &Names) -> Option<Reply> {
     let snippet = if content.trim().is_empty() {
         t!("reply-no-text")
     } else {
-        // Capped like the chat caps a message, so a huge reply target costs no more.
-        let content = &content[..model::floor_char_boundary(content, model::MAX_CONTENT_BYTES)];
-        model::snippet(&crate::ui::markdown::plain_text(content, names), 90)
+        // Only what the chat parses of a message (a huge reply target costs no more). A
+        // spoiler that opens before the cut and closes after it is closed here, or its
+        // text would show as plain text.
+        let (mut text, cut) = match content.char_indices().nth(model::DISPLAY_CHARS) {
+            Some((at, _)) => (content[..at].to_string(), true),
+            None => (content.to_string(), false),
+        };
+        if cut && text.matches("||").count() % 2 == 1 {
+            text.push_str("||");
+        }
+        model::snippet(&crate::ui::markdown::plain_text(&text, names), 90)
     };
     Some(Reply {
         author: model::clean_name(name),
@@ -311,6 +319,18 @@ mod tests {
         let r = to_reply(&v, &Names::default()).unwrap();
         assert_eq!(r.author, "Ferdinand99");
         assert!(r.snippet.starts_with("Hi! I can't see"));
+    }
+
+    #[test]
+    fn a_spoiler_cut_by_the_size_cap_stays_covered() {
+        let content = format!(
+            "x ||secret {} still secret||",
+            "y".repeat(model::DISPLAY_CHARS)
+        );
+        let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
+        let r = to_reply(&v, &Names::default()).unwrap();
+        assert!(!r.snippet.contains("secret"), "{}", r.snippet);
+        assert!(r.snippet.starts_with("x \u{2588}"));
     }
 
     #[test]
