@@ -84,7 +84,7 @@ jobs:
             exit 0
           fi
           # The checkout is the merge commit; its first parent is the base branch.
-          files=$(git diff --name-only HEAD^1 HEAD)
+          files=$(git diff --name-only --no-renames HEAD^1 HEAD)
           code=false
           while IFS= read -r f; do
             [ -n "$f" ] || continue
@@ -403,8 +403,8 @@ jobs:
           shared-key: macos-ci
           save-if: ${{ github.ref == 'refs/heads/v0' }}
 
-      # Demo data only: never shipped. Built first, so the screenshots job gets it as
-      # early as possible.
+      # Demo data only: never shipped. Built before the tests, but the screenshots job
+      # waits for this whole job.
       - name: Build with demo data
         run: |
           cargo build --profile ci --locked -p inlet --features demo
@@ -923,6 +923,7 @@ jobs:
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-about@0.9.3
+          fallback: none
 
       - name: Regenerate THIRD-PARTY-NOTICES
         run: scripts/third-party-notices.sh

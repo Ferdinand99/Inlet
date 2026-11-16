@@ -33,10 +33,10 @@ opt-level = 1
 debug = 0
 incremental = false
 
-# Dependencies and build scripts are compiled as in a release build. gpui's Windows
-# renderer would otherwise read its shaders from the source tree at run time (a demo
-# binary copied to the screenshot runner has no source tree) and turn on the DirectX
-# debug layer.
+# Dependencies and build scripts are compiled without debug assertions, as in a release
+# build. gpui's Windows renderer would otherwise read its shaders from the source tree at
+# run time (a demo binary copied to the screenshot runner has no source tree) and turn on
+# the DirectX debug layer.
 [profile.ci.package."*"]
 debug-assertions = false
 overflow-checks = false
