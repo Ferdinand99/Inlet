@@ -48,7 +48,8 @@ the screenshot jobs go red; that is expected:
 3. On the same branch and commit as that run, run
    `scripts/update-visual-baselines.sh <run id>` (GitHub CLI). It shows the run's
    repository, branch and commit, refuses runs from forks, other branches or other
-   commits (unless `--other-run`), and copies the screenshots to `baseline/<os>/`.
+   commits (unless `--other-run`), and copies the screenshots to `baseline/<os>/`, leaving
+   out the scenes whose result in the report is `same`.
 4. Look at the new pictures and commit them with your change. The next run must be
    green on all three platforms.
 
