@@ -3,6 +3,7 @@
 //! line to [`all`].
 
 mod desktop;
+mod keybinds;
 mod notifications;
 
 use super::SettingsTab;
@@ -12,5 +13,6 @@ pub fn all() -> Vec<Box<dyn SettingsTab>> {
     vec![
         Box::new(desktop::DesktopTab),
         Box::new(notifications::NotificationsTab),
+        Box::new(keybinds::KeybindsTab),
     ]
 }

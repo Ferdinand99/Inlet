@@ -17,6 +17,8 @@ mod app;
 mod assets;
 mod backend;
 mod brand_icon;
+#[doc(hidden)]
+pub mod crash;
 #[cfg(feature = "demo")]
 mod demo;
 mod desktop;
@@ -100,6 +102,7 @@ fn bind_keys(cx: &mut App) {
     ui::chat::bind_keys(cx);
     ui::members::bind_keys(cx);
     ui::search::bind_keys(cx);
+    app::keymap::bind_keys(cx);
 }
 
 #[cfg(test)]
@@ -114,7 +117,7 @@ mod tests {
 
     /// The domains with key bindings. A new `fn bind_keys` must be added here and to
     /// [`super::bind_keys`].
-    const DOMAINS: [(&str, Bind); 7] = [
+    const DOMAINS: [(&str, Bind); 8] = [
         ("text_input", crate::text_input::bind_keys),
         ("ui::notifications", crate::ui::notifications::bind_keys),
         ("ui::composer", crate::ui::composer::bind_keys),
@@ -125,6 +128,7 @@ mod tests {
         ("ui::chat", crate::ui::chat::bind_keys),
         ("ui::members", crate::ui::members::bind_keys),
         ("ui::search", crate::ui::search::bind_keys),
+        ("app::keymap", crate::app::keymap::bind_keys),
     ];
 
     fn bound(cx: &mut TestAppContext, bind: Bind) -> BTreeSet<String> {

@@ -581,7 +581,7 @@ impl ComposerView {
     }
 
     /// The plus button: the system's file dialog, more than one file allowed.
-    pub(super) fn pick_files(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pick_files(&mut self, cx: &mut Context<Self>) {
         let Some(channel) = self.open_channel_id() else {
             return;
         };

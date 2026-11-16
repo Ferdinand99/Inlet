@@ -313,14 +313,12 @@ pub fn custom_status_line(c: &CustomStatus, text_size: f32) -> AnyElement {
         .into_any_element()
 }
 
-/// A custom status text for display: no control, format or direction characters, and at
-/// most 128 UTF-16 units (Fluxer's limit). Empty when nothing visible is left.
+/// A custom status text for display: no control, format or direction characters (the
+/// joiners and selectors inside an emoji sequence stay), and at most 128 UTF-16 units
+/// (Fluxer's limit). Empty when nothing visible is left.
 pub fn clean_custom_text(text: &str) -> String {
-    use inlet_state::presence::{is_visible, truncate_utf16, CUSTOM_STATUS_TEXT_LIMIT};
-    let kept: String = text
-        .chars()
-        .filter(|c| is_visible(*c) || *c == ' ')
-        .collect();
+    use inlet_state::presence::{clean_display_text, truncate_utf16, CUSTOM_STATUS_TEXT_LIMIT};
+    let kept = clean_display_text(text);
     truncate_utf16(kept.trim(), CUSTOM_STATUS_TEXT_LIMIT).to_owned()
 }
 
@@ -359,6 +357,22 @@ mod tests {
         assert_eq!(clean_custom_text("\u{200B}\u{202E} "), "");
         assert_eq!(clean_custom_text(" Lunch\u{202E} break "), "Lunch break");
         assert_eq!(clean_custom_text(&"x".repeat(300)).len(), 128);
+    }
+
+    #[test]
+    fn emoji_sequences_in_a_custom_status_text_survive_the_cleaning() {
+        // A family (joined with zero-width joiners) and a heart with its selector.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let heart = "\u{2764}\u{FE0F}";
+        let text = format!("lunch {family} {heart}");
+        assert_eq!(clean_custom_text(&text), text);
+        // A heart on fire: a selector, then a joiner, then the flame.
+        let fire = "\u{2764}\u{FE0F}\u{200D}\u{1F525}";
+        assert_eq!(clean_custom_text(fire), fire);
+        // Joiners and selectors that stand alone, or join nothing, still go.
+        assert_eq!(clean_custom_text("\u{200D}\u{FE0F}"), "");
+        assert_eq!(clean_custom_text("a \u{200D}\u{200D} b\u{200D}"), "a  b");
+        assert_eq!(clean_custom_text(" \u{FE0F}x\u{200D} "), "x");
     }
 
     #[test]

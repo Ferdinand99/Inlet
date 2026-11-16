@@ -17,6 +17,9 @@ blue) and `report.md`.
 - `baseline/<os>/<name>.png`: what the scene looked like on that platform's CI runner.
   Fonts and DPI are pinned: the runner images are fixed, the screen is set to
   1920x1080 at one pixel per logical pixel, and macOS and Linux use the bundled fonts.
+  On Linux the script also hands the app a closed set of fallback fonts (the Japanese
+  subset in `fonts/`, DejaVu and Noto Color Emoji; see `fonts/README.md`), because the
+  runner image's own CJK fonts change without notice.
 
 The scripts that take the screenshots are `scripts/windows-screenshot.ps1`,
 `scripts/macos-screenshot.sh` and `scripts/xvfb-screens.sh`; `inlet-visual` (a demo
@@ -48,7 +51,8 @@ the screenshot jobs go red; that is expected:
 3. On the same branch and commit as that run, run
    `scripts/update-visual-baselines.sh <run id>` (GitHub CLI). It shows the run's
    repository, branch and commit, refuses runs from forks, other branches or other
-   commits (unless `--other-run`), and copies the screenshots to `baseline/<os>/`.
+   commits (unless `--other-run`), and copies the screenshots to `baseline/<os>/`, leaving
+   out the scenes whose result in the report is `same`.
 4. Look at the new pictures and commit them with your change. The next run must be
    green on all three platforms.
 
