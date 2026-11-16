@@ -481,12 +481,8 @@ fn can_view(state: &inlet_state::AccountState, channel_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::app::Screen;
-    use crate::backend::accounts::Accounts;
-    use crate::token_store::MemoryStore;
     use crate::ui::inbox::tests::item;
     use gpui::{Render, TestAppContext};
     use inlet_protocol as p;
@@ -540,11 +536,9 @@ mod tests {
         let inlet = window
             .update(cx, |_, window, cx| {
                 cx.new(|cx| {
-                    Inlet::new_with(window, cx, |tx| {
-                        crate::backend::start_with(tx, |ui| {
-                            Accounts::new(Arc::new(MemoryStore::default()), None, Some(ui))
-                        })
-                    })
+                    // No backend thread: its start-up events would reach the test's
+                    // scheduler from another thread.
+                    Inlet::new_with(window, cx, |_| crate::backend::BackendHandle::detached())
                 })
             })
             .unwrap();
