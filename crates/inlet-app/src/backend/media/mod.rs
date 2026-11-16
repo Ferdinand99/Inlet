@@ -470,7 +470,20 @@ pub async fn save_tracked(
     let mut body = resp.body;
     let mut written: u64 = 0;
     let result: Result<(), SaveError> = async {
-        while let Some(chunk) = body.next().await {
+        loop {
+            // A stalled read must not hold a cancel back: look at the flag every quarter second.
+            let next = match tokio::time::timeout(Duration::from_millis(250), body.next()).await {
+                Ok(next) => next,
+                Err(_) => {
+                    if progress.cancel.load(Ordering::Relaxed) {
+                        return Err(SaveError::Cancelled);
+                    }
+                    continue;
+                }
+            };
+            let Some(chunk) = next else {
+                break;
+            };
             if progress.cancel.load(Ordering::Relaxed) {
                 return Err(SaveError::Cancelled);
             }
@@ -1236,6 +1249,48 @@ mod tests {
         assert!(matches!(result, Err(SaveError::Cancelled)));
         assert!(!gone.exists());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A body that never sends anything.
+    struct Stalled;
+
+    impl Fetcher for Stalled {
+        fn fetch<'a>(&'a self, _: &'a Url) -> BoxFuture<'a, Result<FetchResponse, FetchError>> {
+            Box::pin(async {
+                let body: inlet_media::ByteStream = Box::pin(futures::stream::pending());
+                Ok(FetchResponse::new(None, body))
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancel_reaches_a_download_that_has_stalled() {
+        let dir = std::env::temp_dir().join(format!("inlet-stall-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = Url::parse("https://media.example.org/media/attachments/1/2/a.bin").unwrap();
+        let progress = Arc::new(SaveProgress::default());
+        let flag = progress.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            flag.cancel.store(true, Ordering::Relaxed);
+        });
+        let target = dir.join("stalled.bin");
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            save_tracked(
+                Arc::new(Stalled),
+                url,
+                target.clone(),
+                save_limit(0),
+                progress,
+            ),
+        )
+        .await
+        .expect("the cancel must end the save");
+        assert!(matches!(result, Err(SaveError::Cancelled)));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
