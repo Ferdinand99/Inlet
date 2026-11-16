@@ -15,12 +15,14 @@ pub(crate) mod animation_budget;
 mod attachment;
 mod audio_file;
 mod avatar;
+pub(crate) mod downloads;
 pub(crate) mod embed;
 pub(crate) mod emoji;
 mod failed;
 pub(crate) mod image;
 pub mod requests;
 pub(crate) mod sticker;
+mod text_preview;
 mod video_thumb;
 mod viewer;
 
@@ -91,6 +93,10 @@ pub struct State {
     pub refresh: Refresh,
     /// The open image viewer.
     pub viewer: Option<Viewer>,
+    /// The previews of text and CSV attachments.
+    pub texts: text_preview::Previews,
+    /// The downloads panel: files saved from messages.
+    pub downloads: downloads::Downloads,
     /// The last keyboard or mouse input in the window: animations stop after
     /// [`IDLE_AFTER`] without one.
     last_input: std::time::Instant,
@@ -119,6 +125,8 @@ impl Default for State {
             cover_explicit: true,
             refresh: Refresh::default(),
             viewer: None,
+            texts: text_preview::Previews::default(),
+            downloads: downloads::Downloads::default(),
             last_input: std::time::Instant::now(),
             #[cfg(feature = "demo")]
             demo_viewer_done: false,
@@ -192,6 +200,7 @@ impl State {
         self.revealed.clear();
         self.revealed_order.clear();
         self.refresh = Refresh::default();
+        self.texts.clear();
     }
 }
 

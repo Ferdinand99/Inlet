@@ -54,5 +54,5 @@ pub use selection::{
     prev_backspace_boundary, prev_grapheme, prev_word, word_range_at, Move, Selection,
 };
 pub use tokens::{Id, NoNames, Resolve, Token, TokenSpan};
-pub use trigger::{trigger_at, Trigger};
+pub use trigger::{trigger_at, MediaCommand, Trigger};
 pub use wire::{server_mentions, AllowedMentions, Mentions};

@@ -27,6 +27,11 @@ pub const MAX_BIO_LENGTH: &str = "max_bio_length";
 /// `max_voice_message_duration`.
 pub const MAX_VOICE_MESSAGE_DURATION: &str = "max_voice_message_duration";
 
+/// Longest instance note for oversized files that is kept, in characters.
+pub const MAX_UPLOAD_NOTE_CHARS: usize = 1000;
+/// Most trusted-domain entries kept from the instance's list.
+pub const MAX_TRUSTED_DOMAINS: usize = 200;
+
 /// Highest attachment size this crate will upload, whatever the instance
 /// says (Fluxer's own ceiling for a premium account is 500 MiB).
 pub const UPLOAD_HARD_CAP: u64 = 500 * 1024 * 1024;
@@ -133,6 +138,40 @@ impl Discovery {
         u32::from_str_radix(hex, 16).ok()
     }
 
+    /// The instance's own text for files that are too large
+    /// (`app_public.branding.upload_limit_message`), cut to [`MAX_UPLOAD_NOTE_CHARS`].
+    /// `None` when it is missing, not text or blank.
+    pub fn upload_limit_message(&self) -> Option<String> {
+        let text = self
+            .app_public
+            .get("branding")?
+            .get("upload_limit_message")?
+            .as_str()?
+            .trim();
+        (!text.is_empty()).then(|| text.chars().take(MAX_UPLOAD_NOTE_CHARS).collect())
+    }
+
+    /// The domains the instance trusts for links (`app_public.branding.trusted_domains`):
+    /// plain host names or `*.host` patterns, in lower case. Entries that are not text,
+    /// longer than a host name can be or are the trust-everything pattern `*` are
+    /// dropped, and so is everything past [`MAX_TRUSTED_DOMAINS`] entries.
+    pub fn trusted_domains(&self) -> Vec<String> {
+        let Some(list) = self
+            .app_public
+            .get("branding")
+            .and_then(|b| b.get("trusted_domains"))
+            .and_then(Value::as_array)
+        else {
+            return Vec::new();
+        };
+        list.iter()
+            .filter_map(Value::as_str)
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty() && s != "*" && s.len() <= 253)
+            .take(MAX_TRUSTED_DOMAINS)
+            .collect()
+    }
+
     /// Whether the instance has pre-signed attachment uploads
     /// (`features.presigned_attachment_uploads`).
     pub fn presigned_attachment_uploads(&self) -> bool {
@@ -185,5 +224,61 @@ mod tests {
             json!({"rules": [{"id": "d", "overrides": {"max_attachment_file_size": 9_000_000_000_000u64}}]}),
         );
         assert_eq!(huge.max_attachment_file_size(&none), UPLOAD_HARD_CAP);
+    }
+
+    fn branded(branding: Value) -> Discovery {
+        serde_json::from_value(json!({
+            "api_code_version": 1,
+            "endpoints": {"api_public": "https://x.example/api", "gateway": "wss://x.example/gw"},
+            "app_public": {"branding": branding}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_instance_note_for_large_files_is_read_and_capped() {
+        let d = branded(json!({"upload_limit_message": "  Ask an admin for more room.  "}));
+        assert_eq!(
+            d.upload_limit_message().as_deref(),
+            Some("Ask an admin for more room.")
+        );
+        assert_eq!(branded(json!({})).upload_limit_message(), None);
+        assert_eq!(
+            branded(json!({"upload_limit_message": "   "})).upload_limit_message(),
+            None
+        );
+        assert_eq!(
+            branded(json!({"upload_limit_message": 7})).upload_limit_message(),
+            None
+        );
+        let long = "x".repeat(MAX_UPLOAD_NOTE_CHARS * 3);
+        let note = branded(json!({ "upload_limit_message": long }))
+            .upload_limit_message()
+            .unwrap();
+        assert_eq!(note.chars().count(), MAX_UPLOAD_NOTE_CHARS);
+    }
+
+    #[test]
+    fn the_instance_trusted_domains_drop_the_trust_everything_pattern() {
+        let d = branded(json!({"trusted_domains": [
+            "Example.ORG", "*.cdn.example.org", "*", "", 5, "  docs.example.org "
+        ]}));
+        assert_eq!(
+            d.trusted_domains(),
+            ["example.org", "*.cdn.example.org", "docs.example.org"]
+        );
+        assert!(branded(json!({})).trusted_domains().is_empty());
+        assert!(branded(json!({"trusted_domains": "example.org"}))
+            .trusted_domains()
+            .is_empty());
+        let many: Vec<String> = (0..MAX_TRUSTED_DOMAINS * 2)
+            .map(|i| format!("h{i}.example.org"))
+            .collect();
+        assert_eq!(
+            branded(json!({ "trusted_domains": many }))
+                .trusted_domains()
+                .len(),
+            MAX_TRUSTED_DOMAINS
+        );
     }
 }

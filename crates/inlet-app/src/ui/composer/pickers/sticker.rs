@@ -100,7 +100,7 @@ pub fn rows(
 }
 
 impl Inlet {
-    fn picker_guild_stickers(&self, cx: &gpui::App) -> Vec<GuildStickers> {
+    pub(super) fn picker_guild_stickers(&self, cx: &gpui::App) -> Vec<GuildStickers> {
         let Some(account) = self.account.as_ref() else {
             return Vec::new();
         };

@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Client commands, as in Fluxer (`CommandUtils.ts`, `useCommands.ts`): `/shrug`,
 //! `/tableflip` and `/unflip` insert their text when picked from the list; `/me` and
-//! `/spoiler` wrap the message; `/nick` and `/msg` call the server; `/saved` sends a saved
-//! media item. Commands are read from the wire text, so `/msg` gets the user from a pill.
+//! `/spoiler` wrap the message; `/nick` and `/msg` call the server; `/gif`, `/sticker` and
+//! `/saved` search for something to send and are answered by a result list (see
+//! `pickers::commands`), where a pick sends the item. Commands are read from the wire
+//! text, so `/msg` gets the user from a pill.
 //! Anything else that starts with `/` is sent as it is, like Fluxer does.
+
+use inlet_editor::MediaCommand;
 
 /// What picking a command does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +79,18 @@ pub const COMMANDS: &[Command] = &[
         description: "composer-cmd-saved",
         guild_only: false,
     },
+    Command {
+        name: "/sticker",
+        kind: Kind::Action,
+        description: "composer-cmd-sticker",
+        guild_only: false,
+    },
+    Command {
+        name: "/gif",
+        kind: Kind::Action,
+        description: "composer-cmd-gif",
+        guild_only: false,
+    },
 ];
 
 /// Commands whose name contains `query` (without the slash), as Fluxer filters them.
@@ -104,8 +120,8 @@ pub enum Parsed {
     Msg { user_id: String, message: String },
     /// Send this text instead (`/me`, `/spoiler`).
     Wrapped(String),
-    /// `/saved`: needs a pick from the saved media list.
-    Saved,
+    /// `/gif`, `/sticker` or `/saved` sent as it stands: there was no result to pick.
+    Media(MediaCommand),
     /// Not a command: send as it is.
     Text,
 }
@@ -139,8 +155,14 @@ pub fn parse(wire: &str) -> Parsed {
             return Parsed::Wrapped(format!("{open}{content}{close}"));
         }
     }
-    if after_command(t, "/saved").is_some() {
-        return Parsed::Saved;
+    for (name, kind) in [
+        ("/saved", MediaCommand::Saved),
+        ("/sticker", MediaCommand::Sticker),
+        ("/gif", MediaCommand::Gif),
+    ] {
+        if after_command(t, name).is_some() {
+            return Parsed::Media(kind);
+        }
     }
     Parsed::Text
 }
@@ -195,7 +217,10 @@ mod tests {
             Parsed::Wrapped("||it ends||".into())
         );
         assert_eq!(parse("/me "), Parsed::Text);
-        assert_eq!(parse("/saved cats"), Parsed::Saved);
+        assert_eq!(parse("/saved cats"), Parsed::Media(MediaCommand::Saved));
+        assert_eq!(parse("/sticker"), Parsed::Media(MediaCommand::Sticker));
+        assert_eq!(parse("/gif cute cats"), Parsed::Media(MediaCommand::Gif));
+        assert_eq!(parse("/gifs"), Parsed::Text);
         assert_eq!(
             parse("/shrug"),
             Parsed::Text,

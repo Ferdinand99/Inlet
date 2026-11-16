@@ -41,7 +41,7 @@ pub fn matching<'a>(memes: &'a [p::Meme], query: &str) -> Vec<&'a p::Meme> {
 }
 
 /// A still preview of a meme through the media proxy, or `None`.
-fn preview(proxy: &p::Media, meme: &p::Meme, scale: f32) -> Option<MediaRequest> {
+pub(super) fn preview(proxy: &p::Media, meme: &p::Meme, scale: f32) -> Option<MediaRequest> {
     let w = (TILE_W * scale.max(1.)).ceil() as u32;
     let h = (TILE_H * scale.max(1.)).ceil() as u32;
     let t = Transform {

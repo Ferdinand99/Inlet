@@ -752,6 +752,8 @@ impl Inlet {
                     edit_last(&view, &account, thread, window, cx);
                 }
             }
+            // The thread panel's composer has no media lists (no picker buttons).
+            ComposerEvent::Media(_) => {}
         }
     }
 

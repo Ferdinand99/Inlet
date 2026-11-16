@@ -21,6 +21,7 @@
 //! - [`expressions`]: custom emoji and sticker lookups, and memes.
 //! - [`gifs`]: GIF search through the instance's GIF service.
 //! - [`invites`]: look up and accept invites (codes checked before use).
+//! - [`links`]: the domains an account trusts for links (user settings).
 //!
 //! Every call is a method on [`crate::Client`] and goes through the
 //! account's shared rate limiter like the rest. On top of that, message and
@@ -39,6 +40,7 @@ pub mod folders;
 pub mod gifs;
 pub mod inbox;
 pub mod invites;
+pub mod links;
 pub mod messages;
 pub mod preferences;
 pub mod profiles;

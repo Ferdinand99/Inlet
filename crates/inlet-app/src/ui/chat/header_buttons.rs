@@ -9,13 +9,13 @@
 use gpui::{AnyElement, Context};
 
 use crate::app::Inlet;
-use crate::ui::{inbox, members, notifications, search, sidebar, threads};
+use crate::ui::{inbox, media, members, notifications, search, sidebar, threads};
 
 /// One header button: `None` hides it.
 pub type HeaderButton = fn(&Inlet, &mut Context<Inlet>) -> Option<AnyElement>;
 
 /// Left to right, in Fluxer's order.
-pub const BUTTONS: [HeaderButton; 7] = [
+pub const BUTTONS: [HeaderButton; 8] = [
     threads::header_button,
     notifications::header_button,
     inbox::pinned_header_button,
@@ -23,6 +23,7 @@ pub const BUTTONS: [HeaderButton; 7] = [
     members::header_button,
     search::header_button,
     inbox::header_button,
+    media::downloads::header_button,
 ];
 
 /// The buttons to draw for the open channel.

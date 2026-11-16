@@ -144,7 +144,7 @@ impl GifState {
     }
 
     /// A search goes out now: its nonce, and its text kept to match the answer.
-    fn start_search(&mut self, query: String) -> (u64, String) {
+    pub(super) fn start_search(&mut self, query: String) -> (u64, String) {
         let nonce = self.nonce();
         self.search_waiting = Some((nonce, query.clone()));
         (nonce, query)
@@ -155,6 +155,24 @@ impl GifState {
         self.timer = None;
         self.search_waiting = None;
         self.debounce = SearchDebounce::default();
+    }
+
+    /// The answer of the newest search, when it was for `query`.
+    pub(super) fn search_for(&self, query: &str) -> Option<&Result<Vec<p::Gif>, String>> {
+        self.search
+            .as_ref()
+            .filter(|(q, _)| q == query)
+            .map(|(_, r)| r)
+    }
+
+    /// The trending answer, once there is one.
+    pub(super) fn trending_result(&self) -> Option<&Result<Vec<p::Gif>, String>> {
+        self.trending.as_ref()
+    }
+
+    /// Whether a search with this nonce is the one waited for.
+    pub(super) fn waits_for(&self, nonce: u64) -> bool {
+        matches!(&self.search_waiting, Some((n, _)) if *n == nonce)
     }
 
     pub fn answered_gifs(&mut self, nonce: u64, result: Result<Vec<p::Gif>, String>) {
@@ -199,7 +217,7 @@ enum Tile {
 
 /// The link to put into a message: an `http(s)` URL without spaces or control
 /// characters, as the parser wrote it (`None` for anything else).
-fn sendable(url: &str) -> Option<String> {
+pub(super) fn sendable(url: &str) -> Option<String> {
     if url.is_empty() || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return None;
     }
@@ -244,7 +262,7 @@ fn favourite_preview(entry: &FavoriteGifEntry, media: &p::Media, t: Transform) -
 /// The requests for a GIF preview of `w` x `h` logical pixels from a preview URL
 /// builder (always the media proxy): the animation at its logical size, and the still
 /// at the device pixels shown.
-fn requests(
+pub(super) fn requests(
     preview: impl Fn(Transform) -> Option<String>,
     scale: f32,
 ) -> (Option<MediaRequest>, Option<MediaRequest>) {
@@ -289,7 +307,7 @@ impl Inlet {
         }));
     }
 
-    fn gif_trending_needed(&mut self) {
+    pub(super) fn gif_trending_needed(&mut self) {
         let gifs = &mut self.composer.pickers.gifs;
         if matches!(gifs.trending, Some(Ok(_))) || gifs.trending_waiting.is_some() {
             return;

@@ -24,7 +24,7 @@ impl Inlet {
         }
         if markdown::openable(url).is_none() {
             self.chat.error = Some(t!("link-only-http"));
-        } else if masked {
+        } else if masked && !self.overlays.trusted.trusts_url(url) {
             self.overlays.pending_link = Some(url.to_string());
         } else {
             cx.open_url(url);
@@ -41,6 +41,29 @@ impl Inlet {
             .map(|u| u.as_str().to_string())
             .unwrap_or_else(|| url.to_string());
         let lines = wrap_url(&shown, 64, 6);
+        // "Always trust" for a plain host that is not trusted yet, and never for a link that
+        // can fool the reader.
+        let trust_host = parsed
+            .as_ref()
+            .filter(|_| !markdown::is_deceptive(url))
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .filter(|h| self.overlays.trusted.with_added(h).is_some());
+        let trust = trust_host.map(|host| {
+            let target = parsed.clone();
+            button(
+                "link-trust",
+                t!("link-trust-open", host = host.as_str()),
+                false,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.overlays.pending_link = None;
+                this.trust_domain(&host, cx);
+                if let Some(u) = &target {
+                    cx.open_url(u.as_str());
+                }
+                cx.notify();
+            }))
+        });
         modal(
             "link-confirm",
             520.,
@@ -82,6 +105,7 @@ impl Inlet {
                             },
                         )),
                     )
+                    .children(trust)
                     .child(
                         button("link-cancel", t!("common-cancel"), false).on_click(cx.listener(
                             |this, _, _, cx| {

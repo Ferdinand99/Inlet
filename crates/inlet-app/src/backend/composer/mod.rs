@@ -25,6 +25,7 @@
 mod directory;
 pub mod exif;
 pub mod gif;
+mod links;
 mod send;
 pub mod upload;
 
@@ -69,6 +70,34 @@ pub enum Cmd {
     CancelUpload { nonce: String },
     /// The emoji, GIF, sticker and meme pickers.
     Pickers(gif::Cmd),
+    /// Save the account's whole list of trusted link domains.
+    TrustDomains(Vec<String>),
+}
+
+/// Texts and lists from the instance's discovery document (no request: it is read at
+/// connect), cut to sizes the views can show.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InstanceTexts {
+    /// `branding.upload_limit_message`: shown with a refusal of a file that is too large.
+    pub upload_note: Option<String>,
+    /// The instance's own hosts and `branding.trusted_domains`: links to these open
+    /// without a warning.
+    pub trusted_domains: Vec<String>,
+}
+
+impl InstanceTexts {
+    pub fn of(discovery: &inlet_protocol::Discovery) -> Self {
+        InstanceTexts {
+            upload_note: discovery
+                .upload_limit_message()
+                .map(|m| plain_note(&m))
+                .filter(|m| !m.is_empty()),
+            trusted_domains: instance_hosts(discovery)
+                .into_iter()
+                .chain(discovery.trusted_domains())
+                .collect(),
+        }
+    }
 }
 
 pub enum Ev {
@@ -80,6 +109,9 @@ pub enum Ev {
         max_message_length: usize,
         /// The account's upload limits.
         uploads: Limits,
+        /// What the instance's own settings add: its text for oversized files and its
+        /// trusted link domains.
+        instance: InstanceTexts,
     },
     /// A send was refused with a wait (slowmode or a rate limit); the countdown takes it.
     /// The message list shows the failed message itself.
@@ -117,6 +149,8 @@ pub enum Ev {
     UploadStuck { nonce: String, name: String },
     /// Answers for the pickers.
     Pickers(gif::Ev),
+    /// Saving the trusted link domains failed.
+    TrustedDomainsFailed(String),
 }
 
 pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
@@ -140,5 +174,126 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
         Cmd::Upload(upload) => backend.upload(upload),
         Cmd::CancelUpload { nonce } => backend.cancel_upload(nonce),
         Cmd::Pickers(cmd) => backend.pickers(cmd),
+        Cmd::TrustDomains(domains) => backend.trust_domains(domains),
+    }
+}
+
+/// The hosts of an instance's own endpoints (API, media, web app, invites, gifts, the
+/// status page): Fluxer's client trusts the ones it was built from.
+fn instance_hosts(discovery: &inlet_protocol::Discovery) -> Vec<String> {
+    let e = &discovery.endpoints;
+    let mut urls: Vec<&str> = vec![e.api_public.as_str()];
+    urls.extend(e.media.as_deref());
+    urls.extend(e.webapp.as_deref());
+    for key in ["marketing", "invite", "gift", "static_cdn"] {
+        urls.extend(e.extra.get(key).and_then(|v| v.as_str()));
+    }
+    urls.extend(
+        discovery
+            .app_public
+            .get("branding")
+            .and_then(|b| b.get("status_page_url"))
+            .and_then(|v| v.as_str()),
+    );
+    let mut hosts: Vec<String> = Vec::new();
+    for url in urls {
+        let host = url::Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_lowercase()));
+        if let Some(host) = host.filter(|h| !h.is_empty() && !hosts.contains(h)) {
+            hosts.push(host);
+        }
+    }
+    hosts
+}
+
+/// An instance's free text as one plain line: line breaks and tabs become spaces,
+/// control, bidi and zero-width characters go, runs of spaces become one.
+pub fn plain_note(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut space = true;
+    for c in text.chars() {
+        let c = if matches!(c, '\n' | '\r' | '\t') {
+            ' '
+        } else {
+            c
+        };
+        let hidden = c.is_control()
+            || matches!(c,
+                '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+                | '\u{2028}' | '\u{2029}' | '\u{FEFF}' | '\u{061C}');
+        if hidden {
+            continue;
+        }
+        if c.is_whitespace() {
+            if !space {
+                out.push(' ');
+            }
+            space = true;
+        } else {
+            out.push(c);
+            space = false;
+        }
+    }
+    out.trim_end().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_instance_note_becomes_one_plain_line() {
+        assert_eq!(
+            plain_note("Ask\n\nthe  admin\u{202e}!\tThanks\u{0}"),
+            "Ask the admin! Thanks"
+        );
+        assert_eq!(plain_note("\n\n"), "");
+    }
+
+    #[test]
+    fn instance_texts_come_from_the_discovery_document() {
+        let d: inlet_protocol::Discovery = serde_json::from_value(serde_json::json!({
+            "api_code_version": 1,
+            "endpoints": {"api_public": "https://x.example/api", "gateway": "wss://x.example/gw"},
+            "app_public": {"branding": {
+                "upload_limit_message": "Need more?\nAsk us.",
+                "trusted_domains": ["Docs.Example.org", "*"]
+            }}
+        }))
+        .unwrap();
+        let t = InstanceTexts::of(&d);
+        assert_eq!(t.upload_note.as_deref(), Some("Need more? Ask us."));
+        // The instance's own API host first, then its list.
+        assert_eq!(t.trusted_domains, ["x.example", "docs.example.org"]);
+    }
+
+    #[test]
+    fn the_instances_own_endpoint_hosts_count_as_trusted() {
+        let d: inlet_protocol::Discovery = serde_json::from_value(serde_json::json!({
+            "api_code_version": 1,
+            "endpoints": {
+                "api_public": "https://api.chat.example/v1",
+                "gateway": "wss://gw.chat.example",
+                "media": "https://media.chat.example",
+                "webapp": "https://chat.example",
+                "invite": "https://join.chat.example",
+                "other": "https://not-listed.example"
+            },
+            "app_public": {"branding": {"status_page_url": "https://status.chat.example/"}}
+        }))
+        .unwrap();
+        let hosts = instance_hosts(&d);
+        for h in [
+            "api.chat.example",
+            "media.chat.example",
+            "chat.example",
+            "join.chat.example",
+            "status.chat.example",
+        ] {
+            assert!(hosts.contains(&h.to_string()), "{h}");
+        }
+        assert!(!hosts.contains(&"not-listed.example".to_string()));
+        assert!(!hosts.contains(&"gw.chat.example".to_string()));
     }
 }

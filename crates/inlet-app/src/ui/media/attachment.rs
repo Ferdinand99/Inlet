@@ -18,6 +18,7 @@ use gpui::{div, prelude::*, px, AnyElement, Context, FontWeight, ObjectFit, Shar
 use inlet_media::{FetchError, MediaError};
 use url::Url;
 
+use super::downloads::Status;
 use super::failed::{Origin, Trouble};
 use super::image::{placeholder, Shown};
 use super::{file_size, requests, MediaIcon};
@@ -309,7 +310,7 @@ impl Inlet {
                 }
                 AttachmentKind::File => {
                     any_file = true;
-                    files = files.child(self.file_card(&key, &a, cx));
+                    files = files.child(self.file_card(message_id, &key, &a, cx));
                 }
             }
         }
@@ -479,11 +480,28 @@ impl Inlet {
     }
 
     /// A file that is not an image, video or audio: icon, name, size and save.
-    fn file_card(&self, key: &str, a: &Attachment, cx: &mut Context<Self>) -> AnyElement {
+    fn file_card(
+        &self,
+        message_id: &str,
+        key: &str,
+        a: &Attachment,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if let Some(cover) = self.file_cover(key, a, cx) {
             return cover;
         }
-        self.file_row(key, a, MediaIcon::File, file_size(a.size), None, cx)
+        let row = self.file_row(key, a, MediaIcon::File, file_size(a.size), None, cx);
+        // A text or CSV file shows its first lines under the card.
+        match self.text_preview(message_id, a, cx) {
+            Some(preview) => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(row)
+                .child(preview)
+                .into_any_element(),
+            None => row,
+        }
     }
 
     /// The cover over a spoiler file or audio card, the card's size: the name, size and
@@ -596,12 +614,33 @@ impl Inlet {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // The downloads panel shows it from now on: progress, and a way to cancel.
+            let progress = std::sync::Arc::new(backend_media::SaveProgress::default());
+            let id = this
+                .update(cx, |this, cx| {
+                    this.download_started(&shown_name, path.clone(), progress.clone(), cx)
+                })
+                .ok();
             let result = runtime
-                .spawn(backend_media::save_to(fetcher, url, path, limit))
+                .spawn(backend_media::save_tracked(
+                    fetcher, url, path, limit, progress,
+                ))
                 .await;
             let _ = this.update(cx, |this, cx| {
+                let status = match &result {
+                    Ok(Ok(_)) => Status::Done,
+                    Ok(Err(backend_media::SaveError::Cancelled)) => Status::Cancelled,
+                    Ok(Err(err)) => Status::Failed(err.to_string()),
+                    Err(_) => Status::Failed(t!("media-save-stopped")),
+                };
+                if let Some(id) = id {
+                    this.download_ended(id, status, cx);
+                }
                 this.chat.notice = Some(match result {
                     Ok(Ok(_)) => t!("media-saved", name = shown_name),
+                    Ok(Err(backend_media::SaveError::Cancelled)) => {
+                        t!("media-save-cancelled-notice")
+                    }
                     Ok(Err(err)) => t!("media-save-failed", reason = err.to_string()),
                     Err(_) => t!("media-save-failed", reason = t!("media-save-stopped")),
                 });

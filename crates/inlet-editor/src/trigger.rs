@@ -13,6 +13,51 @@ pub enum Trigger {
     Channel(String),
     Emoji(String),
     Command(String),
+    /// `/gif`, `/sticker` or `/saved` with the search text after it: the list offers
+    /// results to send, not text to insert. The range covers the whole message up to the
+    /// caret.
+    Media(MediaCommand, String),
+}
+
+/// The commands that search for something to send.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaCommand {
+    Gif,
+    Sticker,
+    Saved,
+}
+
+impl MediaCommand {
+    /// The command as typed, with its slash.
+    pub fn name(self) -> &'static str {
+        match self {
+            MediaCommand::Gif => "/gif",
+            MediaCommand::Sticker => "/sticker",
+            MediaCommand::Saved => "/saved",
+        }
+    }
+}
+
+/// A media command at the start of `before_caret` (white space may come first), whole
+/// and followed by white space or nothing, with the search text after it.
+fn media_command(before_caret: &str) -> Option<(MediaCommand, String)> {
+    let t = before_caret.trim_start();
+    let rest = t.strip_prefix('/')?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let kind = match name.as_str() {
+        "gif" => MediaCommand::Gif,
+        "sticker" => MediaCommand::Sticker,
+        "saved" => MediaCommand::Saved,
+        _ => return None,
+    };
+    let after = &rest[name.len()..];
+    if !after.is_empty() && !after.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some((kind, after.trim().to_owned()))
 }
 
 /// The fewest characters after `:` before the emoji list opens. It keeps `:)` and `:D` quiet.
@@ -29,6 +74,13 @@ pub fn trigger_at(buf: &Buffer, cursor: usize) -> Option<(Range<usize>, Trigger)
     }
     if buf.token_inside(cursor).is_some() {
         return None;
+    }
+    // A media command takes the whole message before the caret, so it comes before the
+    // word walk (the search text has spaces). A pill anywhere in it is not a command.
+    if buf.tokens().is_empty() {
+        if let Some((kind, query)) = media_command(&text[..cursor]) {
+            return Some((0..cursor, Trigger::Media(kind, query)));
+        }
     }
     // Walk back to the start of the word.
     let mut start = cursor;

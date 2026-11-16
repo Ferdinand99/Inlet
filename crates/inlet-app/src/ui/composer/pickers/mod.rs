@@ -27,6 +27,7 @@
 // optional "send GIFs at once" setting is not read yet), and a meme is always sent at
 // once by its ID (Fluxer puts its link into the composer unless that setting is on).
 
+mod commands;
 mod emoji;
 mod gif;
 mod meme;
@@ -226,6 +227,8 @@ pub struct PickersState {
     memes_asked: bool,
     /// Why the last load of the memes failed (asked again when the tab opens).
     memes_error: Option<String>,
+    /// The result lists of `/gif`, `/sticker` and `/saved` in the composer.
+    commands: commands::MediaList,
     /// The emoji and sticker grids, built again only when what they show changes.
     emoji_rows: Cached<emoji::GridKey, (Vec<emoji::Row>, Vec<usize>)>,
     sticker_rows: Cached<sticker::GridKey, (Vec<sticker::Row>, bool)>,
@@ -662,8 +665,16 @@ impl Inlet {
                     }
                 }
                 self.set_picker_buttons(cx);
+                self.media_rows_changed(cx);
             }
-            Ev::Gifs { nonce, result } => pickers.gifs.answered_gifs(nonce, result),
+            Ev::Gifs { nonce, result } => {
+                if pickers.commands.waits_for(nonce) {
+                    pickers.commands.gifs_answered(nonce, result);
+                } else {
+                    pickers.gifs.answered_gifs(nonce, result);
+                }
+                self.media_rows_changed(cx);
+            }
             Ev::Categories { nonce, result } => pickers.gifs.answered_categories(nonce, result),
             Ev::Preferences(stored) => pickers.prefs.set_stored(*stored),
             Ev::PreferencesLoadFailed(reason) => {
@@ -680,7 +691,10 @@ impl Inlet {
                 pickers.prefs.edited(None);
                 self.chat.notice = Some(t!("picker-prefs-failed", error = reason));
             }
-            Ev::Memes(memes) => pickers.memes = Some(memes),
+            Ev::Memes(memes) => {
+                pickers.memes = Some(memes);
+                self.media_rows_changed(cx);
+            }
             Ev::SendFailed(reason) => {
                 self.chat.notice = Some(t!("picker-send-failed", error = reason));
             }

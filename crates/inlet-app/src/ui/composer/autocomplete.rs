@@ -7,7 +7,7 @@
 //! person made up. The full emoji, GIF and sticker pickers live in `pickers`.
 
 use gpui::{div, prelude::*, px, AnyElement, Context, FontWeight, SharedString};
-use inlet_editor::{Id, Token, Trigger};
+use inlet_editor::{Id, MediaCommand, Token, Trigger};
 use inlet_state::{AccountState, ChannelId, GuildId};
 
 use super::commands;
@@ -29,6 +29,10 @@ pub enum Pick {
     Token(Token, String),
     /// Text in place of the trigger.
     Text(String),
+    /// A result of `/gif`, `/sticker` or `/saved`: row `index` of the list the app drew
+    /// for the search. With `text` (a GIF's link) the message becomes that text and is
+    /// sent; without it the app sends the item.
+    Media { index: usize, text: Option<String> },
 }
 
 /// The group a list belongs to, shown as its heading.
@@ -38,6 +42,8 @@ pub enum Section {
     Channels,
     Emoji,
     Commands,
+    /// Results of a media command; the app draws that list (it has the pictures).
+    Media(MediaCommand),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +74,9 @@ pub fn candidates(trigger: &Trigger, src: &Sources) -> (Section, Vec<Candidate>)
         Trigger::Channel(q) => (Section::Channels, channels(q, src)),
         Trigger::Emoji(q) => (Section::Emoji, emoji(q, src)),
         Trigger::Command(q) => (Section::Commands, command_rows(q, src.in_guild)),
+        // The rows come from the app: it holds the GIF answers, the saved media and the
+        // stickers, and the pictures to show.
+        Trigger::Media(kind, _) => (Section::Media(*kind), Vec::new()),
     }
 }
 
@@ -226,6 +235,8 @@ fn command_description(name: &str) -> String {
         "/spoiler" => t!("composer-cmd-spoiler"),
         "/nick" => t!("composer-cmd-nick"),
         "/msg" => t!("composer-cmd-msg"),
+        "/sticker" => t!("composer-cmd-sticker"),
+        "/gif" => t!("composer-cmd-gif"),
         _ => t!("composer-cmd-saved"),
     }
 }
@@ -332,11 +343,15 @@ impl ComposerView {
         if open.rows.is_empty() {
             return None;
         }
+        if matches!(open.section, Section::Media(_)) {
+            return None;
+        }
         let heading: SharedString = match open.section {
             Section::Mentions => t!("composer-ac-mentions"),
             Section::Channels => t!("composer-ac-channels"),
             Section::Emoji => t!("composer-ac-emoji"),
             Section::Commands => t!("composer-ac-commands"),
+            Section::Media(_) => return None,
         }
         .into();
         let rows = open.rows.iter().enumerate().map(|(i, c)| {
@@ -447,7 +462,7 @@ mod tests {
         rows.iter()
             .filter_map(|c| match &c.pick {
                 Pick::Token(t, _) => Some(t.clone()),
-                Pick::Text(_) => None,
+                Pick::Text(_) | Pick::Media { .. } => None,
             })
             .collect()
     }
