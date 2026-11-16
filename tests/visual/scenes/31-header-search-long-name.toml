@@ -1,0 +1,10 @@
+# The channel header with the search column open at 1280 px: the channel name is long
+# and keeps its place (cut with an ellipsis), the topic and the status line give way.
+name = "header-search-long-name"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "search-results"
+guild = "g1"
+channel = "c-rules"

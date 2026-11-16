@@ -185,3 +185,26 @@ fn a_custom_status_of_invisible_characters_does_not_show() {
     }));
     assert!(s.presences().own().custom_at(0).is_none());
 }
+
+#[test]
+fn display_text_keeps_the_joiners_of_emoji_sequences_only() {
+    use inlet_state::presence::clean_display_text;
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    assert_eq!(clean_display_text(family), family);
+    assert_eq!(clean_display_text("\u{2764}\u{FE0F}"), "\u{2764}\u{FE0F}");
+    // Stray joiners and selectors, direction marks and zero-width spaces go.
+    assert_eq!(clean_display_text("\u{200D}a\u{200D}"), "a");
+    assert_eq!(clean_display_text("a \u{FE0F}\u{202E}\u{200B}b"), "a b");
+    assert_eq!(clean_display_text("\u{200D}\u{FE0F} "), " ");
+}
+
+#[test]
+fn display_text_keeps_a_zero_width_non_joiner_inside_a_word() {
+    use inlet_state::presence::clean_display_text;
+    // A Persian word needs it; at the edges it is stray.
+    assert_eq!(
+        clean_display_text("\u{0645}\u{200C}\u{062F}"),
+        "\u{0645}\u{200C}\u{062F}"
+    );
+    assert_eq!(clean_display_text("\u{200C}a\u{200C}"), "a");
+}
