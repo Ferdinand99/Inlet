@@ -528,7 +528,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Unsigned Inlet.app. On tags, release.yml hands it to macos-sign.yml,
+      # Unsigned Inlet.app. In a release, release.yml hands it to macos-sign.yml,
       # which signs and notarises it. The tarball keeps the file modes.
       - name: Assemble Inlet.app
         run: |
