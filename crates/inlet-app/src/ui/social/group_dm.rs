@@ -519,7 +519,11 @@ impl Inlet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let search = cx.new(|cx| TextInput::new(t!("social-group-dm-search"), cx).max_chars(100));
+        let placeholder = match mode {
+            Mode::InviteToCommunity { .. } => t!("social-community-search"),
+            _ => t!("social-group-dm-search"),
+        };
+        let search = cx.new(|cx| TextInput::new(placeholder, cx).max_chars(100));
         let observe = cx.observe(&search, |_, _, cx| cx.notify());
         let (name, mature) = self.window_fields(mode, cx);
         let submit = name
@@ -912,11 +916,17 @@ impl Inlet {
             ),
             None => (Vec::new(), String::new()),
         };
-        let mut parts = vec![title_line(title)];
         if let Some(panel) = panel {
+            // The question has its own title, as Fluxer's confirmations.
+            let title = match &panel {
+                Panel::Duplicates(_) => t!("social-duplicate-title"),
+                Panel::Unaddable { .. } => t!("social-unaddable-title"),
+            };
+            let mut parts = vec![title_line(title)];
             parts.extend(self.panel_parts(panel, cx));
             return parts;
         }
+        let mut parts = vec![title_line(title)];
         let left = room.saturating_sub(picked.len());
         parts.push(
             div()

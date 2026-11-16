@@ -108,6 +108,8 @@ social-icon-animated = Animated icons are not supported. Use a static image.
 
 ## Creating a group: groups that exist already, and people who cannot be added
 
+social-duplicate-title = Confirm new group
+social-unaddable-title = Some users can't be added
 social-duplicate-body = You already have a group with these users. Do you really want to create a new one? That's fine too!
 social-duplicate-create = Create new group
 social-unaddable-body = The following people can't be added to this group DM:
@@ -184,6 +186,7 @@ social-community-item = Invite to Community
 social-community-title = Invite to Community
 social-community-body = Pick a community to send { $name } an invite to.
 social-community-none = No community to invite to.
+social-community-search = Search communities
 social-invite-sent = Invite sent for { $guild }
 
 ## Messages from blocked people

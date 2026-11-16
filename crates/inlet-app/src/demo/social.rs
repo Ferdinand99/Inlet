@@ -136,8 +136,10 @@ pub fn group_invites(now_ms: i64) -> Vec<crate::backend::social::relationships::
         }
     };
     vec![
-        invite("aB3dEf7h", "ada", 2, 0, Some(day / 2), day / 2),
-        invite("Zx91LmQ2", "linus", 0, 5, Some(3 * day), day),
+        // Half a minute over, so the time left reads 12h 0m and 3d 0h however long the
+        // window takes to come up.
+        invite("aB3dEf7h", "ada", 2, 0, Some(day / 2 + 30_000), day / 2),
+        invite("Zx91LmQ2", "linus", 0, 5, Some(3 * day + 30_000), day),
         invite("Kp07WnRt", "ada", 11, 0, None, 9 * day),
     ]
 }
