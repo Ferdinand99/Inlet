@@ -564,6 +564,34 @@ async fn leaving_the_sign_in_stops_the_wait_for_the_email_link() {
     );
 }
 
+#[tokio::test]
+async fn leaving_the_screen_stops_the_wait_for_the_email_link_and_forgets_the_instance() {
+    let server = instance(classic()).await;
+    Mock::given(path("/api/v1/auth/login"))
+        .respond_with(ip_required())
+        .mount(&server)
+        .await;
+    Mock::given(path("/api/v1/auth/ip-authorization/poll"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"completed": false})))
+        .mount(&server)
+        .await;
+    let (mut b, mut rx, mut irx, _store) = backend();
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    handle(&mut b, Cmd::Leave);
+    assert!(b.entry.is_none());
+    // A poll may be in flight; after it settles, no more come.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let polled = count(&server, "/api/v1/auth/ip-authorization/poll").await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        count(&server, "/api/v1/auth/ip-authorization/poll").await,
+        polled
+    );
+}
+
 /// 400 `CAPTCHA_REQUIRED` until the request carries a solved challenge.
 struct Gate(Value);
 
