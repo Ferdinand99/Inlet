@@ -274,16 +274,21 @@ jobs:
           rustc --version
           cargo --version
 
+      # The app and the web view helper it starts for flows that need a web page. The
+      # helper ships next to inlet.exe.
       - name: Build
-        run: cargo build --release --locked -p inlet
+        run: cargo build --release --locked -p inlet -p inlet-web
 
       - name: Package
         shell: bash
         run: |
           mkdir dist
           cp target/release/inlet.exe dist/inlet.exe
+          cp target/release/inlet-web.exe dist/inlet-web.exe
           cp THIRD-PARTY-NOTICES dist/THIRD-PARTY-NOTICES
           cp LICENSE dist/LICENSE
+          echo "Size of the files in dist:"
+          ls -l dist | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The test-only extra CA must not be in a shipped binary in any form.
       - name: The release binary has no test CA code
@@ -300,6 +305,15 @@ jobs:
           # Demo data and scene files are for screenshots only.
           if grep -aqF "demo scene file" dist/inlet.exe; then
             echo "dist/inlet.exe contains demo code"
+            exit 1
+          fi
+          # The helper has no code for plain http on loopback or for trusting any certificate.
+          if ! test -s dist/inlet-web.exe; then
+            echo "dist/inlet-web.exe is missing or empty; nothing was checked"
+            exit 1
+          fi
+          if grep -aqF "inlet-web test-loopback build" dist/inlet-web.exe; then
+            echo "dist/inlet-web.exe is a test build"
             exit 1
           fi
 
@@ -529,20 +543,24 @@ jobs:
           fi
           xcrun metal --version
 
+      # The app and the web view helper it starts for flows that need a web page.
       - name: Build
-        run: cargo build --release --locked -p inlet
+        run: cargo build --release --locked -p inlet -p inlet-web
 
       # The binary is not signed or notarised yet. On the first start Gatekeeper
       # blocks it: right-click the file and choose Open, or run
-      # `xattr -d com.apple.quarantine inlet` after unzipping.
+      # `xattr -d com.apple.quarantine inlet inlet-web` after unzipping.
       - name: Package
         run: |
           mkdir dist
           cp target/release/inlet dist/inlet
+          cp target/release/inlet-web dist/inlet-web
           cp THIRD-PARTY-NOTICES dist/THIRD-PARTY-NOTICES
           cp LICENSE dist/LICENSE
           cd dist
-          zip inlet-macos-aarch64.zip inlet THIRD-PARTY-NOTICES LICENSE
+          zip inlet-macos-aarch64.zip inlet inlet-web THIRD-PARTY-NOTICES LICENSE
+          echo "Size of the files in dist:"
+          ls -l . | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The test-only extra CA must not be in a shipped binary in any form.
       - name: The release binary has no test CA code
@@ -560,6 +578,14 @@ jobs:
             echo "dist/inlet contains demo code"
             exit 1
           fi
+          if ! test -s dist/inlet-web; then
+            echo "dist/inlet-web is missing or empty; nothing was checked"
+            exit 1
+          fi
+          if grep -aqF "inlet-web test-loopback build" dist/inlet-web; then
+            echo "dist/inlet-web is a test build"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -570,9 +596,15 @@ jobs:
 
       # Unsigned Inlet.app. In a release, release.yml hands it to macos-sign.yml,
       # which signs and notarises it. The tarball keeps the file modes.
+      # The web view helper goes next to the app's executable. packaging/macos is the
+      # same as main's (a check enforces it), so the helper is added here. The signing
+      # workflow must sign it too: see packaging/README.md.
       - name: Assemble Inlet.app
         run: |
           packaging/macos/build-app.sh dist/inlet dist-app
+          cp dist/inlet-web dist-app/Inlet.app/Contents/MacOS/inlet-web
+          chmod 755 dist-app/Inlet.app/Contents/MacOS/inlet-web
+          lipo -archs dist-app/Inlet.app/Contents/MacOS/inlet-web | grep -qw arm64
           tar -czf inlet-macos-aarch64-app.tar.gz -C dist-app Inlet.app
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -682,6 +714,12 @@ jobs:
             echo "inlet enables the test-extra-ca feature"
             exit 1
           fi
+          # The web view's loopback and test features are for tests and the demo only: not
+          # in the app, and not in the helper as it is built for a release.
+          if cargo tree --locked -p inlet -p inlet-web -e features,no-dev | grep -F 'loopback'; then
+            echo "the app or the helper enables a loopback feature"
+            exit 1
+          fi
 
       - name: Build
         run: cargo build --profile ci --locked -p inlet
@@ -756,7 +794,9 @@ jobs:
             libxcb1-dev \
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
-            libzstd-dev
+            libzstd-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            xvfb
 
       - name: Install the pinned Rust toolchain
         run: |
@@ -778,6 +818,15 @@ jobs:
 
       - name: Clippy with demo data
         run: cargo clippy --profile ci --locked -p inlet --features demo --all-targets -- -D warnings
+
+      # The web view helper, for real: its window and its rules (blocked hosts, intercepted
+      # URLs, no downloads or new windows) against a local HTTPS server, under Xvfb. The
+      # test-loopback feature makes the helper trust the test server's certificate; it is
+      # refused in release builds.
+      - name: Web view helper tests under Xvfb
+        run: |
+          xvfb-run -a cargo test --profile ci --locked -p inlet-web --features test-loopback --test helper -- --include-ignored --test-threads=1
+          cargo clippy --profile ci --locked -p inlet-web --features test-loopback --all-targets -- -D warnings
 
       # The tray test needs a session bus to register on. The gpui glue and the
       # demo are behind a feature, so they are linted here separately.
@@ -827,6 +876,7 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
             squashfs-tools xvfb
 
       - name: Install the pinned Rust toolchain
@@ -835,15 +885,20 @@ jobs:
           rustc --version
           cargo --version
 
+      # The app and the web view helper it starts for flows that need a web page. The
+      # helper links WebKitGTK dynamically: the system needs libwebkit2gtk-4.1.
       - name: Build
-        run: cargo build --release --locked -p inlet
+        run: cargo build --release --locked -p inlet -p inlet-web
 
       - name: Package
         run: |
           mkdir dist
           cp target/release/inlet dist/inlet
+          cp target/release/inlet-web dist/inlet-web
           cp THIRD-PARTY-NOTICES dist/THIRD-PARTY-NOTICES
           cp LICENSE dist/LICENSE
+          echo "Size of the files in dist:"
+          ls -l dist | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The test-only extra CA must not be in a shipped binary in any form.
       - name: The release binary has no test CA code
@@ -859,6 +914,14 @@ jobs:
           # Demo data and scene files are for screenshots only.
           if grep -aqF "demo scene file" dist/inlet; then
             echo "dist/inlet contains demo code"
+            exit 1
+          fi
+          if ! test -s dist/inlet-web; then
+            echo "dist/inlet-web is missing or empty; nothing was checked"
+            exit 1
+          fi
+          if grep -aqF "inlet-web test-loopback build" dist/inlet-web; then
+            echo "dist/inlet-web is a test build"
             exit 1
           fi
 

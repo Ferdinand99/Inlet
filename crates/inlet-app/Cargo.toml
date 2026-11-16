@@ -12,7 +12,7 @@ publish = false
 # Built-in sample data, started with INLET_DEMO=1. Only for screenshots and UI checks;
 # off in normal builds. Also builds `inlet-visual`, the screenshot comparison tool, and
 # the layout tests.
-demo = ["dep:toml", "dep:image-webp"]
+demo = ["dep:toml", "dep:image-webp", "inlet-web/loopback"]
 # Trust the private test instance's CA (REST, gateway and media). Debug builds only:
 # inlet-protocol refuses it in a release build.
 test-extra-ca = ["inlet-protocol/test-extra-ca"]
@@ -38,6 +38,9 @@ required-features = ["demo"]
 inlet-editor = { path = "../inlet-editor" }
 inlet-emoji = { path = "../inlet-emoji" }
 inlet-protocol = { path = "../inlet-protocol" }
+# The embedded web view: the client of the helper program `inlet-web`, which ships next to
+# the app. The helper itself (wry, tao) is not part of the app.
+inlet-web = { path = "../inlet-web", default-features = false, features = ["client"] }
 # Per-account client state: the message windows the chat shows.
 inlet-state = { path = "../inlet-state" }
 # Images: fetched from the media proxy, decoded and cached with hard limits.
@@ -110,6 +113,10 @@ cpal = "0.18"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libloading = "0.8"
+
+# The window handle of the main window, which the web view's window is owned by.
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
 
 # Embeds the app icon and version info in inlet.exe.
 [target.'cfg(windows)'.build-dependencies]

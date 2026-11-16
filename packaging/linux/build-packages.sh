@@ -3,6 +3,9 @@
 #
 #   packaging/linux/build-packages.sh <path to the inlet binary> <output directory>
 #
+# The web view helper, inlet-web, must be in the same folder as the inlet binary; it goes
+# next to inlet in the AppImage and in the tarball. It needs WebKitGTK 4.1 on the system.
+#
 # Writes, with the workspace version from Cargo.toml:
 #
 #   inlet-<version>-linux-x86_64.AppImage   Velopack's Linux package: an AppImage that
@@ -39,6 +42,11 @@ if [ ! -f "$binary" ]; then
   echo "error: binary not found: $binary" >&2
   exit 1
 fi
+helper="$(dirname "$binary")/inlet-web"
+if [ ! -s "$helper" ]; then
+  echo "error: the web view helper is missing: $helper" >&2
+  exit 1
+fi
 
 # The version comes from [workspace.package] in the root Cargo.toml.
 version=$(awk '
@@ -69,6 +77,7 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/d
          "$feed" "$out_dir"
 
 install -m 755 "$binary" "$appdir/usr/bin/inlet"
+install -m 755 "$helper" "$appdir/usr/bin/inlet-web"
 install -m 755 "$here/AppRun" "$appdir/AppRun"
 install -m 644 "$here/no.opland.inlet.desktop" "$appdir/no.opland.inlet.desktop"
 install -m 644 "$here/no.opland.inlet.desktop" "$appdir/usr/share/applications/no.opland.inlet.desktop"
@@ -110,11 +119,12 @@ mkdir -p "$out_dir/velopack"
 find "$feed" -maxdepth 1 -type f \( -name '*.nupkg' -o -name '*.json' -o -name 'RELEASES*' \) \
   -exec cp {} "$out_dir/velopack/" \;
 
-# The tarball: the binary and the licence files, as before.
+# The tarball: the binary, the helper and the licence files.
 tar_stage="$work/tar"
 mkdir -p "$tar_stage"
 install -m 755 "$binary" "$tar_stage/inlet"
+install -m 755 "$helper" "$tar_stage/inlet-web"
 install -m 644 "$root/LICENSE" "$root/THIRD-PARTY-NOTICES" "$tar_stage/"
-tar -czf "$out_dir/inlet-$version-linux-x86_64.tar.gz" -C "$tar_stage" inlet THIRD-PARTY-NOTICES LICENSE
+tar -czf "$out_dir/inlet-$version-linux-x86_64.tar.gz" -C "$tar_stage" inlet inlet-web THIRD-PARTY-NOTICES LICENSE
 
 echo "Built the Linux packages for version $version in $out_dir" >&2

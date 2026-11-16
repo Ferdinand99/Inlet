@@ -29,6 +29,34 @@ Both are built with [Velopack](https://velopack.io) from the release-profile bin
 
 The binary answers `--version` (prints `inlet <version>`) and the installer's `--veloapp-*` hook arguments (exits at once) before it opens a window; see `crates/inlet-app/src/main.rs`.
 
+### The web view helper
+
+Flows that need a real web page (a sign-in at an identity provider, a payment, an OAuth consent) show it in a separate helper program, `inlet-web` (`crates/inlet-web`). Inlet starts it when it is needed and it ends with its window. It ships next to `inlet` in every package, and Inlet looks for it there (`crates/inlet-web/src/client.rs`):
+
+| Package | Where the helper is |
+|---|---|
+| Windows Setup and zip | `inlet-web.exe` next to `inlet.exe` |
+| Linux AppImage | `usr/bin/inlet-web` next to `usr/bin/inlet` |
+| Linux tar.gz | `inlet-web` next to `inlet` |
+| macOS `Inlet.app` | `Contents/MacOS/inlet-web` |
+| macOS zip | `inlet-web` next to `inlet` |
+
+The release jobs build both with `cargo build --release --locked -p inlet -p inlet-web`, and the packaging scripts refuse to build without the helper next to the binary. The helper uses the system's web engine and adds little to the download; the sizes of the files are in the job summary of each release build.
+
+What the system must have:
+
+- Windows: the WebView2 runtime. It comes with Windows 10 and 11 (Evergreen). When it is missing the helper reports `runtime_missing`, and Inlet can say so.
+- macOS: nothing (WKWebView is part of the system).
+- Linux: WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`, from the distribution) and GTK 3. The helper links them dynamically and they are not in the AppImage. Without them the helper cannot start and the flow fails with `helper_exited`. The development files are in the builder image and the CI jobs that build the helper.
+
+`packaging/macos` and the signing workflows are the same as on main (a check enforces it), so the macOS bundle gets the helper in `build.yml` (the step "Assemble Inlet.app"), after `build-app.sh`. **The signing workflow must be changed on main before a signed release can include the helper.** `macos-sign.yml` signs `Inlet.app` without `--deep`, so a second executable in `Contents/MacOS` stays unsigned and notarisation rejects the app. The helper must be signed first, with the hardened runtime and a timestamp, then the bundle (signing the bundle seals the helper's signature):
+
+```sh
+codesign --force --options runtime --timestamp   --keychain "$KEYCHAIN" --sign "$SIGN_IDENTITY"   build/Inlet.app/Contents/MacOS/inlet-web
+```
+
+as a step before "Sign the app". The helper needs no entitlements (WKWebView runs in Apple's own web content process), so no entitlements file is passed. `build-app.sh` should also copy the helper (and check its `arm64` slice), so that the step in `build.yml` can go.
+
 ### Updates
 
 The packages are laid out for Velopack auto-update, but nothing in the app checks for updates yet. `build-packages.sh` also writes a `velopack/` folder next to the packages in the build artifact (`inlet-windows-x86_64-packages`, `inlet-linux-x86_64`). It holds the full package (`*-full.nupkg`) and the release feed (`releases.<channel>.json`). Publishing an update feed means keeping those files with each release and passing the previous ones to `vpk` as input; the package layout does not change.

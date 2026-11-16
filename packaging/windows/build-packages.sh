@@ -3,6 +3,9 @@
 #
 #   packaging/windows/build-packages.sh <path to inlet.exe> <output directory>
 #
+# The web view helper, inlet-web.exe, must be in the same folder as inlet.exe; it goes
+# next to inlet.exe in both packages.
+#
 # Writes, with the workspace version from Cargo.toml:
 #
 #   inlet-<version>-windows-x86_64-setup.exe   installer; per user, no admin rights
@@ -32,6 +35,11 @@ root=$(cd "$here/../.." && pwd)
 
 if [ ! -f "$binary" ]; then
   echo "error: binary not found: $binary" >&2
+  exit 1
+fi
+helper="$(dirname "$binary")/inlet-web.exe"
+if [ ! -s "$helper" ]; then
+  echo "error: the web view helper is missing: $helper" >&2
   exit 1
 fi
 
@@ -66,6 +74,7 @@ feed="$work/feed"
 mkdir -p "$stage" "$feed" "$out_dir"
 
 cp "$binary" "$stage/inlet.exe"
+cp "$helper" "$stage/inlet-web.exe"
 cp "$root/LICENSE" "$stage/LICENSE"
 cp "$root/THIRD-PARTY-NOTICES" "$stage/THIRD-PARTY-NOTICES"
 
