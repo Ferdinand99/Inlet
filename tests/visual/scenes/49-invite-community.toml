@@ -1,0 +1,7 @@
+# The list of communities to invite a person to.
+name = "invite-community"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "invite-community"

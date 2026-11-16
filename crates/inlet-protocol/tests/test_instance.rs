@@ -65,3 +65,50 @@ async fn test_instance_discovery_and_gateway_hello() {
     assert_eq!(hello["op"], 10);
     let _ = ws.close(None).await;
 }
+
+/// The group DM, nickname and invite routes exist on the instance, and each one needs a
+/// token: a made-up token (never a real account's) is refused with 401, not 404.
+#[tokio::test]
+#[ignore = "talks to the private test instance"]
+async fn test_instance_group_invite_and_nickname_routes_need_a_token() {
+    use inlet_protocol::api::invites::InviteParams;
+    use inlet_protocol::{Channel, Client, Error, GroupDmEdit, Token};
+
+    let instance = Instance::discover(&origin()).await.expect("discovery");
+    let client = Client::new(instance.clone(), Token::new("not-a-real-token"));
+    let group: Channel =
+        serde_json::from_value(serde_json::json!({"id": "100", "type": 3})).unwrap();
+    let edit = GroupDmEdit {
+        nsfw: Some(false),
+        ..Default::default()
+    };
+    let refused = |what: &str, result: Result<(), Error>| match result {
+        Err(Error::Unauthorized) => println!("{what}: 401 as it should"),
+        other => panic!("{what}: {other:?}"),
+    };
+    refused(
+        "create invite",
+        client
+            .create_invite("100", InviteParams::default())
+            .await
+            .map(drop),
+    );
+    refused(
+        "list invites",
+        client.channel_invites("100").await.map(drop),
+    );
+    refused("revoke invite", client.delete_invite("aB3dEf7h").await);
+    refused(
+        "friend nickname",
+        client.set_friend_nickname("100", Some("x")).await.map(drop),
+    );
+    refused(
+        "edit group",
+        client.edit_group_dm(&group, &edit).await.map(drop),
+    );
+    refused("empty group", client.create_group_dm(&[]).await.map(|_| ()));
+    println!(
+        "invite link: {:?}",
+        inlet_protocol::api::invites::invite_url(&instance, "aB3dEf7h")
+    );
+}

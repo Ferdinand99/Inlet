@@ -7,7 +7,8 @@
 //! A DM row (42 px): the other person's avatar with their status dot, or the group's
 //! icon; the name with a BOT or SYSTEM tag; the mention count, and a close button on
 //! hover (a DM closes, a group asks before it is left). Right click opens the DM menu:
-//! pin or unpin, the group's settings, close or leave.
+//! pin or unpin; for a DM the friend's nickname and the invite to a community, then
+//! close; for a group its settings and, for the owner, its invites, then leave.
 // Deviation: Fluxer's list is virtualised; Inlet draws the first `MAX_DM_ROWS` rows.
 
 use gpui::{
@@ -23,7 +24,7 @@ use crate::model::{Channel, ChannelKind};
 use crate::theme;
 use crate::ui::notifications::badge::{mention_badge, RowMarks};
 use crate::ui::search::sidebar_actions::OpenQuickSwitcher;
-use crate::ui::social::group_dm::{group_name, Mode};
+use crate::ui::social::group_dm::{group_name, group_owner, Mode};
 use crate::ui::social::presence::avatar_status;
 use crate::ui::social::{person_status, user_tag, Confirm, DmMenu, SocialIcon};
 use crate::ui::HEADER_HEIGHT;
@@ -438,18 +439,38 @@ impl Inlet {
             .into_any_element()
     }
 
-    /// The DM menu: pin or unpin, the group's settings, close or leave.
+    /// The DM menu: pin or unpin; for a DM the friend's nickname and the invite to a
+    /// community, then close; for a group its settings and (the owner's) invites, then
+    /// leave.
     pub(crate) fn render_dm_menu(&mut self, menu: &DmMenu, cx: &mut Context<Self>) -> AnyElement {
         let channel = menu.channel;
-        let (pinned, group, name) = match self.account.as_ref().map(|a| a.read(cx)) {
-            Some(s) => (
-                s.relationships().pinned_dms().contains(&channel),
-                s.channel(channel)
-                    .is_some_and(|c| c.kind == channel_type::GROUP_DM),
-                group_name(s, channel),
-            ),
-            None => (false, false, String::new()),
+        let (pinned, group, name, friend, owner) = match self.account.as_ref().map(|a| a.read(cx)) {
+            Some(s) => {
+                let group = s
+                    .channel(channel)
+                    .is_some_and(|c| c.kind == channel_type::GROUP_DM);
+                // The one person of a DM, when they are a friend.
+                let person = s
+                    .channel(channel)
+                    .filter(|c| c.kind == channel_type::DM)
+                    .and_then(|c| c.recipients.first())
+                    .and_then(|u| UserId::parse(&u.id));
+                (
+                    s.relationships().pinned_dms().contains(&channel),
+                    group,
+                    group_name(s, channel),
+                    person,
+                    group && group_owner(s, channel) == Some(s.me_id()),
+                )
+            }
+            None => (false, false, String::new(), None, false),
         };
+        let is_friend = friend.is_some_and(|u| {
+            self.account.as_ref().is_some_and(|a| {
+                a.read(cx).relationships().kind(u) == Some(inlet_state::relationships::Kind::Friend)
+            })
+        });
+        let can_invite = friend.is_some_and(|u| self.can_invite_to_community(u, cx));
         let item = |id: &'static str, icon: SocialIcon, label: String, danger: bool| {
             let color = if danger {
                 theme::danger()
@@ -481,7 +502,7 @@ impl Inlet {
         } else {
             t!("social-pin-dm")
         };
-        let mut items = div().w(px(188.)).flex().flex_col().child(
+        let mut items = div().w(px(224.)).flex().flex_col().child(
             item("dm-menu-pin", SocialIcon::Pin, pin_label, false).on_click(cx.listener(
                 move |this, _, _, cx| {
                     this.social.dm_menu = None;
@@ -507,6 +528,19 @@ impl Inlet {
                     this.open_group_dm(Mode::Settings { channel }, window, cx)
                 })),
             );
+            if owner {
+                items = items.child(
+                    item(
+                        "dm-menu-invites",
+                        SocialIcon::UserPlus,
+                        t!("social-group-invites"),
+                        false,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_group_dm(Mode::Invites { channel }, window, cx)
+                    })),
+                );
+            }
             items = items.child(
                 item(
                     "dm-menu-leave",
@@ -524,6 +558,34 @@ impl Inlet {
                 })),
             );
         } else {
+            if let (Some(user), true) = (friend, is_friend) {
+                items = items.child(
+                    item(
+                        "dm-menu-friend-nickname",
+                        SocialIcon::Pencil,
+                        t!("social-friend-nickname-item"),
+                        false,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.social.dm_menu = None;
+                        this.open_friend_nickname(user, window, cx)
+                    })),
+                );
+            }
+            if let (Some(user), true) = (friend, can_invite) {
+                items = items.child(
+                    item(
+                        "dm-menu-invite-community",
+                        SocialIcon::UserPlus,
+                        t!("social-community-item"),
+                        false,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.social.dm_menu = None;
+                        this.open_invite_to_community(user, window, cx)
+                    })),
+                );
+            }
             items = items.child(
                 item(
                     "dm-menu-close",

@@ -48,7 +48,7 @@ None of this works in the app yet. Some of it exists as library code in the work
 - Unread markers, muting and notification levels.
 - Desktop notifications, sounds, badges and a tray icon.
 - Search and a quick switcher.
-- Member list, profiles, friends and group DMs.
+- Member list, profiles, friends with private nicknames, and group DMs with their settings (icon, name, nicknames, mature content, invite links, ownership). A person's menu can invite them to one of your communities.
 - Several accounts signed in at the same time. Today Inlet runs one session at a time.
 - A settings screen and keyboard shortcuts.
 - Voice calls first, then video and screen sharing.

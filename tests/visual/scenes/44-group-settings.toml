@@ -1,0 +1,8 @@
+# The group's "Edit group" window over the friends page: the icon, the name, the mature
+# content switch (the account owns the group) and the people with what the owner may do.
+name = "group-settings"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "group-settings"

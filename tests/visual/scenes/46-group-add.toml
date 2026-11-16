@@ -1,0 +1,8 @@
+# The window to add friends to the group, with the invite link for a friend who is not one
+# of the account's friends.
+name = "group-add"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "group-add"

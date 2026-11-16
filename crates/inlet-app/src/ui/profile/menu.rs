@@ -13,7 +13,7 @@ use crate::desktop::Layer;
 use crate::theme;
 
 /// Width of the menu.
-const WIDTH: f32 = 188.;
+const WIDTH: f32 = 232.;
 
 /// The open user menu.
 #[derive(Clone, Debug, PartialEq)]

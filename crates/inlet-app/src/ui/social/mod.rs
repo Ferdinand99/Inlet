@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Social: presence and status (`presence`), the friends page (`friends`, `pending`,
-//! `blocked`), adding a friend (`add_friend`), group DMs (`group_dm`) and personal notes
+//! `blocked`), adding a friend (`add_friend`), group DMs and the windows of a person or
+//! a group (`group_dm`; nicknames in `nickname`, a group's invite links in
+//! `group_invites`, inviting someone to a community in `community`) and personal notes
 //! (`notes`). The DM list itself is in `ui/sidebar/dm_list.rs`.
 //!
 //! The add-friend window, the group DM window, the DM menu and the confirmations are
@@ -10,13 +12,16 @@
 
 pub mod add_friend;
 pub mod blocked;
+pub mod community;
 pub mod friends;
 pub mod group_dm;
+pub mod group_invites;
+pub mod nickname;
 pub mod notes;
 pub mod pending;
 pub mod presence;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{
     div, prelude::*, px, AnyElement, Context, FontWeight, Hsla, Pixels, Point, SharedString,
@@ -27,7 +32,7 @@ use inlet_state::{AccountState, ChannelId, UserId};
 use crate::app::{Inlet, Screen};
 use crate::backend;
 use crate::backend::social::presence::Ev as PresenceEv;
-use crate::backend::social::relationships::{self as rel, GroupDm};
+use crate::backend::social::relationships::{self as rel, GroupChange, GroupDm};
 use crate::theme;
 use crate::ui::overlays::status_picker::Picker;
 
@@ -51,6 +56,8 @@ pub struct State {
     pub dm_menu: Option<DmMenu>,
     /// A question before a lasting action (remove a friend, block, leave a group).
     pub confirm: Option<Confirm>,
+    /// What happens when a call that was asked for answers with success, by call key.
+    pub done: HashMap<String, Done>,
     /// DMs this client is closing: their deletion is not reported as a lost channel.
     pub closing: HashSet<String>,
     /// The DM last open in the DM list, which the DM list opens again (Fluxer's home
@@ -72,9 +79,59 @@ pub struct DmMenu {
 /// A question before a lasting action.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Confirm {
-    RemoveFriend { user: UserId, name: String },
-    Block { user: UserId, name: String },
-    LeaveGroup { channel: ChannelId, name: String },
+    RemoveFriend {
+        user: UserId,
+        name: String,
+    },
+    Block {
+        user: UserId,
+        name: String,
+    },
+    LeaveGroup {
+        channel: ChannelId,
+        name: String,
+    },
+    /// Hand a group to someone else.
+    MakeOwner {
+        channel: ChannelId,
+        user: UserId,
+        name: String,
+    },
+    RemoveFromGroup {
+        channel: ChannelId,
+        user: UserId,
+        name: String,
+    },
+    RevokeInvite {
+        channel: ChannelId,
+        code: String,
+    },
+}
+
+/// What a successful call leads to: a line for the person, and what the window does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Done {
+    pub notice: Option<String>,
+    pub then: Then,
+}
+
+impl Done {
+    pub fn notice(text: String, then: Then) -> Self {
+        Done {
+            notice: Some(text),
+            then,
+        }
+    }
+}
+
+/// What the group window does when its call has gone through.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Then {
+    Nothing,
+    /// The window closes (and the one it came from opens).
+    Close,
+    /// The group's invites are read again.
+    ReloadInvites(ChannelId),
 }
 
 impl State {
@@ -104,6 +161,7 @@ impl State {
     /// last failure were the old account's.
     pub fn close_windows(&mut self) {
         self.closing.clear();
+        self.done.clear();
         self.last_dm = None;
         self.dm_rows = None;
         self.busy.clear();
@@ -129,6 +187,7 @@ pub enum SocialIcon {
     Pin,
     Pencil,
     Leave,
+    UserPlus,
 }
 
 impl SocialIcon {
@@ -145,6 +204,7 @@ impl SocialIcon {
             SocialIcon::Pin => include_bytes!("../../../assets/icons/push-pin.svg"),
             SocialIcon::Pencil => include_bytes!("../../../assets/icons/pencil-simple.svg"),
             SocialIcon::Leave => include_bytes!("../../../assets/icons/sign-out.svg"),
+            SocialIcon::UserPlus => include_bytes!("../../../assets/icons/user-plus.svg"),
         }
     }
 
@@ -273,9 +333,57 @@ impl Inlet {
         cx.notify();
     }
 
-    /// The relationship items of the user menu for `user`, as Fluxer's: message, then
-    /// add, accept, cancel or remove the friend, then block or unblock. None for the
-    /// account itself.
+    /// Sends an action whose success has consequences: a line for the person, and what
+    /// the window does. The line and the follow-up are dropped when the call fails.
+    pub(crate) fn social_action_done(&mut self, cmd: rel::Cmd, done: Done, cx: &mut Context<Self>) {
+        let key = cmd.key();
+        if self.social.busy.contains(&key) {
+            return;
+        }
+        self.social.done.insert(key, done);
+        self.social_action(cmd, cx);
+    }
+
+    /// Whether a call whose key starts with `prefix` runs.
+    pub(crate) fn social_busy_prefix(&self, prefix: &str) -> bool {
+        self.social.busy.iter().any(|k| k.starts_with(prefix))
+    }
+
+    /// A line for the person where they are looking: over the chat, or on the friends
+    /// page when no chat is open.
+    pub(crate) fn social_say(&mut self, text: String) {
+        if self.friends_page_shown() {
+            self.social.notice = Some(text);
+        } else {
+            self.chat.notice = Some(text);
+        }
+    }
+
+    /// The group DM that is open, when `user` is in it (or is the account): the group,
+    /// and whether the account owns it.
+    fn open_group_of(&self, user: UserId, cx: &gpui::App) -> Option<(ChannelId, bool)> {
+        let state = self.account.as_ref()?.read(cx);
+        let channel = ChannelId::parse(self.selected_channel.as_deref()?)?;
+        let c = state
+            .channel(channel)
+            .filter(|c| c.kind == inlet_protocol::models::channel_type::GROUP_DM)?;
+        let inside = user == state.me_id()
+            || c.recipients
+                .iter()
+                .any(|r| UserId::parse(&r.id) == Some(user));
+        inside.then(|| {
+            (
+                channel,
+                group_dm::group_owner(state, channel) == Some(state.me_id()),
+            )
+        })
+    }
+
+    /// The relationship items of the user menu for `user`, as Fluxer's: message, the
+    /// friend's nickname, what the account may do in an open group (nickname, ownership,
+    /// removal), the invite to a community, then add, accept, cancel or remove the
+    /// friend, then block or unblock. For the account itself only its nickname in an
+    /// open group.
     pub(crate) fn relationship_actions(
         &self,
         user: UserId,
@@ -285,8 +393,18 @@ impl Inlet {
         let Some(state) = self.account.as_ref().map(|a| a.read(cx)) else {
             return Vec::new();
         };
+        let group = self.open_group_of(user, cx);
         if user == state.me_id() {
-            return Vec::new();
+            return group
+                .map(|_| {
+                    (
+                        "user-menu-my-group-nickname",
+                        t!("social-group-my-nickname-item"),
+                        RelationshipAction::MyGroupNickname,
+                    )
+                })
+                .into_iter()
+                .collect();
         }
         let kind = state.relationships().kind(user);
         let mut out = Vec::new();
@@ -295,6 +413,39 @@ impl Inlet {
                 "user-menu-message",
                 t!("social-message"),
                 RelationshipAction::Message,
+            ));
+        }
+        if kind == Some(Kind::Friend) {
+            out.push((
+                "user-menu-friend-nickname",
+                t!("social-friend-nickname-item"),
+                RelationshipAction::ChangeFriendNickname,
+            ));
+        }
+        if let Some((_, true)) = group {
+            if !state.user(user).is_some_and(|u| u.bot) {
+                out.push((
+                    "user-menu-make-owner",
+                    t!("social-group-make-owner-item"),
+                    RelationshipAction::MakeGroupOwner,
+                ));
+            }
+            out.push((
+                "user-menu-group-nickname",
+                t!("social-group-nickname-item"),
+                RelationshipAction::GroupNickname,
+            ));
+            out.push((
+                "user-menu-remove-from-group",
+                t!("social-group-remove-item"),
+                RelationshipAction::RemoveFromGroup,
+            ));
+        }
+        if self.can_invite_to_community(user, cx) {
+            out.push((
+                "user-menu-invite-community",
+                t!("social-community-item"),
+                RelationshipAction::InviteToCommunity,
             ));
         }
         match kind {
@@ -364,6 +515,33 @@ impl Inlet {
                 self.social.confirm = Some(Confirm::RemoveFriend { user, name })
             }
             RelationshipAction::Block => self.social.confirm = Some(Confirm::Block { user, name }),
+            RelationshipAction::ChangeFriendNickname => self.open_friend_nickname(user, window, cx),
+            RelationshipAction::InviteToCommunity => {
+                self.open_invite_to_community(user, window, cx)
+            }
+            RelationshipAction::MyGroupNickname | RelationshipAction::GroupNickname => {
+                if let Some((channel, _)) = self.open_group_of(user, cx) {
+                    self.open_group_dm(group_dm::Mode::GroupNickname { channel, user }, window, cx);
+                }
+            }
+            RelationshipAction::MakeGroupOwner => {
+                if let Some((channel, true)) = self.open_group_of(user, cx) {
+                    self.social.confirm = Some(Confirm::MakeOwner {
+                        channel,
+                        user,
+                        name,
+                    });
+                }
+            }
+            RelationshipAction::RemoveFromGroup => {
+                if let Some((channel, true)) = self.open_group_of(user, cx) {
+                    self.social.confirm = Some(Confirm::RemoveFromGroup {
+                        channel,
+                        user,
+                        name,
+                    });
+                }
+            }
         }
         cx.notify();
     }
@@ -389,25 +567,26 @@ impl Inlet {
         self.social_action(rel::Cmd::CloseDm { channel: ch }, cx);
     }
 
-    /// Renames a group DM or changes its icon.
+    /// Changes a group DM: its name, icon, nicknames, mature switch or owner. `done` says
+    /// what a success leads to.
     pub(crate) fn edit_group_dm(
         &mut self,
         channel: ChannelId,
-        name: Option<Option<String>>,
-        icon: Option<rel::Icon>,
+        change: GroupChange,
+        done: Option<Done>,
         cx: &mut Context<Self>,
     ) {
         let Some(ch) = self.state_channel(channel, cx) else {
             return;
         };
-        self.social_action(
-            rel::Cmd::EditGroupDm {
-                channel: ch,
-                name,
-                icon,
-            },
-            cx,
-        );
+        let cmd = rel::Cmd::EditGroupDm {
+            channel: ch,
+            change,
+        };
+        match done {
+            Some(done) => self.social_action_done(cmd, done, cx),
+            None => self.social_action(cmd, cx),
+        }
     }
 
     /// Whether the call named `key` runs.
@@ -478,6 +657,12 @@ impl Inlet {
                     | Scene::GroupDmCaptcha
                     | Scene::DmBlocked
                     | Scene::MediaErrors
+                    | Scene::GroupSettings
+                    | Scene::GroupInvites
+                    | Scene::GroupAdd
+                    | Scene::GroupUnaddable
+                    | Scene::FriendNickname
+                    | Scene::InviteCommunity
             )
             || self.account.is_none()
             || self.screen != Screen::Main
@@ -500,11 +685,81 @@ impl Inlet {
                     w.message = Some(t!("social-group-dm-captcha"));
                 }
             }
+            Scene::GroupSettings | Scene::GroupInvites | Scene::GroupAdd => {
+                if let Some(channel) = ChannelId::parse(&crate::demo::snowflake("dm-group")) {
+                    self.demo_group_window(scene, channel, window, cx);
+                }
+            }
+            Scene::GroupUnaddable => {
+                self.open_group_dm(group_dm::Mode::Create, window, cx);
+                let id = |n: &str| UserId::parse(&crate::demo::user_id(n));
+                if let (Some(w), Some(ada)) = (self.social.group_dm.as_mut(), id("ada")) {
+                    w.picked = vec![ada];
+                    w.panel = Some(group_dm::Panel::Unaddable {
+                        rows: vec![(
+                            "grace".to_owned(),
+                            group_dm::unaddable_reason("not_friends"),
+                        )],
+                        addable: vec![ada.to_string()],
+                    });
+                }
+            }
+            Scene::FriendNickname => {
+                if let Some(ada) = UserId::parse(&crate::demo::user_id("ada")) {
+                    self.open_friend_nickname(ada, window, cx);
+                    if let Some(input) = self.social.group_dm.as_ref().and_then(|w| w.name.clone())
+                    {
+                        input.update(cx, |i, cx| i.set_text(crate::demo::social::NICKNAME, cx));
+                    }
+                }
+            }
+            Scene::InviteCommunity => {
+                if let Some(ada) = UserId::parse(&crate::demo::user_id("ada")) {
+                    self.open_invite_to_community(ada, window, cx);
+                }
+            }
             // The DM list opens the friends page now: the media scene opens Ada's DM.
             Scene::MediaErrors => self.select_channel(crate::demo::snowflake("dm-ada"), window, cx),
             _ => self.select_channel(crate::demo::snowflake("dm-group"), window, cx),
         }
         cx.notify();
+    }
+
+    /// The group windows of the demo scenes, with what the demo server would have said.
+    #[cfg(feature = "demo")]
+    fn demo_group_window(
+        &mut self,
+        scene: crate::demo::scenes::Scene,
+        channel: ChannelId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::demo::scenes::Scene;
+        use group_invites::{InviteList, Load};
+        match scene {
+            Scene::GroupSettings => {
+                self.open_group_dm(group_dm::Mode::Settings { channel }, window, cx)
+            }
+            Scene::GroupAdd => {
+                self.open_group_dm(group_dm::Mode::Add { channel }, window, cx);
+                if let Some(w) = self.social.group_dm.as_mut() {
+                    w.link = Some(crate::demo::social::INVITE_LINK.into());
+                }
+            }
+            _ => {
+                self.open_group_dm(group_dm::Mode::Invites { channel }, window, cx);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                if let Some(w) = self.social.group_dm.as_mut() {
+                    w.invites = Some(InviteList {
+                        load: Load::Ready(crate::demo::social::group_invites(now)),
+                        show_created: false,
+                    });
+                }
+            }
+        }
     }
 
     /// Events from the backend's social domain.
@@ -532,23 +787,45 @@ impl Inlet {
                 if key == "add-friend" {
                     self.add_friend_sent(cx);
                 }
+                self.social_done(&key, window, cx);
             }
             rel::Ev::Failed { key, reason } => {
                 self.social.busy.remove(&key);
+                self.social.done.remove(&key);
                 if key == "add-friend" && self.social.add_friend.is_some() {
                     self.add_friend_failed(reason);
-                } else if let Some(w) = self.social.group_dm.as_mut().filter(|w| w.key() == key) {
+                } else if let Some(w) = self.social.group_dm.as_mut().filter(|w| w.owns(&key)) {
+                    w.hint = None;
                     w.message = Some(reason);
-                } else if self.friends_page_shown() {
-                    self.social.notice = Some(reason);
                 } else {
-                    // A DM is open: the line over the chat says it.
-                    self.chat.notice = Some(reason);
+                    // A DM is open: the line over the chat says it; else the page's.
+                    self.social_fail(reason);
                 }
             }
             rel::Ev::GroupDm { key, result } => {
                 self.social.busy.remove(&key);
-                self.group_dm_answer(&key, result, cx);
+                self.group_dm_answer(&key, result, window, cx);
+            }
+            rel::Ev::Working { key } => {
+                if let Some(w) = self.social.group_dm.as_mut().filter(|w| w.owns(&key)) {
+                    w.hint = Some(t!("social-still-working"));
+                }
+            }
+            rel::Ev::InviteLink { key, url } => {
+                self.social.busy.remove(&key);
+                if let Some(w) = self.social.group_dm.as_mut().filter(|w| w.owns(&key)) {
+                    w.link = Some(url);
+                    w.copied = false;
+                    w.message = None;
+                }
+            }
+            rel::Ev::Invites {
+                key,
+                channel_id,
+                result,
+            } => {
+                self.social.busy.remove(&key);
+                self.invites_loaded(&channel_id, result);
             }
             rel::Ev::DmOpened { key, channel } => {
                 self.social.busy.remove(&key);
@@ -619,17 +896,60 @@ impl Inlet {
         }
     }
 
-    /// A group DM call answered: a lasting line in its window, never a new try.
-    fn group_dm_answer(&mut self, key: &str, result: GroupDm, cx: &mut Context<Self>) {
-        let text = match &result {
-            GroupDm::Done => {
-                if self
+    /// A failure of a call: over the chat when a DM is open, else on the friends page.
+    fn social_fail(&mut self, reason: String) {
+        if self.friends_page_shown() {
+            self.social.notice = Some(reason);
+        } else {
+            self.chat.notice = Some(reason);
+        }
+    }
+
+    /// A call that was asked for went through: its line, and what the window does.
+    fn social_done(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(done) = self.social.done.remove(key) else {
+            return;
+        };
+        if let Some(text) = done.notice {
+            self.social_say(text);
+        }
+        let mine = self.social.group_dm.as_ref().is_some_and(|w| w.owns(key));
+        match done.then {
+            Then::Nothing => {}
+            Then::Close if mine => self.group_dm_close(window, cx),
+            Then::Close => {}
+            Then::ReloadInvites(channel) => {
+                let open = self
                     .social
                     .group_dm
                     .as_ref()
-                    .is_some_and(|w| w.key() == key)
-                {
-                    self.group_dm_added(cx);
+                    .is_some_and(|w| w.mode == group_dm::Mode::Invites { channel });
+                if open {
+                    self.load_group_invites(channel, cx);
+                }
+            }
+        }
+    }
+
+    /// A group DM call answered: a lasting line in its window, never a new try.
+    fn group_dm_answer(
+        &mut self,
+        key: &str,
+        result: GroupDm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mine = self.social.group_dm.as_ref().is_some_and(|w| w.owns(key));
+        if mine {
+            if let Some(w) = self.social.group_dm.as_mut() {
+                w.hint = None;
+            }
+        }
+        let text = match &result {
+            GroupDm::Done => {
+                self.social.done.remove(key);
+                if mine {
+                    self.group_dm_close(window, cx);
                 }
                 return;
             }
@@ -638,21 +958,50 @@ impl Inlet {
                 "social-group-dm-rate-limited",
                 wait = rel::wait_text(*retry_after)
             ),
-            GroupDm::NotAddable(list) => {
-                let names: Vec<String> = {
+            GroupDm::NotAddable { unaddable, addable } => {
+                let named: Vec<(String, String)> = {
                     let state = self.account.as_ref().map(|a| a.read(cx));
-                    list.iter()
-                        .map(|(id, _)| match (state, UserId::parse(id)) {
-                            (Some(s), Some(u)) => person_name(s, u),
-                            _ => id.clone(),
+                    unaddable
+                        .iter()
+                        .map(|(id, reason)| {
+                            let name = match (state, UserId::parse(id)) {
+                                (Some(s), Some(u)) => person_name(s, u),
+                                _ => id.clone(),
+                            };
+                            (name, group_dm::unaddable_reason(reason))
                         })
                         .collect()
                 };
+                let creating = self
+                    .social
+                    .group_dm
+                    .as_ref()
+                    .is_some_and(|w| w.owns(key) && w.mode == group_dm::Mode::Create);
+                if creating {
+                    // Fluxer asks whether to go on without them.
+                    let gone: Vec<UserId> = unaddable
+                        .iter()
+                        .filter_map(|(id, _)| UserId::parse(id))
+                        .collect();
+                    if let Some(w) = self.social.group_dm.as_mut() {
+                        w.picked.retain(|u| !gone.contains(u));
+                        w.panel = Some(group_dm::Panel::Unaddable {
+                            rows: named,
+                            addable: addable.clone(),
+                        });
+                    }
+                    return;
+                }
+                let names: Vec<String> = named
+                    .into_iter()
+                    .map(|(name, reason)| format!("{name} ({reason})"))
+                    .collect();
                 t!("social-group-dm-not-addable", names = names.join(", "))
             }
             GroupDm::Failed(reason) => reason.clone(),
         };
-        match self.social.group_dm.as_mut().filter(|w| w.key() == key) {
+        self.social.done.remove(key);
+        match self.social.group_dm.as_mut().filter(|w| w.owns(key)) {
             Some(w) => w.message = Some(text),
             None => self.social.notice = Some(text),
         }
@@ -754,6 +1103,48 @@ impl Inlet {
         }
     }
 
+    /// What a question's yes does.
+    pub(super) fn run_confirm(&mut self, confirm: &Confirm, cx: &mut Context<Self>) {
+        match confirm {
+            Confirm::RemoveFriend { user, .. } => self.social_action(
+                rel::Cmd::Remove {
+                    user_id: user.to_string(),
+                },
+                cx,
+            ),
+            Confirm::Block { user, .. } => self.social_action(
+                rel::Cmd::Block {
+                    user_id: user.to_string(),
+                },
+                cx,
+            ),
+            Confirm::LeaveGroup { channel, .. } => self.close_dm(*channel, cx),
+            Confirm::MakeOwner { channel, user, .. } => self.edit_group_dm(
+                *channel,
+                GroupChange {
+                    owner_id: Some(user.to_string()),
+                    ..Default::default()
+                },
+                Some(Done::notice(
+                    t!("social-ownership-transferred"),
+                    Then::Nothing,
+                )),
+                cx,
+            ),
+            Confirm::RemoveFromGroup { channel, user, .. } => self.social_action_done(
+                rel::Cmd::RemoveRecipient {
+                    channel_id: channel.to_string(),
+                    user_id: user.to_string(),
+                },
+                Done::notice(t!("social-removed-from-group"), Then::Nothing),
+                cx,
+            ),
+            Confirm::RevokeInvite { channel, code } => {
+                self.revoke_invite(*channel, code.clone(), cx)
+            }
+        }
+    }
+
     fn render_social_confirm(&mut self, confirm: &Confirm, cx: &mut Context<Self>) -> AnyElement {
         use crate::ui::overlays::modal::modal;
         use crate::ui::widgets::button;
@@ -773,7 +1164,24 @@ impl Inlet {
                 t!("social-leave-group-body", name = name.clone()),
                 t!("social-leave-group"),
             ),
+            Confirm::MakeOwner { name, .. } => (
+                t!("social-group-make-owner-title"),
+                t!("social-group-make-owner-body", name = name.clone()),
+                t!("social-group-make-owner-title"),
+            ),
+            Confirm::RemoveFromGroup { name, .. } => (
+                t!("social-group-remove-title"),
+                t!("social-group-remove-body", name = name.clone()),
+                t!("social-group-remove"),
+            ),
+            Confirm::RevokeInvite { .. } => (
+                t!("social-invite-revoke-title"),
+                t!("social-invite-revoke-body"),
+                t!("social-invite-revoke"),
+            ),
         };
+        // Handing a group over is not a loss the way the others are.
+        let danger = !matches!(confirm, Confirm::MakeOwner { .. });
         let action = confirm.clone();
         let card = modal(
             "social-confirm",
@@ -804,26 +1212,14 @@ impl Inlet {
                     )
                     .child(
                         button("social-confirm-ok", label, true)
-                            .bg(theme::danger())
+                            .bg(if danger {
+                                theme::danger()
+                            } else {
+                                theme::brand()
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.social.confirm = None;
-                                match &action {
-                                    Confirm::RemoveFriend { user, .. } => this.social_action(
-                                        rel::Cmd::Remove {
-                                            user_id: user.to_string(),
-                                        },
-                                        cx,
-                                    ),
-                                    Confirm::Block { user, .. } => this.social_action(
-                                        rel::Cmd::Block {
-                                            user_id: user.to_string(),
-                                        },
-                                        cx,
-                                    ),
-                                    Confirm::LeaveGroup { channel, .. } => {
-                                        this.close_dm(*channel, cx)
-                                    }
-                                }
+                                this.run_confirm(&action, cx);
                             })),
                     )
                     .into_any_element(),
@@ -833,6 +1229,9 @@ impl Inlet {
             .into_any_element()
     }
 }
+
+#[cfg(all(test, feature = "demo"))]
+mod tests;
 
 /// What the user menu offers about a person (see `relationship_actions`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -844,6 +1243,16 @@ pub enum RelationshipAction {
     CancelRequest,
     Block,
     Unblock,
+    /// The private nickname for a friend.
+    ChangeFriendNickname,
+    /// Send an invite to a community of the account.
+    InviteToCommunity,
+    /// The account's own nickname in the open group.
+    MyGroupNickname,
+    /// Someone's nickname in the open group (the owner's).
+    GroupNickname,
+    MakeGroupOwner,
+    RemoveFromGroup,
 }
 
 /// The social windows, for the keyboard.

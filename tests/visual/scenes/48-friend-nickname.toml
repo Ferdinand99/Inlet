@@ -1,0 +1,7 @@
+# The window for the private nickname of a friend.
+name = "friend-nickname"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "friend-nickname"

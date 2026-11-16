@@ -198,14 +198,10 @@ async fn group_dm_create_solves_captcha_or_returns_captcha_result() {
         other => panic!("{other:?}"),
     }
 
-    // 6. Bad input never reaches the server.
+    // 6. Bad input never reaches the server (an empty group is fine: Fluxer makes one and
+    // fills it through an invite link, see `group_invites.rs`).
     let too_many: Vec<String> = (100..150).map(|i| i.to_string()).collect();
-    for bad in [
-        vec![],
-        vec!["@me".to_owned()],
-        vec!["../x".to_owned()],
-        too_many,
-    ] {
+    for bad in [vec!["@me".to_owned()], vec!["../x".to_owned()], too_many] {
         assert!(matches!(
             c.create_group_dm(&bad).await,
             Err(Error::InvalidInput(_))
