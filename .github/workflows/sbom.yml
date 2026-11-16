@@ -69,19 +69,19 @@ jobs:
           tool: cargo-cyclonedx@0.5.9
           fallback: none
 
-      # One file per workspace member is written next to its Cargo.toml; the one of the
-      # app (package "inlet") is the SBOM of the shipped binary. Default features, as in
-      # the release builds. The file is named after the release file it belongs to.
+      # One <package>.cdx.json per workspace member is written next to its Cargo.toml; the
+      # one of the app (package "inlet") is the SBOM of the shipped binary. Default
+      # features, as in the release builds. It is renamed after the release file it
+      # belongs to.
       - name: Generate the SBOM
         env:
           PLATFORM: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          cargo cyclonedx --format json --spec-version 1.5 --target "$TARGET" \
-            --override-filename "inlet-$PLATFORM"
+          cargo cyclonedx --format json --spec-version 1.5 --target "$TARGET"
           mkdir sbom
-          cp "crates/inlet-app/inlet-$PLATFORM.cdx.json" "sbom/inlet-$PLATFORM.cdx.json"
+          cp crates/inlet-app/inlet.cdx.json "sbom/inlet-$PLATFORM.cdx.json"
           ls -l sbom
           # The generator must not have changed the lock file.
           git diff --exit-code Cargo.lock
