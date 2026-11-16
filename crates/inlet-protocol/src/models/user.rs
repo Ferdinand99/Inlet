@@ -139,6 +139,30 @@ pub struct UserSettings {
     pub extra: Map<String, Value>,
 }
 
+impl UserSettings {
+    /// The settings' version number. It goes up with every change on the server, so of
+    /// two snapshots the one with the higher number is the newer. `None` when the
+    /// object is not a full snapshot (a partial update has none).
+    pub fn version(&self) -> Option<i64> {
+        match self.extra.get("version")? {
+            Value::Number(n) => n.as_i64(),
+            Value::String(s) => s.trim().parse().ok(),
+            _ => None,
+        }
+    }
+
+    /// Who may send a friend request, as flags (1 mutual friends, 2 mutual servers,
+    /// 4 anyone).
+    pub fn friend_source_flags(&self) -> Option<u64> {
+        value_u64(self.extra.get("friend_source_flags")?)
+    }
+
+    /// Whether DMs from the members of new servers are restricted by default.
+    pub fn default_guilds_restricted(&self) -> Option<bool> {
+        self.extra.get("default_guilds_restricted")?.as_bool()
+    }
+}
+
 /// Changes for `PATCH /users/@me/settings`. Fields left `None` keep their value.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct UserSettingsUpdate {
@@ -172,6 +196,22 @@ pub struct UserSettingsUpdate {
     /// Animate custom emoji.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animate_emoji: Option<bool>,
+    /// Sticker animation: 0 always, 1 on interaction, 2 never.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animate_stickers: Option<u64>,
+    /// Spoilers: 0 always shown, 1 on click, 2 if moderator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub render_spoilers: Option<u64>,
+    /// Developer mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_mode: Option<bool>,
+    /// Whether DMs from members of new servers are restricted by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_guilds_restricted: Option<bool>,
+    /// Who may send a friend request: 1 mutual friends, 2 mutual servers, 4 anyone
+    /// (add them up).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub friend_source_flags: Option<u64>,
     /// Time format.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_format: Option<u64>,
@@ -462,5 +502,37 @@ mod tests {
             serde_json::to_value(&u).unwrap(),
             json!({"theme": "dark", "custom_status": null})
         );
+    }
+
+    #[test]
+    fn settings_update_carries_the_privacy_and_media_fields() {
+        let u = UserSettingsUpdate {
+            animate_stickers: Some(2),
+            render_spoilers: Some(1),
+            developer_mode: Some(true),
+            default_guilds_restricted: Some(false),
+            friend_source_flags: Some(5),
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&u).unwrap(),
+            json!({"animate_stickers": 2, "render_spoilers": 1, "developer_mode": true,
+                   "default_guilds_restricted": false, "friend_source_flags": 5})
+        );
+    }
+
+    #[test]
+    fn settings_expose_their_version_and_privacy_fields() {
+        let s: UserSettings = serde_json::from_value(json!({
+            "theme": "coal", "version": 7, "friend_source_flags": 3,
+            "default_guilds_restricted": true
+        }))
+        .unwrap();
+        assert_eq!(s.version(), Some(7));
+        assert_eq!(s.friend_source_flags(), Some(3));
+        assert_eq!(s.default_guilds_restricted(), Some(true));
+        let partial: UserSettings = serde_json::from_value(json!({"status": "dnd"})).unwrap();
+        assert_eq!(partial.version(), None);
+        assert_eq!(partial.friend_source_flags(), None);
     }
 }

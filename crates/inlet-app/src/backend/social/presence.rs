@@ -132,6 +132,7 @@ impl Save {
 
 /// What the write task does next.
 #[derive(Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Next {
     /// Nothing waits.
     Idle,

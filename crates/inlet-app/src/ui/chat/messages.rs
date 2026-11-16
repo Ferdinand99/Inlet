@@ -447,6 +447,8 @@ pub struct MessageView {
     next_request: u64,
     /// Compact mode: no avatars, the time before the name, no space between groups.
     pub compact: bool,
+    /// Spoilers are shown without a click (the account's "always show" setting).
+    pub show_spoilers: bool,
     /// The open channel's newest page has landed.
     loaded: bool,
     newest_retries: u8,
@@ -785,6 +787,7 @@ impl MessageView {
     pub fn new() -> Self {
         Self {
             compact: starts_compact(),
+            show_spoilers: false,
             ..Self::default()
         }
     }
@@ -979,7 +982,7 @@ impl MessageView {
                     grouped,
                     mention: mentions_me(state, ch, m),
                     jumped: self.is_highlighted(id, now),
-                    revealed: self.revealed.contains(&id),
+                    revealed: self.show_spoilers || self.revealed.contains(&id),
                     name_color: name_color(state, guild, m),
                     tag: tag(channel, m, &c.shown),
                     reply: reply_of(m, &c.shown),
@@ -1267,6 +1270,8 @@ impl Inlet {
             return;
         }
         if let p::Dispatch::Ready(ready) = &dispatch {
+            // The first READY of a session: the settings of the account before are gone.
+            let first_ready = self.account.is_none();
             let mut changes = match self.account.clone() {
                 None => {
                     let state = account_state_from(ready);
@@ -1280,6 +1285,11 @@ impl Inlet {
             };
             self.settings_applied(&dispatch, &mut changes, cx);
             self.pickers_on_dispatch(&dispatch, cx);
+            if first_ready {
+                crate::ui::settings::store::reset_account(cx);
+                self.settings.profile.reset();
+            }
+            self.follow_account_settings(cx);
             self.after_changes(changes, false, cx);
             // A first READY, or a new one after a reconnect: the open channel's window is
             // missing or stale, so load its newest page.
@@ -1297,6 +1307,9 @@ impl Inlet {
         self.alert_after(self.switcher.active.clone(), alert, &dispatch, &account, cx);
         self.settings_applied(&dispatch, &mut changes, cx);
         self.pickers_on_dispatch(&dispatch, cx);
+        if matches!(dispatch, p::Dispatch::UserSettingsUpdate(_)) {
+            self.follow_account_settings(cx);
+        }
         self.note_saved(&dispatch);
         self.inbox_on_dispatch(&dispatch, &rendered, cx);
         self.members_on_dispatch(&dispatch, cx);
@@ -1484,6 +1497,20 @@ impl Inlet {
             list.splice(range, count);
         }
         self.chat.view.rows = new;
+    }
+
+    /// Builds the rows again and measures all of them again: the settings changed how
+    /// a row looks or how tall it is (display mode, font size, spacing, spoilers,
+    /// embeds, reactions).
+    pub(crate) fn refresh_rows_from_scratch(&mut self, cx: &mut Context<Self>) {
+        let new = match (self.open_channel_id(), self.account.clone()) {
+            (Some(ch), Some(account)) => self.chat.view.build_rows(account.read(cx), ch),
+            _ => Vec::new(),
+        };
+        let before = self.chat.view.rows.len();
+        let count = new.len();
+        self.chat.view.rows = new;
+        self.chat.message_list.splice(0..before, count);
     }
 
     /// Shows a newly selected channel: an empty list until its messages are there.

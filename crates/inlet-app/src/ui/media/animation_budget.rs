@@ -82,6 +82,9 @@ pub struct MotionPrefs {
     pub animate_emoji: bool,
     /// Animated stickers move; off shows their first frame.
     pub animate_stickers: bool,
+    /// GIFs and other animated attachments and embeds play by themselves; off shows
+    /// their first frame.
+    pub gif_auto_play: bool,
 }
 
 impl Default for MotionPrefs {
@@ -89,6 +92,7 @@ impl Default for MotionPrefs {
         MotionPrefs {
             animate_emoji: true,
             animate_stickers: true,
+            gif_auto_play: true,
         }
     }
 }
@@ -97,9 +101,25 @@ impl MotionPrefs {
     /// Whether animations of this kind may move.
     pub fn allows(&self, motion: Motion) -> bool {
         match motion {
-            Motion::Gif | Motion::Avatar => true,
+            Motion::Avatar => true,
+            Motion::Gif => self.gif_auto_play,
             Motion::Emoji => self.animate_emoji,
             Motion::Sticker => self.animate_stickers,
+        }
+    }
+
+    /// What the account settings say. Stickers move unless they are set to never
+    /// animate. The demo's scene files hold animated emoji on their first frame
+    /// (`INLET_DEMO_ANIMATE_EMOJI=0`) whatever the settings say.
+    // Deviation: Fluxer's "animate on interaction" for stickers (and its play-on-hover
+    // for emoji) is not offered: a sticker either moves or shows its first frame.
+    pub fn of_settings(v: &crate::ui::settings::sync::Values) -> Self {
+        let demo = cfg!(feature = "demo") && std::env::var_os("INLET_DEMO").is_some();
+        let held = demo && std::env::var("INLET_DEMO_ANIMATE_EMOJI").as_deref() == Ok("0");
+        MotionPrefs {
+            animate_emoji: v.animate_emoji && !held,
+            animate_stickers: v.animate_stickers != 2,
+            gif_auto_play: v.gif_auto_play,
         }
     }
 
@@ -410,11 +430,13 @@ impl AnimationBudget {
         motion: Motion,
         delays: impl FnOnce() -> Vec<Duration>,
     ) -> usize {
-        if self.stage.reduce_motion || !self.prefs.allows(motion) {
+        // The image viewer's animation moves even when GIFs do not play by themselves:
+        // the person asked for it by opening it.
+        let reserved = self.reserved == Some(id);
+        if self.stage.reduce_motion || !(self.prefs.allows(motion) || reserved) {
             return 0;
         }
         let frame = self.frame;
-        let reserved = self.reserved == Some(id);
         if !reserved {
             if !self.admitted.contains(&id) {
                 return 0;

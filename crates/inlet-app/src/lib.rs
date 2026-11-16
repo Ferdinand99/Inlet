@@ -74,6 +74,7 @@ pub fn run() {
         assets::load_fonts(cx);
         desktop::init(cx);
         ui::notifications::alerts::init(cx);
+        ui::settings::store::init(cx);
         let options = desktop::window_options(&start, cx);
         let window = cx
             .open_window(options, |window, cx| cx.new(|cx| Inlet::new(window, cx)))

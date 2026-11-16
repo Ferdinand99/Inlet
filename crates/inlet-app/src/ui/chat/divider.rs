@@ -6,7 +6,7 @@
 use chrono::NaiveDate;
 use gpui::{div, prelude::*, px, AnyElement, FontWeight};
 
-use super::message::{pill, GROUP_SPACING};
+use super::message::{group_spacing, pill};
 use crate::model;
 use crate::theme;
 
@@ -31,7 +31,7 @@ pub fn render_day(day: NaiveDate, new: bool) -> AnyElement {
     };
     div()
         .w_full()
-        .pt(px(GROUP_SPACING))
+        .pt(px(group_spacing()))
         .px(px(20.))
         .child(
             div()
@@ -58,7 +58,7 @@ pub fn render_day(day: NaiveDate, new: bool) -> AnyElement {
 pub fn render_unread() -> AnyElement {
     div()
         .w_full()
-        .h(px(GROUP_SPACING))
+        .h(px(group_spacing()))
         .pl_4()
         .pr(px(20.))
         .flex()

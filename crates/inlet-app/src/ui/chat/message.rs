@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    div, prelude::*, px, AnyElement, App, Context, Div, FontWeight, Hsla, MouseButton,
+    div, prelude::*, px, rems, AnyElement, App, Context, Div, FontWeight, Hsla, MouseButton,
     MouseDownEvent, SharedString, Stateful, Window,
 };
 use inlet_state::MessageId;
@@ -27,8 +27,11 @@ pub const ROW_INSET: f32 = 16.;
 pub const AVATAR_COLUMN: f32 = 40.;
 /// Space between the avatar column and the text (16 | 40 | 12 | text).
 pub const AVATAR_GAP: f32 = 12.;
-/// Space above the first message of a group (`--message-group-spacing`, cozy only).
-pub const GROUP_SPACING: f32 = 16.;
+/// Space above the first message of a group (`--message-group-spacing`, cozy only): the
+/// account's setting, 16 px by default.
+pub fn group_spacing() -> f32 {
+    theme::group_spacing()
+}
 /// Width of the time column in compact mode.
 const COMPACT_TIME_COLUMN: f32 = 64.;
 /// Group name for hover styles of a message row.
@@ -126,7 +129,9 @@ impl Inlet {
         } else {
             &m.spoiler_links
         };
-        if !row.meta.embeds_hidden {
+        // The account's "show embeds" switch, besides "Suppress Embeds" on the message.
+        let settings = crate::ui::settings::store::values(cx);
+        if !row.meta.embeds_hidden && settings.render_embeds {
             for (i, e) in m.embeds.iter().enumerate() {
                 let id = format!("m{}-e{i}", m.id);
                 body = body.child(render_embed(self, &id, e, hidden, &ctx, cx));
@@ -141,7 +146,12 @@ impl Inlet {
             );
         }
         body.children(self.attachments_slot(row, cx))
-            .children(self.reactions_slot(row, cx))
+            .children(
+                settings
+                    .render_reactions
+                    .then(|| self.reactions_slot(row, cx))
+                    .flatten(),
+            )
             .children(self.render_stickers(&m.id, &m.stickers, cx))
     }
 
@@ -187,7 +197,7 @@ impl Inlet {
         let name = div()
             .flex_none()
             .font_weight(FontWeight::MEDIUM)
-            .line_height(px(22.))
+            .line_height(px(theme::message_line_px()))
             .text_color(
                 row.name_color
                     .map(|c| gpui::rgb(c).into())
@@ -208,7 +218,7 @@ impl Inlet {
                         .flex_none()
                         .text_size(px(11.))
                         .font_weight(FontWeight::MEDIUM)
-                        .line_height(px(22.))
+                        .line_height(px(theme::message_line_px()))
                         .text_color(theme::timestamp())
                         .child(row.clock.clone()),
                 )
@@ -255,7 +265,7 @@ impl Inlet {
                     .justify_end()
                     .text_size(px(11.))
                     .font_weight(FontWeight::MEDIUM)
-                    .line_height(px(22.))
+                    .line_height(px(theme::message_line_px()))
                     .text_color(theme::timestamp())
                     .opacity(0.)
                     .group_hover(ROW_GROUP, |s| s.opacity(1.))
@@ -328,7 +338,7 @@ impl Inlet {
         });
         div()
             .w_full()
-            .when(starts_group && !compact, |d| d.pt(px(GROUP_SPACING)))
+            .when(starts_group && !compact, |d| d.pt(px(group_spacing())))
             .child(
                 row_frame(SharedString::from(format!("row-{}", m.id)), on_hover)
                     .debug_selector(|| "message-row".into())
@@ -340,7 +350,8 @@ impl Inlet {
                     .flex()
                     .flex_col()
                     .text_color(theme::text())
-                    .line_height(px(22.))
+                    .text_size(rems(theme::message_font_px() / theme::DEFAULT_FONT_PX))
+                    .line_height(px(theme::message_line_px()))
                     .when_some(bg, |d, bg| d.bg(bg))
                     .when(bg.is_none(), |d| d.hover(|s| s.bg(theme::hover_bg())))
                     .when_some(channel, |d, ch| {
@@ -422,7 +433,7 @@ impl Inlet {
             div()
                 .flex_none()
                 .font_weight(FontWeight::MEDIUM)
-                .line_height(px(22.))
+                .line_height(px(theme::message_line_px()))
                 .text_color(theme::text_strong())
                 .child(row.author.clone())
         };
@@ -475,14 +486,15 @@ impl Inlet {
         };
         div()
             .w_full()
-            .when(!row.grouped && !compact, |d| d.pt(px(GROUP_SPACING)))
+            .when(!row.grouped && !compact, |d| d.pt(px(group_spacing())))
             .child(
                 div()
                     .w_full()
                     .pl_4()
                     .pr_4()
                     .py(px(2.))
-                    .line_height(px(22.))
+                    .text_size(rems(theme::message_font_px() / theme::DEFAULT_FONT_PX))
+                    .line_height(px(theme::message_line_px()))
                     .text_color(theme::text())
                     .child(main),
             )

@@ -9,6 +9,7 @@ use crate::{about, assets, theme};
 
 impl Render for Inlet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.follow_settings_store(cx);
         self.media_frame(window, cx);
         self.take_channel_jump(window, cx);
         self.threads_frame(window, cx);

@@ -168,6 +168,8 @@ pub struct Facts {
     pub editable: bool,
     /// Saved by the account (as far as this session knows).
     pub saved: bool,
+    /// Developer mode is on: the menu offers "Copy ID" (as Fluxer's does).
+    pub developer: bool,
 }
 
 /// One message action.
@@ -286,7 +288,9 @@ pub fn menu_actions(f: &Facts) -> Vec<Action> {
         out.push(Action::CopyText);
     }
     out.push(Action::CopyLink);
-    out.push(Action::CopyId);
+    if f.developer {
+        out.push(Action::CopyId);
+    }
     if may_delete(f) {
         out.push(Action::Delete);
     }
@@ -349,6 +353,7 @@ impl Inlet {
             has_embeds: !m.embeds.is_empty(),
             embeds_hidden: meta.embeds_hidden,
             saved: self.chat.actions.is_saved(id),
+            developer: crate::ui::settings::store::values(cx).developer_mode,
         })
     }
 
@@ -666,6 +671,7 @@ mod tests {
             embeds_hidden: false,
             editable: own,
             saved: false,
+            developer: true,
         }
     }
 
