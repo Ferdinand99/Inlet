@@ -90,8 +90,8 @@ jobs:
     permissions:
       contents: read
 
-  # Puts together everything that is published: the three downloads, the three SBOMs,
-  # LICENSE, THIRD-PARTY-NOTICES and SHA256SUMS.txt. Nothing is published here.
+  # Puts together everything that is published: the packages, the three SBOMs, LICENSE,
+  # THIRD-PARTY-NOTICES and SHA256SUMS.txt. Nothing is published here.
   collect:
     name: Collect release files
     needs: [build, macos-sign, sbom]
@@ -111,9 +111,22 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release
-          cp artifacts/inlet-windows-x86_64/inlet.exe release/inlet-windows-x86_64.exe
+          # The Windows and Linux packages carry the version in their names
+          # (inlet-<version>-windows-x86_64-setup.exe, ...). Each pattern must match
+          # exactly one file, or the release stops here.
+          for pattern in \
+            "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64-setup.exe" \
+            "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64.zip" \
+            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.AppImage" \
+            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.tar.gz"; do
+            mapfile -t files < <(compgen -G "$pattern" || true)
+            if [ "${#files[@]}" -ne 1 ]; then
+              echo "expected exactly one file for $pattern, found ${#files[@]}"
+              exit 1
+            fi
+            cp "${files[0]}" release/
+          done
           cp artifacts/inlet-macos-aarch64-dmg/inlet-macos-aarch64.dmg release/
-          cp artifacts/inlet-linux-x86_64/inlet-linux-x86_64.tar.gz release/
           # One SBOM per platform build (CycloneDX, JSON).
           cp artifacts/inlet-sbom-*/*.cdx.json release/
           sboms=(release/*.cdx.json)
@@ -129,8 +142,10 @@ jobs:
           ls -l
 
       # LICENSE and THIRD-PARTY-NOTICES (which holds the licences of the fonts, icons and
-      # Twemoji) are in the release and inside the Linux archive; the check fails the
-      # release when one of them is missing or lost its licence texts.
+      # Twemoji) are in the release and inside the .zip and .tar.gz packages; the check
+      # fails the release when one of them is missing or lost its licence texts. The
+      # installer, the AppImage and the DMG are built from the same files by the packaging
+      # scripts, which stop without them.
       - name: Check the licence files
         run: scripts/check-package-licences.sh release
 
@@ -144,7 +159,7 @@ jobs:
           retention-days: 7
 
   # Build provenance (SLSA, signed with Sigstore) for every file that is about to be
-  # published: the three downloads, the three SBOMs, LICENSE, THIRD-PARTY-NOTICES and
+  # published: the packages, the three SBOMs, LICENSE, THIRD-PARTY-NOTICES and
   # SHA256SUMS.txt. It ties each file to this workflow run and this commit. Anyone can
   # check a download:
   #
@@ -197,9 +212,9 @@ jobs:
 
           ## Downloads
 
-          - Windows (x86_64): `inlet-windows-x86_64.exe`. The file is not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
+          - Windows (x86_64): `inlet-<version>-windows-x86_64-setup.exe` installs Inlet for your user account (no administrator rights needed). `inlet-<version>-windows-x86_64.zip` is a portable copy. The files are not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
           - macOS (Apple silicon, macOS 12 or later): `inlet-macos-aarch64.dmg`. Signed with a Developer ID and notarised by Apple. Open the DMG and drag Inlet to Applications.
-          - Linux (x86_64): `inlet-linux-x86_64.tar.gz`.
+          - Linux (x86_64): `inlet-<version>-linux-x86_64.AppImage` (make it executable and run it; it needs FUSE 2, so on Ubuntu 24.04 install `libfuse2t64` or start it with `--appimage-extract-and-run`) or `inlet-<version>-linux-x86_64.tar.gz`.
 
           Check the downloads against `SHA256SUMS.txt`. Licence notices for third-party code are in the `THIRD-PARTY-NOTICES` file when it is attached.
           NOTES
