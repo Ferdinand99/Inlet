@@ -156,6 +156,17 @@ impl Inlet {
             Scene::RailFolders => {
                 self.sidebar.remembered.open_folders.insert("1");
             }
+            Scene::GuildBanner => {
+                // Two categories folded away, so the voice channels and the link channel
+                // below them are in view.
+                let remembered = &mut self.sidebar.remembered;
+                remembered
+                    .collapsed
+                    .insert(&crate::demo::snowflake("c-info"));
+                remembered
+                    .collapsed
+                    .insert(&crate::demo::snowflake("c-text"));
+            }
             Scene::GuildMenu => self.nav.dialog = Some(NavDialog::GuildMenu),
             Scene::InviteAccept => {
                 self.nav.dialog = Some(NavDialog::Invite(InviteView {
