@@ -11,6 +11,8 @@ use crate::backend::{self, accounts, BackendHandle, Event};
 use crate::model::{Channel, Guild};
 use crate::ui;
 
+pub(crate) mod keymap;
+
 #[derive(Clone, PartialEq)]
 pub enum Screen {
     /// Connecting with a saved session (or before the backend has answered).

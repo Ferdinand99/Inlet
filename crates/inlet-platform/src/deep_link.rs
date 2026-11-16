@@ -196,7 +196,8 @@ fn check_scheme(scheme: &str) -> Result<()> {
     }
 }
 
-/// Makes this executable the handler of `scheme://` links for the current user.
+/// Makes this executable the handler of `scheme://` links for the current user. Inside
+/// an AppImage the executable is the `.AppImage` file, see [`crate::launch_exe`].
 ///
 /// - Windows: `HKCU\Software\Classes\<scheme>`, command `"<exe>" --url -- "%1"`.
 /// - Linux: a hidden desktop entry with `MimeType=x-scheme-handler/<scheme>` in
@@ -205,7 +206,7 @@ fn check_scheme(scheme: &str) -> Result<()> {
 ///   (`CFBundleURLTypes`) and links arrive through gpui's `on_open_urls`.
 pub fn register(scheme: &str) -> Result<()> {
     check_scheme(scheme)?;
-    let exe = std::env::current_exe()?;
+    let exe = crate::launch_exe()?;
     imp::register(scheme, &exe)
 }
 

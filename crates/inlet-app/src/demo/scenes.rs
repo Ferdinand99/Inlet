@@ -58,6 +58,8 @@
 //!   the guild (see `search.rs`).
 //! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
 //!   `accounts` (their channels with mentions and unread messages).
+//! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
+//!   chat.
 //!
 //! - `rail-folders`, `guild-banner`, `guild-menu`, `invite-accept`: for `#general`, more
 //!   servers in folders (one open), the banner with people in a voice channel, a link
@@ -129,6 +131,7 @@ pub enum Scene {
     GuildBanner,
     GuildMenu,
     InviteAccept,
+    KeybindHelp,
 }
 
 impl Scene {
@@ -177,6 +180,7 @@ impl Scene {
             "guild-banner" => Scene::GuildBanner,
             "guild-menu" => Scene::GuildMenu,
             "invite-accept" => Scene::InviteAccept,
+            "keybind-help" => Scene::KeybindHelp,
             _ => return None,
         })
     }

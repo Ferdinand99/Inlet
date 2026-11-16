@@ -1,0 +1,9 @@
+# The list of keyboard shortcuts (Ctrl+/) over #general.
+name = "keybind-help"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "keybind-help"
+guild = "g1"
+channel = "c-general"

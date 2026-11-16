@@ -185,9 +185,12 @@ pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement
 }
 
 impl Inlet {
-    /// Shows or hides the member list (the header button and the "Members" row), and
-    /// remembers the choice.
+    /// Shows or hides the member list (the header button, and Ctrl+U). The choice is
+    /// saved; nothing happens where there is no member list to show.
     pub(crate) fn toggle_member_list(&mut self, cx: &mut Context<Self>) {
+        if self.member_list_channel().is_none() {
+            return;
+        }
         self.members.hidden = !self.members.hidden;
         let prefs = MemberPrefs {
             shown: !self.members.hidden,

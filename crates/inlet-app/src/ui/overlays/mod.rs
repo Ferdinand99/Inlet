@@ -6,6 +6,7 @@ mod context_menu;
 pub mod gate;
 pub mod guild_menu;
 pub mod invite_accept;
+pub mod keybind_help;
 mod link_confirm;
 mod link_prompt;
 pub mod modal;
@@ -34,6 +35,14 @@ pub struct OverlayState {
     pub layer_had_focus: bool,
     /// What had the focus before the first layer took it.
     pub focus_before: Option<FocusHandle>,
+    /// The list of keyboard shortcuts is open (see `keybind_help`).
+    pub keybind_help: bool,
+    /// The keyboard was put on the window because no message box showed (see
+    /// `app::keymap`); the box gets it back when a channel opens.
+    pub keys_parked: bool,
+    /// Demo scene `keybind-help`: the list was opened (or not asked for).
+    #[cfg(feature = "demo")]
+    pub demo_help_done: bool,
 }
 
 impl Inlet {
@@ -49,6 +58,11 @@ impl Inlet {
         out.extend(self.render_picker(cx));
         if self.settings.view.is_some() {
             out.push(self.render_settings_overlay(cx));
+        }
+        // The list of shortcuts (Ctrl+/): over the settings view, under the notification
+        // settings window.
+        if self.keybind_help_open() {
+            out.push(self.render_keybind_help(cx));
         }
         if self.notifications.settings.is_some() {
             out.push(self.render_notification_settings(cx));
