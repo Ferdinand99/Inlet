@@ -253,6 +253,20 @@ impl Inlet {
         cx.notify();
     }
 
+    /// Opens the settings window for a server's own settings (from its menu), whether
+    /// or not it is the open one.
+    pub(crate) fn open_guild_notification_settings(
+        &mut self,
+        guild: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.notifications.settings = Some(SettingsWindow {
+            guild_id: Some(guild),
+            channel_id: None,
+        });
+        cx.notify();
+    }
+
     pub(crate) fn close_notification_settings(&mut self, cx: &mut Context<Self>) {
         if self.notifications.settings.take().is_some() {
             cx.notify();

@@ -3,7 +3,8 @@
 
 pub mod account_switcher;
 mod context_menu;
-mod guild_menu;
+pub mod gate;
+pub mod guild_menu;
 pub mod invite_accept;
 mod link_confirm;
 mod link_prompt;

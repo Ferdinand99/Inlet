@@ -9,7 +9,7 @@ use crate::assets::Icon;
 use crate::model::{Channel, ChannelKind};
 use crate::theme;
 use crate::ui::notifications::badge::{mention_badge, RowMarks};
-use crate::ui::overlays::nav_dialog::NavDialog;
+use crate::ui::overlays::nav_dialog::{NavDialog, Soon};
 
 /// Height of a channel row (20 px of text and 6 px above and below).
 pub const ROW_HEIGHT: f32 = 32.;
@@ -44,16 +44,31 @@ impl Inlet {
         let mut previous_was_channel = false;
         let mut rows: Vec<AnyElement> = Vec::new();
         rows.extend(self.members_row(cx));
+        let folded = self.folded_categories(cx);
+        let hide_muted = self.open_guild_hides_muted(cx);
         let channels: Vec<Channel> = self
             .channels
             .iter()
             .filter(|c| {
-                // Folded categories hide their channels, except the open one.
-                c.kind == ChannelKind::Category
-                    || c.parent_id
-                        .as_ref()
-                        .is_none_or(|p| !self.category_folded(p))
-                    || selected.as_deref() == Some(c.id.as_str())
+                if c.kind == ChannelKind::Category {
+                    return true;
+                }
+                let open = selected.as_deref() == Some(c.id.as_str());
+                let badge = self.badge(&c.id);
+                // "Hide muted channels": a muted channel goes, unless it is the open one
+                // or has a mention.
+                if hide_muted && badge.dimmed && !open && badge.mentions == 0 {
+                    return false;
+                }
+                // Folded categories hide their channels, except what Fluxer keeps: the
+                // open channel, and channels with something unread (in a muted category
+                // only those with mentions).
+                let parent = c.parent_id.as_ref();
+                if !parent.is_some_and(|p| folded.contains(p)) {
+                    return true;
+                }
+                let category_muted = parent.is_some_and(|p| self.badge(p).dimmed);
+                open || badge.mentions > 0 || (badge.unread && !badge.muted && !category_muted)
             })
             .cloned()
             .collect();
@@ -61,6 +76,9 @@ impl Inlet {
             if c.kind == ChannelKind::Category {
                 let spaced = std::mem::replace(&mut previous_was_channel, false);
                 rows.push(self.category_row(c, spaced, cx));
+                if folded.contains(&c.id) {
+                    rows.extend(self.folded_voice_strip(c, cx));
+                }
                 continue;
             }
             previous_was_channel = true;
@@ -79,19 +97,18 @@ impl Inlet {
     fn members_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let guild = GuildId::parse(self.selected_guild.as_deref()?)?;
         let account = self.account.as_ref()?;
-        if !account
-            .read(cx)
-            .guild_permissions(guild)
-            .has(inlet_protocol::permissions::VIEW_CHANNEL_MEMBERS)
-        {
+        // Fluxer shows the row to moderators only (any one of these permissions).
+        use inlet_protocol::permissions as perm;
+        let moderator = perm::MANAGE_GUILD
+            | perm::MANAGE_ROLES
+            | perm::MANAGE_NICKNAMES
+            | perm::BAN_MEMBERS
+            | perm::MODERATE_MEMBERS
+            | perm::KICK_MEMBERS;
+        if account.read(cx).guild_permissions(guild).bits() & moderator == 0 {
             return None;
         }
-        let shown = self.member_list_shown().is_some();
-        let color = if shown {
-            theme::text_strong()
-        } else {
-            theme::text_channel()
-        };
+        let color = theme::text_channel();
         Some(
             div()
                 .flex_none()
@@ -113,13 +130,13 @@ impl Inlet {
                         .cursor_pointer()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(color)
-                        .when(shown, |d| d.bg(theme::selected_bg()))
-                        .when(!shown, |d| {
-                            d.hover(|s| s.bg(theme::hover_bg()).text_color(theme::text()))
-                        })
+                        .hover(|s| s.bg(theme::hover_bg()).text_color(theme::text()))
                         .child(Icon::Users.el(px(20.), color))
                         .child(t!("sidebar-members"))
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_member_list(cx))),
+                        // Fluxer opens the members page here; Inlet has no such page yet.
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.nav_show(NavDialog::Soon(Soon::Members), cx)
+                        })),
                 )
                 // The line under it, as Fluxer's `membersSeparator`.
                 .child(div().h(px(1.)).mx_2().my(px(6.)).bg(theme::divider()))
@@ -215,6 +232,70 @@ impl Inlet {
             .collect()
     }
 
+    /// Whether the open server leaves muted channels out of its list (`hide_muted_channels`).
+    pub(crate) fn open_guild_hides_muted(&self, cx: &gpui::App) -> bool {
+        let (Some(account), Some(guild)) = (
+            self.account.as_ref(),
+            self.selected_guild.as_deref().and_then(GuildId::parse),
+        ) else {
+            return false;
+        };
+        account
+            .read(cx)
+            .guild_settings()
+            .get(Some(guild))
+            .hide_muted_channels
+    }
+
+    /// The people in the voice channels of a folded category, as a strip of avatars
+    /// under its row.
+    fn folded_voice_strip(&mut self, cat: &Channel, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let account = self.account.clone()?;
+        let voice_channels: Vec<ChannelId> = self
+            .channels
+            .iter()
+            .filter(|c| {
+                c.kind == ChannelKind::Voice && c.parent_id.as_deref() == Some(cat.id.as_str())
+            })
+            .filter_map(|c| ChannelId::parse(&c.id))
+            .collect();
+        let people: Vec<(String, Option<crate::model::UserAvatar>)> = {
+            let state = account.read(cx);
+            voice_channels
+                .iter()
+                .flat_map(|ch| state.voice().participants(*ch))
+                .take(8)
+                .map(|p| {
+                    let user = state.user(p.user);
+                    let name = user
+                        .map(|u| crate::model::clean_name(u.display_name()))
+                        .unwrap_or_default();
+                    (name, user.and_then(crate::backend::media::user_avatar))
+                })
+                .collect()
+        };
+        if people.is_empty() {
+            return None;
+        }
+        let avatars: Vec<AnyElement> = people
+            .iter()
+            .map(|(name, avatar)| self.user_avatar(avatar.as_ref(), name, 20., false, cx))
+            .collect();
+        Some(
+            div()
+                .id(SharedString::from(format!("voice-strip-{}", cat.id)))
+                .flex_none()
+                .h(px(28.))
+                .ml(px(16.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .children(avatars)
+                .into_any_element(),
+        )
+    }
+
     /// A click on a channel row: a link channel opens its address (after the
     /// confirmation every masked link gets), anything else opens in the chat. An
     /// age-restricted channel asks first.
@@ -233,7 +314,7 @@ impl Inlet {
             return;
         }
         if let Some(gate) = self.gate_for(&id, cx) {
-            self.nav_show(NavDialog::Gate(gate), cx);
+            self.show_gate(gate, cx);
             return;
         }
         let url = ChannelId::parse(&id)
@@ -299,6 +380,15 @@ impl Inlet {
             .font_weight(FontWeight::MEDIUM)
             .text_color(color)
             .when(active, |d| d.bg(theme::selected_bg()))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener({
+                    let id = c.id.clone();
+                    move |this, event: &gpui::MouseDownEvent, _, cx| {
+                        this.channel_context_menu(id.clone(), event, cx)
+                    }
+                }),
+            )
             .when(messageable, |d| {
                 d.cursor_pointer()
                     .hover(|s| s.bg(theme::hover_bg()).text_color(theme::text()))

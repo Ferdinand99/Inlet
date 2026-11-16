@@ -45,9 +45,72 @@ pub struct Preview {
     /// The guild's icon hash.
     pub icon: Option<String>,
     pub channel_name: Option<String>,
+    /// The channel the invite points at (a group DM invite opens it after joining).
+    pub channel_id: Option<String>,
     pub inviter: Option<String>,
     pub members: Option<u64>,
     pub online: Option<u64>,
+}
+
+/// What the instance's configuration says about the rail: Fluxer's `RuntimeConfig`
+/// (`community.single_community`, `community.single_community_guild_id`,
+/// `features.discovery_enabled`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InstanceNav {
+    /// The instance is one community every account joins: no Add and no Explore, and
+    /// the stock community cannot be left.
+    pub single_community: bool,
+    pub stock_guild: Option<String>,
+    /// Discovery is on (unless the instance says it is not).
+    pub discovery_off: bool,
+}
+
+impl InstanceNav {
+    /// Reads the discovery document's raw parts.
+    pub fn of(
+        community: Option<&serde_json::Value>,
+        features: &serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        let single = community
+            .and_then(|c| c.get("single_community"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let stock = community
+            .and_then(|c| c.get("single_community_guild_id"))
+            .and_then(|v| v.as_str())
+            .filter(|id| !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit()))
+            .map(str::to_owned);
+        InstanceNav {
+            single_community: single,
+            stock_guild: stock,
+            discovery_off: features.get("discovery_enabled").and_then(|v| v.as_bool())
+                == Some(false),
+        }
+    }
+
+    /// Fluxer's `isDiscoveryAvailable`: Explore shows only then.
+    pub fn explore(&self) -> bool {
+        !self.single_community && !self.discovery_off
+    }
+
+    /// Add (create or join a community) shows unless the instance is a single community.
+    pub fn add(&self) -> bool {
+        !self.single_community
+    }
+
+    /// Fluxer's `isStockCommunityGuild`: the stock community cannot be left.
+    pub fn is_stock(&self, guild: &str) -> bool {
+        self.single_community && self.stock_guild.as_deref() == Some(guild)
+    }
+}
+
+/// Tells the UI what the signed-in instance's configuration says about the rail.
+pub(in crate::backend) fn instance_known(backend: &Backend, session: &p::Session) {
+    let d = session.instance().discovery();
+    let nav = InstanceNav::of(d.extra.get("community"), &d.features);
+    let _ = backend
+        .events
+        .unbounded_send(SettingsEv::Guild(Ev::Instance(Box::new(nav))));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,11 +125,14 @@ pub enum Ev {
         code: String,
         result: Result<Box<Preview>, String>,
     },
-    /// The answer to `AcceptInvite`: the guild joined (`None` for a group DM).
+    /// The answer to `AcceptInvite`: where the invite led (the guild, or the group DM).
     Accepted {
         code: String,
-        result: Result<Option<String>, String>,
+        result: Result<Box<Preview>, String>,
     },
+    /// What the signed-in instance's configuration says (sent when an account becomes
+    /// the shown one).
+    Instance(Box<InstanceNav>),
     /// The answer to `Leave`.
     Left {
         guild_id: String,
@@ -74,7 +140,8 @@ pub enum Ev {
     },
 }
 
-/// At most one invite request per [`MIN_INVITE_GAP`].
+/// At most one invite request per [`MIN_INVITE_GAP`]. Looking at an invite and joining it have
+/// a gate each, so a click on "Join" right after the preview is not turned away.
 #[derive(Debug, Default)]
 pub struct InviteGate {
     last: Option<Instant>,
@@ -165,6 +232,11 @@ pub fn preview_of(invite: &p::Invite) -> Preview {
             .as_ref()
             .and_then(|g| g.icon.clone())
             .filter(|h| h.len() <= 64 && h.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')),
+        channel_id: invite
+            .channel
+            .as_ref()
+            .map(|c| c.id.clone())
+            .filter(|id| id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit())),
         channel_name,
         inviter: invite.inviter.as_ref().map(|u| name(u.display_name())),
         members: invite.member_count,
@@ -242,7 +314,7 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
                 .leaving
                 .begin(guild_id);
             if !began {
-                return refuse(&events, &cmd, t!("invite-too-fast"));
+                return refuse(&events, &cmd, t!("nav-leave-busy"));
             }
             Some(LeaveGuard {
                 ops: ops.clone(),
@@ -250,11 +322,11 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
             })
         }
         _ => {
-            let admitted = ops
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .invites
-                .admit(Instant::now());
+            let mut ops = ops.lock().unwrap_or_else(|e| e.into_inner());
+            let admitted = match &cmd {
+                Cmd::AcceptInvite { .. } => ops.accepts.admit(Instant::now()),
+                _ => ops.invites.admit(Instant::now()),
+            };
             if !admitted {
                 return refuse(&events, &cmd, t!("invite-too-fast"));
             }
@@ -277,7 +349,7 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
             }
             Cmd::AcceptInvite { code } => {
                 let result = match client.accept_invite(&code).await {
-                    Ok(invite) => Ok(preview_of(&invite).guild_id),
+                    Ok(invite) => Ok(Box::new(preview_of(&invite))),
                     Err(err) => match reason(&internal, gen, err) {
                         Some(why) => Err(why),
                         None => return,

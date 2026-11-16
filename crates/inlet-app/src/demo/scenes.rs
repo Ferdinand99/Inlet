@@ -544,6 +544,9 @@ pub fn data(scene: Scene) -> Data {
         read_states.extend(unread::read_states());
         guild_settings = unread::guild_settings();
     }
+    if let Some(settings) = super::nav::guild_settings(scene) {
+        guild_settings = settings;
+    }
     let mut ready = ready(
         &guilds,
         &channels,

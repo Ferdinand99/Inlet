@@ -14,6 +14,7 @@ pub mod guilds;
 pub struct Ops {
     pub folders: folders::Queue,
     pub invites: guilds::InviteGate,
+    pub accepts: guilds::InviteGate,
     pub leaving: guilds::LeaveGate,
 }
 

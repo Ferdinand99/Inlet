@@ -4,7 +4,6 @@ nav-favorites = Favorites
 nav-discover = Explore communities
 nav-create-server = Create a community
 nav-understood = Understood
-nav-soon-favorites = The favorites page is not in Inlet yet. Your favorites are still there in the Fluxer app.
 nav-soon-discover = Exploring communities is not in Inlet yet. You can still join one with an invite.
 nav-soon-create = Creating a community is not in Inlet yet. You can create one in the Fluxer app, and it shows up here.
 
@@ -65,3 +64,19 @@ rail-save-failed = The server order could not be saved: { $error }
 sidebar-members = Members
 sidebar-unknown-user = Unknown user
 sidebar-link-missing = This link channel has no address.
+
+nav-menu-hide-muted = Hide muted channels
+nav-menu-privacy = Privacy settings
+nav-menu-favorite = Add to favorites
+nav-menu-unfavorite = Remove from favorites
+nav-menu-copy-channel-id = Copy channel ID
+nav-leave-busy = This server is already being left.
+nav-gate-blocked = This content is not available to your account.
+nav-gate-warning-title = Content warning
+nav-soon-members = The members page is not in Inlet yet. The member list beside the chat shows who is in the server.
+favorites-hide-muted = Hide muted channels
+favorites-empty = Nothing here yet. Use the star in a channel's header to add it.
+favorites-new-category = New category
+favorites-category-name = Category { $number }
+rail-too-many-folders = Too many folders: the server keeps at most 100 entries in the server list. Put servers into folders to make room.
+rail-folder-initial = F

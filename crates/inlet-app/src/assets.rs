@@ -58,6 +58,8 @@ pub enum Icon {
     SpeakerSlash,
     VideoCamera,
     MonitorPlay,
+    /// Close (`x`).
+    X,
 }
 
 impl Icon {
@@ -95,6 +97,7 @@ impl Icon {
             Icon::SpeakerSlash => include_bytes!("../assets/icons/speaker-slash.svg"),
             Icon::VideoCamera => include_bytes!("../assets/icons/video-camera.svg"),
             Icon::MonitorPlay => include_bytes!("../assets/icons/monitor-play.svg"),
+            Icon::X => include_bytes!("../assets/icons/x.svg"),
         }
     }
 

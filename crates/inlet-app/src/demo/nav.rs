@@ -92,6 +92,17 @@ pub fn user_settings(scene: Scene) -> Option<Value> {
     }))
 }
 
+/// The guild settings of the navigation scenes: in `guild-banner`, two categories of
+/// `Inlet Dev` are folded, so the voice channels and the link channel are in view.
+pub fn guild_settings(scene: Scene) -> Option<Vec<Value>> {
+    (scene == Scene::GuildBanner).then(|| {
+        vec![json!({"guild_id": snowflake("g1"), "channel_overrides": [
+            {"channel_id": snowflake("c-info"), "collapsed": true, "message_notifications": 3},
+            {"channel_id": snowflake("c-text"), "collapsed": true, "message_notifications": 3},
+        ]})]
+    })
+}
+
 /// Fields the READY needs for the extra channels.
 pub fn decorate_channel(channel_id: &str, v: &mut Value) {
     if channel_id == snowflake("c-link") {
@@ -148,6 +159,7 @@ pub fn preview(code: &str) -> Preview {
         guild_name: "Hedgerow Garden Club".into(),
         icon: None,
         channel_name: Some("welcome".into()),
+        channel_id: None,
         inviter: Some("Ada".into()),
         members: Some(1_284),
         online: Some(213),

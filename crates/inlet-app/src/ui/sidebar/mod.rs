@@ -135,11 +135,9 @@ impl Inlet {
         cx: &mut Context<Self>,
     ) {
         // An age-restricted channel asks first, whichever way it is opened.
-        if self.selected_guild.is_some() {
-            if let Some(gate) = self.gate_for(&channel_id, cx) {
-                self.nav_show(super::overlays::nav_dialog::NavDialog::Gate(gate), cx);
-                return;
-            }
+        if let Some(gate) = self.gate_for(&channel_id, cx) {
+            self.show_gate(gate, cx);
+            return;
         }
         self.selected_channel = Some(channel_id.clone());
         if self.selected_guild.is_none() {
@@ -157,9 +155,18 @@ impl Inlet {
     }
 
     pub(crate) fn render_channel_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows: Vec<AnyElement> = match self.selected_guild {
-            None => self.dm_rows(cx),
-            Some(_) => self.channel_rows(cx),
+        let rows: Vec<AnyElement> = if self.rail.favorites {
+            self.favorite_rows(cx)
+        } else {
+            match self.selected_guild {
+                None => self.dm_rows(cx),
+                Some(_) => self.channel_rows(cx),
+            }
+        };
+        let header = if self.rail.favorites {
+            self.render_favorites_header()
+        } else {
+            self.render_guild_header(cx).into_any_element()
         };
         div()
             .debug_selector(|| "sidebar".into())
@@ -169,7 +176,7 @@ impl Inlet {
             .flex()
             .flex_col()
             .bg(theme::bg_app())
-            .child(self.render_guild_header(cx))
+            .child(header)
             .child(
                 div()
                     .id("channels")

@@ -27,6 +27,7 @@ use crate::backend::settings::{folders as backend_folders, Cmd as SettingsCmd};
 use crate::model::Guild;
 use crate::theme;
 use crate::ui::notifications::badge::{rail_badge, RailMarks};
+use crate::ui::overlays::guild_menu::Anchor;
 use crate::ui::overlays::nav_dialog::{NavDialog, Soon};
 use order::{Organized, Place, Source, Target};
 
@@ -43,6 +44,8 @@ const PENDING_FOR: Duration = Duration::from_secs(10);
 pub struct RailState {
     /// The list that was sent and has not come back yet, and when.
     pub pending: Option<(Vec<GuildFolder>, Instant)>,
+    /// The favourites list is up in place of a server's channels.
+    pub favorites: bool,
 }
 
 /// What is being dragged: a server or a folder.
@@ -207,6 +210,13 @@ impl Inlet {
 
     /// Shows a new list at once and saves it.
     pub(crate) fn rail_save(&mut self, folders: Vec<GuildFolder>, cx: &mut Context<Self>) {
+        // The server takes at most 100 entries; runs of loose servers between folders
+        // count as one each. Say why instead of sending what would be refused.
+        if folders.len() > inlet_protocol::api::folders::MAX_FOLDERS {
+            self.chat.error = Some(t!("rail-too-many-folders"));
+            cx.notify();
+            return;
+        }
         self.rail.pending = Some((folders.clone(), Instant::now()));
         self.backend
             .send(SettingsCmd::Folders(backend_folders::Cmd::Save { folders }));
@@ -229,7 +239,7 @@ impl Inlet {
             .as_ref()
             .map(|a| a.read(cx).settings().guild_folders().to_vec());
         if let (Some((sent, _)), Some(theirs)) = (&self.rail.pending, theirs) {
-            if *sent == theirs {
+            if order::same_list(sent, &theirs) {
                 self.rail.pending = None;
             }
         }
@@ -255,27 +265,37 @@ impl Inlet {
     }
 
     /// Whether a folder is open in the rail.
-    pub(crate) fn folder_open(&self, id: i64) -> bool {
-        self.sidebar
-            .remembered
-            .open_folders
-            .contains(&id.to_string())
+    pub(crate) fn folder_open(&self, id: i64, cx: &gpui::App) -> bool {
+        self.nav_account_key(cx)
+            .and_then(|account| {
+                self.sidebar
+                    .remembered
+                    .of(&account)
+                    .map(|m| m.open_folders.contains(&id.to_string()))
+            })
+            .unwrap_or(false)
     }
 
+    /// Opens or closes a folder; remembered for this account on this computer.
     fn toggle_folder(&mut self, id: i64, cx: &mut Context<Self>) {
+        let Some(account) = self.nav_account_key(cx) else {
+            return;
+        };
         let key = id.to_string();
-        let remembered = &mut self.sidebar.remembered;
-        if !remembered.open_folders.remove(&key) {
-            remembered.open_folders.insert(&key);
+        if let Some(mem) = self.sidebar.remembered.of_mut(&account) {
+            if !mem.open_folders.remove(&key) {
+                mem.open_folders.insert(&key);
+            }
+            self.sidebar.remembered.save_in_background(cx);
         }
-        remembered.save_in_background(cx);
         cx.notify();
     }
 
     /// A server's entry. `folder` is the folder it sits in.
     fn rail_guild(&mut self, g: &Guild, folder: Option<i64>, cx: &mut Context<Self>) -> AnyElement {
-        let active = self.selected_guild.as_deref() == Some(g.id.as_str());
+        let active = self.selected_guild.as_deref() == Some(g.id.as_str()) && !self.rail.favorites;
         let id = g.id.clone();
+        let menu_id = g.id.clone();
         // The guild's icon when it has one, rounded like the entry.
         let icon = self.guild_icon_image(&g.id, 44., cx).map(|i| {
             i.rounded(px(if active { 13. } else { 22. }))
@@ -301,7 +321,16 @@ impl Inlet {
             RailMarks::of(self.guild_badge(Some(&g.id))),
             "rail-guild",
         )
-        .on_click(cx.listener(move |this, _, _, cx| this.select_guild(Some(id.clone()), cx)))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.rail.favorites = false;
+            this.select_guild(Some(id.clone()), cx)
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                this.open_guild_menu(menu_id.clone(), Anchor::At(event.position), cx)
+            }),
+        )
         .on_drag(dragged, |d, _, _, cx| {
             let label = d.label.clone();
             cx.new(|_| DragPicture { label })
@@ -326,7 +355,7 @@ impl Inlet {
         let Some(fid) = folder.id else {
             return div().into_any_element();
         };
-        let open = self.folder_open(fid);
+        let open = self.folder_open(fid, cx);
         let members: Vec<Guild> = guilds
             .iter()
             .filter_map(|id| self.guilds.iter().find(|g| &g.id == id).cloned())
@@ -368,7 +397,12 @@ impl Inlet {
         .on_drag(
             Dragged {
                 source: Source::Folder(fid),
-                label: SharedString::default(),
+                label: folder
+                    .name
+                    .as_deref()
+                    .and_then(|n| n.chars().next())
+                    .map_or_else(|| t!("rail-folder-initial"), |c| c.to_uppercase().collect())
+                    .into(),
             },
             |d, _, _, cx| {
                 let label = d.label.clone();
@@ -404,6 +438,97 @@ impl Inlet {
             .child(head)
             .children(children)
             .into_any_element()
+    }
+
+    /// Direct messages with something unread, between the star and the divider (Fluxer
+    /// lists them in the rail): the person's picture and the mention count; a click
+    /// opens the conversation.
+    fn rail_unread_dms(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(account) = self.account.clone() else {
+            return Vec::new();
+        };
+        struct Dm {
+            id: String,
+            name: String,
+            avatar: Option<crate::model::UserAvatar>,
+        }
+        let dms: Vec<Dm> = {
+            let state = account.read(cx);
+            state
+                .dm_list()
+                .into_iter()
+                .filter(|c| {
+                    let b = self.badge(&c.id);
+                    b.mentions > 0 || (b.unread && !b.muted)
+                })
+                .take(8)
+                .map(|c| {
+                    let user = c.recipients.first();
+                    Dm {
+                        id: c.id.clone(),
+                        name: user
+                            .map(|u| crate::model::clean_name(u.display_name()))
+                            .or_else(|| c.name.clone().map(|n| crate::model::clean_name(&n)))
+                            .unwrap_or_default(),
+                        avatar: user.and_then(crate::backend::media::user_avatar),
+                    }
+                })
+                .collect()
+        };
+        dms.into_iter()
+            .map(|dm| {
+                let marks = RailMarks::of(self.badge(&dm.id));
+                let face = self.user_avatar(dm.avatar.as_ref(), &dm.name, 44., false, cx);
+                let id = dm.id.clone();
+                entry(
+                    format!("rail-dm-{}", dm.id).into(),
+                    face,
+                    false,
+                    marks,
+                    "rail-dm",
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.rail.favorites = false;
+                    if this.selected_guild.is_none() {
+                        this.chat.pending_channel_jump = Some(id.clone());
+                        cx.notify();
+                    } else {
+                        this.overlays.link_channel = Some(id.clone());
+                        this.select_guild(None, cx);
+                    }
+                }))
+                .into_any_element()
+            })
+            .collect()
+    }
+
+    /// The row shown while some servers are unavailable (an outage on the instance's side).
+    fn rail_outage(&self, cx: &gpui::App) -> Option<AnyElement> {
+        let account = self.account.as_ref()?;
+        account.read(cx).guilds().any(|g| g.unavailable).then(|| {
+            div()
+                .id("rail-outage")
+                .debug_selector(|| "rail-outage".into())
+                .w(px(RAIL_WIDTH))
+                .h(px(ITEM_BOX))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .size(px(32.))
+                        .rounded_full()
+                        .bg(theme::danger())
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(theme::on_danger())
+                        .font_weight(FontWeight::BOLD)
+                        .child("!"),
+                )
+                .into_any_element()
+        })
     }
 
     /// Up to four servers' icons in a two by two grid.
@@ -442,10 +567,11 @@ impl Inlet {
 
     /// An entry that is not a server: an icon in the entry's circle.
     fn rail_button(&self, id: &'static str, icon: Icon, selector: &'static str) -> Stateful<Div> {
+        let active = id == "rail-favorites" && self.rail.favorites;
         entry(
             id.into(),
             icon.el(px(22.), theme::text_strong()).into_any_element(),
-            false,
+            active,
             RailMarks::default(),
             selector,
         )
@@ -453,6 +579,9 @@ impl Inlet {
 
     pub(crate) fn render_guild_rail(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.selected_guild.clone();
+        let instance = self.nav.instance.clone();
+        let unread_dms = self.rail_unread_dms(cx);
+        let outage = self.rail_outage(cx);
         let shown = self.rail_organized(cx);
         let mut items: Vec<AnyElement> = Vec::new();
         for item in &shown {
@@ -505,18 +634,20 @@ impl Inlet {
                     Icon::ChatCircle
                         .el(px(22.), theme::text_strong())
                         .into_any_element(),
-                    selected.is_none(),
+                    selected.is_none() && !self.rail.favorites,
                     RailMarks::of(self.guild_badge(None)),
                     "rail-home",
                 )
-                .on_click(cx.listener(|this, _, _, cx| this.select_guild(None, cx))),
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.rail.favorites = false;
+                    this.select_guild(None, cx)
+                })),
             )
-            .child(
+            .children(self.favorites_star_shown().then(|| {
                 self.rail_button("rail-favorites", Icon::Star, "rail-extra")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.nav_show(NavDialog::Soon(Soon::Favorites), cx)
-                    })),
-            )
+                    .on_click(cx.listener(|this, _, _, cx| this.open_favorites(cx)))
+            }))
+            .children(unread_dms)
             .child(
                 div()
                     .w(px(32.))
@@ -525,17 +656,20 @@ impl Inlet {
                     .rounded_full()
                     .bg(theme::guild_item()),
             )
+            .children(outage)
             .children(items)
             .children(tail)
-            .child(
+            // Explore and Add show by the instance's configuration, as in Fluxer. Explore
+            // opens a placeholder until the discovery pages exist.
+            .children(instance.explore().then(|| {
                 self.rail_button("rail-discover", Icon::Compass, "rail-extra")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.nav_show(NavDialog::Soon(Soon::Discover), cx)
-                    })),
-            )
-            .child(
+                    }))
+            }))
+            .children(instance.add().then(|| {
                 self.rail_button("rail-add", Icon::Plus, "rail-extra")
-                    .on_click(cx.listener(|this, _, window, cx| this.open_add_server(window, cx))),
-            )
+                    .on_click(cx.listener(|this, _, window, cx| this.open_add_server(window, cx)))
+            }))
     }
 }

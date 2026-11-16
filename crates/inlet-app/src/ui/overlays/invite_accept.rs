@@ -87,10 +87,14 @@ pub fn read_invite(text: &str, instance: &str) -> Result<String, String> {
     }
     match web_invite(text) {
         Some(Incoming::WebInvite { origin, code }) => {
+            // Host and port, as the link prompt compares them.
             let host = |o: &str| {
-                url::Url::parse(o)
-                    .ok()
-                    .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                url::Url::parse(o).ok().and_then(|u| {
+                    u.host_str().map(|h| match u.port() {
+                        Some(p) => format!("{}:{p}", h.to_ascii_lowercase()),
+                        None => h.to_ascii_lowercase(),
+                    })
+                })
             };
             if host(&origin).is_some() && host(&origin) == host(instance) {
                 Ok(code)
@@ -184,11 +188,19 @@ impl Inlet {
                     _ => return,
                 };
                 match result {
-                    Ok(guild) => {
+                    Ok(joined) => {
                         self.nav.dialog = None;
-                        if let Some(id) = guild {
+                        if let Some(id) = joined.guild_id {
                             self.nav.join_target = Some(id);
                             self.nav_on_guilds(cx);
+                        } else if let Some(channel) = joined.channel_id {
+                            // A group DM: its conversation opens.
+                            if self.selected_guild.is_none() {
+                                self.chat.pending_channel_jump = Some(channel);
+                            } else {
+                                self.overlays.link_channel = Some(channel);
+                                self.select_guild(None, cx);
+                            }
                         }
                     }
                     Err(why) => {
@@ -200,6 +212,7 @@ impl Inlet {
                     }
                 }
             }
+            Ev::Instance(nav) => self.nav.instance = *nav,
             Ev::Left { guild_id, result } => {
                 let asked = matches!(
                     self.nav.dialog.as_ref(),
@@ -472,6 +485,7 @@ mod tests {
                 guild_name: "Hedgerow".into(),
                 icon: None,
                 channel_name: Some("general".into()),
+                channel_id: Some("7".into()),
                 inviter: Some("Ada".into()),
                 members: Some(12),
                 online: Some(3),

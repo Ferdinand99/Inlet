@@ -8,7 +8,8 @@
 //! a drag into the new list to save. All of it is pure, so the order is tested without a
 //! screen. The rules follow Fluxer's `GuildList` and `GuildsLayout`:
 //!
-//! - a guild the list does not name shows first (newest first, as Fluxer does), and a
+//! - a guild the list does not name shows first (by name, last name first, as Fluxer
+//!   does), and a
 //!   name the account does not have is skipped;
 //! - a guild is shown once, a folder without guilds is not shown;
 //! - dropping a guild on another guild makes a folder with the next free ID;
@@ -31,6 +32,7 @@ pub enum Organized {
 
 impl Organized {
     /// The key a drag and a drop name this entry by: the guild ID, or `folder-<id>`.
+    #[cfg(test)]
     pub fn key(&self) -> String {
         match self {
             Organized::Guild(id) => id.clone(),
@@ -141,6 +143,25 @@ pub fn organize(folders: &[GuildFolder], guilds: &[(String, String)]) -> Vec<Org
         .collect();
     front.extend(out);
     front
+}
+
+/// Whether two lists are the same as far as the server cares: it fills in defaults (the
+/// colour 0, the icon `folder`, no name for an empty one), so a list that was sent comes
+/// back a little different.
+pub fn same_list(a: &[GuildFolder], b: &[GuildFolder]) -> bool {
+    let norm = |f: &GuildFolder| GuildFolder {
+        id: Some(f.id.unwrap_or(UNCATEGORIZED_FOLDER_ID)),
+        name: f.name.clone().filter(|n| !n.trim().is_empty()),
+        color: Some(f.color.unwrap_or(0)),
+        flags: f.flags,
+        icon: if f.icon.is_empty() {
+            "folder".to_owned()
+        } else {
+            f.icon.clone()
+        },
+        guild_ids: f.guild_ids.clone(),
+    };
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| norm(x) == norm(y))
 }
 
 /// The next free folder ID.
@@ -314,40 +335,55 @@ pub fn drop_on(
             Some(folders_of(top))
         }
         // Everything else moves a top-level entry (a loose guild or a folder).
-        (_, _, Place::Before | Place::After) => reorder(shown, source, target, place),
+        (_, _, Place::Before | Place::After) => reorder(folders, shown, source, target, place),
         _ => None,
     }
 }
 
+/// Every top-level entry of the list, including what the rail does not show (a guild the
+/// account no longer lists, one that was unavailable at READY): saving a move must not
+/// delete those from the account's list, or from other clients' folders. Guilds the list
+/// does not name come first, in the order they are shown.
+fn complete(folders: &[GuildFolder], shown: &[Organized]) -> Vec<Top> {
+    let named: std::collections::HashSet<&str> = folders
+        .iter()
+        .flat_map(|f| f.guild_ids.iter().map(String::as_str))
+        .collect();
+    let mut out: Vec<Top> = shown
+        .iter()
+        .filter_map(|o| match o {
+            Organized::Guild(id) if !named.contains(id.as_str()) => Some(Top::Guild(id.clone())),
+            _ => None,
+        })
+        .collect();
+    out.extend(tops(folders));
+    out
+}
+
+fn top_key(t: &Top) -> String {
+    match t {
+        Top::Guild(id) => id.clone(),
+        Top::Folder(f) => folder_key(f.id.unwrap_or(0)),
+    }
+}
+
 fn reorder(
+    folders: &[GuildFolder],
     shown: &[Organized],
     source: &Source,
     target: &Target,
     place: Place,
 ) -> Option<Vec<GuildFolder>> {
     let (skey, tkey) = (source.key(), target.key());
-    let old = shown.iter().position(|o| o.key() == skey)?;
-    let to = shown.iter().position(|o| o.key() == tkey)?;
+    let mut items = complete(folders, shown);
+    let old = items.iter().position(|t| top_key(t) == skey)?;
+    let to = items.iter().position(|t| top_key(t) == tkey)?;
     let to = if old < to { to - 1 } else { to };
-    let new = insert_at(place, to);
-    let mut items: Vec<&Organized> = shown.iter().collect();
     let moved = items.remove(old);
-    items.insert(new.min(items.len()), moved);
-    Some(folders_of(
-        items
-            .into_iter()
-            .map(|o| match o {
-                Organized::Guild(id) => Top::Guild(id.clone()),
-                Organized::Folder { folder, guilds } => {
-                    // What is saved is what is shown: a guild the account no longer has
-                    // is dropped from its folder here.
-                    let mut f = folder.clone();
-                    f.guild_ids = guilds.clone();
-                    Top::Folder(f)
-                }
-            })
-            .collect(),
-    ))
+    let at = insert_at(place, to).min(items.len());
+    items.insert(at, moved);
+    // Folders are saved as they are: a guild that is not shown stays in its folder.
+    Some(folders_of(items))
 }
 
 /// Takes a folder away; its guilds stay where it was, outside any folder.
@@ -546,6 +582,44 @@ mod tests {
         assert!(drop_on(&made, &shown, &src("2"), &Target::Folder(9), Place::Inside).is_none());
     }
 
+    /// A guild that is not on screen (unavailable at READY, or not known to this
+    /// client) keeps its place in the list when another entry moves.
+    #[test]
+    fn moving_an_entry_keeps_guilds_that_are_not_shown() {
+        // 8 sits in folder 5 and 9 is loose; neither is among the guilds shown.
+        let guilds = g(&["1", "2", "3"]);
+        let list = vec![loose(&["1", "2"]), folder(5, &["3", "8"]), loose(&["9"])];
+        let shown = organize(&list, &guilds);
+        assert_eq!(keys(&shown), ["1", "2", "folder-5"]);
+        let src = Source::Guild {
+            id: "1".into(),
+            folder: None,
+        };
+        let moved = drop_on(&list, &shown, &src, &Target::Folder(5), Place::After).unwrap();
+        assert_eq!(
+            ids_of(&moved),
+            [
+                (Some(-1), vec!["2".into()]),
+                (Some(5), vec!["3".into(), "8".into()]),
+                (Some(-1), vec!["1".into(), "9".into()])
+            ]
+        );
+        // The same for a folder moved before a guild.
+        let moved = drop_on(
+            &list,
+            &shown,
+            &Source::Folder(5),
+            &Target::Guild {
+                id: "1".into(),
+                folder: None,
+            },
+            Place::Before,
+        )
+        .unwrap();
+        let all: Vec<String> = moved.iter().flat_map(|f| f.guild_ids.clone()).collect();
+        assert_eq!(all, ["3", "8", "1", "2", "9"]);
+    }
+
     #[test]
     fn deleting_and_editing_a_folder_keeps_the_guilds() {
         let list = vec![loose(&["1"]), folder(2, &["2", "3"]), folder(3, &["4"])];
@@ -563,6 +637,13 @@ mod tests {
         assert_eq!((edited[2].icon.as_str(), edited[2].flags), ("star", 1));
         assert_eq!(edited[1], list[1]);
         assert_eq!(next_folder_id(&list), 4);
+        // What the server sends back differs by its defaults only.
+        let mut back = list.clone();
+        back[0].color = Some(0);
+        back[0].icon = String::new();
+        assert!(same_list(&list, &back));
+        back[1].guild_ids.pop();
+        assert!(!same_list(&list, &back));
         assert_eq!(next_folder_id(&[]), 1);
     }
 }

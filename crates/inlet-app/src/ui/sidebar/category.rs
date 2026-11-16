@@ -6,25 +6,53 @@ use gpui::{
     div, prelude::*, px, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, SharedString,
 };
 
+use inlet_state::{ChannelId, GuildId};
+
 use crate::app::Inlet;
 use crate::assets::Icon;
 use crate::model::Channel;
 use crate::theme;
+use crate::ui::notifications::settings::{Change, Target};
 
 impl Inlet {
-    /// Whether a category is folded away.
-    pub(crate) fn category_folded(&self, id: &str) -> bool {
-        self.sidebar.remembered.collapsed.contains(id)
+    /// The categories of the open server that are folded, from the account's guild
+    /// settings (Fluxer keeps this in `channel_overrides[].collapsed`, per account).
+    pub(crate) fn folded_categories(&self, cx: &gpui::App) -> std::collections::HashSet<String> {
+        let (Some(account), Some(guild)) = (
+            self.account.as_ref(),
+            self.selected_guild.as_deref().and_then(GuildId::parse),
+        ) else {
+            return Default::default();
+        };
+        account
+            .read(cx)
+            .guild_settings()
+            .get(Some(guild))
+            .channel_overrides
+            .iter()
+            .filter(|(_, o)| o.collapsed)
+            .map(|(id, _)| id.to_string())
+            .collect()
     }
 
-    /// Folds a category away, or opens it again, and remembers the choice.
+    /// Folds a category away, or opens it again. The change shows at once and is written
+    /// to the account's guild settings by the notification settings writer (one request
+    /// per guild at a time, changes within half a second merged).
     pub(crate) fn toggle_category(&mut self, id: &str, cx: &mut Context<Self>) {
-        let remembered = &mut self.sidebar.remembered;
-        if !remembered.collapsed.remove(id) {
-            remembered.collapsed.insert(id);
-        }
-        remembered.save_in_background(cx);
-        cx.notify();
+        let (Some(guild), Some(channel)) = (self.selected_guild.clone(), ChannelId::parse(id))
+        else {
+            return;
+        };
+        let folded = self.folded_categories(cx).contains(id);
+        let _ = channel;
+        self.notification_change(
+            Target::Channel {
+                guild_id: Some(guild),
+                channel_id: id.to_owned(),
+            },
+            Change::Collapse(!folded),
+            cx,
+        );
     }
 
     /// One category row. `spaced` leaves room above it (it follows channels).
@@ -34,8 +62,8 @@ impl Inlet {
         spaced: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let folded = self.category_folded(&c.id);
         let cat = c.id.clone();
+        let folded = self.folded_categories(cx).contains(&c.id);
         // A muted category is drawn at half strength, as a muted channel is.
         let dimmed = self.badge(&c.id).dimmed;
         let bell = if dimmed { Icon::BellSlash } else { Icon::Bell };

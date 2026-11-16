@@ -55,12 +55,23 @@ pub struct Probe {
 
 impl Probe {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::in_scene(scenes::Scene::Default, window, cx)
+    }
+
+    /// The same, with a demo scene's data.
+    pub fn in_scene(scene: scenes::Scene, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, window, cx);
+            open_demo(&mut inlet, scene, window, cx);
             inlet
         });
         Self { inlet }
+    }
+
+    /// The view, for the tests inside the crate.
+    #[cfg(test)]
+    pub(crate) fn inlet(&self) -> &Entity<Inlet> {
+        &self.inlet
     }
 }
 
@@ -72,8 +83,13 @@ impl Render for Probe {
 
 /// What the demo backend sends after sign-in, then the guild and channel the
 /// screenshots open, then that channel's newest page.
-fn open_demo(inlet: &mut Inlet, window: &mut Window, cx: &mut Context<Inlet>) {
-    let data = scenes::data(scenes::Scene::Default);
+fn open_demo(
+    inlet: &mut Inlet,
+    scene: scenes::Scene,
+    window: &mut Window,
+    cx: &mut Context<Inlet>,
+) {
+    let data = scenes::data(scene);
     let names = Arc::new(Mutex::new(demo::demo_names(&data.channels)));
     // As the demo backend: the account list, which account it is, then its READY.
     let main = demo::accounts::list().into_iter().take(1).collect();

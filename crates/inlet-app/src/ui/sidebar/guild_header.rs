@@ -8,7 +8,7 @@ use gpui::{div, prelude::*, px, Context, FontWeight};
 use crate::app::Inlet;
 use crate::assets::Icon;
 use crate::theme;
-use crate::ui::overlays::nav_dialog::NavDialog;
+use crate::ui::overlays::guild_menu::Anchor;
 use crate::ui::HEADER_HEIGHT;
 
 impl Inlet {
@@ -68,8 +68,8 @@ impl Inlet {
             )
             .child(Icon::CaretDown.el(px(16.), theme::text_strong()))
             .on_click(cx.listener(|this, _, _, cx| {
-                if this.selected_guild.is_some() {
-                    this.nav_show(NavDialog::GuildMenu, cx);
+                if let Some(guild) = this.selected_guild.clone() {
+                    this.open_guild_menu(guild, Anchor::Header, cx);
                 }
             }));
         match banner {
