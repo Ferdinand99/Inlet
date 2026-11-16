@@ -15,7 +15,10 @@
 //!
 //! A snapshot that arrives while the edit waits and does not hold its value (the echo of
 //! an earlier write, or a change another client made first) updates what the server is
-//! known to say but never hides the edit.
+//! known to say but never hides the edit. Once a snapshot has held the edit's value the
+//! edit counts as echoed for good: if the person clicks back to the value the server
+//! already has while an earlier write is in flight, the old value may show until that
+//! write's own echo comes.
 //! The answer itself gives no values: it may be older than a change another client made
 //! after it. If the snapshot never comes, [`Tracker::expire`] lets the answer's values
 //! stand after a short wait, so a lost echo cannot pin an edit.

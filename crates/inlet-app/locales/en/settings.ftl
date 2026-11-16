@@ -160,6 +160,7 @@ settings-privacy-profile-friends = Friends only
 settings-privacy-profile-friends-hint = Your full profile is only visible to your friends
 settings-privacy-sensitive = Sensitive content
 settings-privacy-sensitive-hint = What to do with media that may not be suitable for everyone.
+settings-privacy-sensitive-age = The setting for community channels is for accounts that may see mature content.
 settings-privacy-sensitive-show = Show
 settings-privacy-sensitive-blur = Blur
 settings-privacy-sensitive-block = Block

@@ -158,6 +158,35 @@ impl Change {
     }
 }
 
+/// The fields the server refused, for the error line: its answer to a write that is
+/// refused names the fields (`errors` with a `path` and a `message`), and a write of
+/// several settings at once is refused as a whole, so the person is told which one.
+pub(super) fn refused_fields(err: &p::Error) -> String {
+    let p::Error::Api(api) = err else {
+        return String::new();
+    };
+    let Some(list) = api.errors.as_ref().and_then(|e| e.as_array()) else {
+        return String::new();
+    };
+    let parts: Vec<String> = list
+        .iter()
+        .filter_map(|e| {
+            let path = e.get("path")?.as_str()?;
+            let message = e
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default();
+            Some(crate::model::clean_name(&format!("{path}: {message}")))
+        })
+        .take(3)
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", parts.join("; "))
+    }
+}
+
 /// The accessibility part of the preferences, made when there is none yet.
 fn accessibility(prefs: &mut Preferences) -> &mut AccessibilitySettings {
     prefs.accessibility.get_or_insert_with(Default::default)
@@ -366,11 +395,12 @@ async fn write_task(
                     });
                 }
                 Err(err) => {
+                    let fields = refused_fields(&err);
                     report(
                         &events,
                         &internal,
                         gen,
-                        |reason| t!("settings-save-failed", reason = reason),
+                        |reason| t!("settings-save-failed", reason = format!("{reason}{fields}")),
                         err,
                     );
                     let _ = events.unbounded_send(Ev::SaveFailed {

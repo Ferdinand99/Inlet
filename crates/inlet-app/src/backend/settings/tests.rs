@@ -338,7 +338,9 @@ async fn a_failed_write_is_reported_to_the_ui() {
     Mock::given(method("PATCH"))
         .and(path("/api/v1/users/@me/settings"))
         .respond_with(ResponseTemplate::new(400).set_body_json(json!({
-            "code": "INVALID_FORM_BODY", "message": "no"
+            "code": "INVALID_FORM_BODY", "message": "Invalid form body",
+            "errors": [{"path": "sensitive_content_guild_filter", "code": "AGE_RESTRICTED",
+                        "message": "Non-adult users cannot modify the guild content filter"}]
         })))
         .mount(&server)
         .await;
@@ -351,19 +353,30 @@ async fn a_failed_write_is_reported_to_the_ui() {
         .send(wish(4, &[Change::DeveloperMode(true)]))
         .unwrap();
     let mut failed = None;
+    let mut said = String::new();
     let deadline = Instant::now() + Duration::from_secs(5);
     while failed.is_none() && Instant::now() < deadline {
-        if let Ok(Event::Settings(super::Ev::Account(super::account::Ev::SaveFailed {
-            through,
-            preferences,
-        }))) = rx.try_recv()
-        {
-            failed = Some((through, preferences));
-        } else {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        match rx.try_recv() {
+            Ok(Event::Settings(super::Ev::Account(super::account::Ev::SaveFailed {
+                through,
+                preferences,
+            }))) => failed = Some((through, preferences)),
+            Ok(Event::Accounts(crate::backend::accounts::Ev::Error(text))) => said = text,
+            _ => tokio::time::sleep(Duration::from_millis(50)).await,
         }
     }
     assert_eq!(failed, Some((4, false)));
+    // A refused write says which field the server refused, since a write of several
+    // settings at once is refused as a whole.
+    while let Ok(event) = rx.try_recv() {
+        if let Event::Accounts(crate::backend::accounts::Ev::Error(text)) = event {
+            said = text;
+        }
+    }
+    assert!(
+        said.contains("sensitive_content_guild_filter"),
+        "the error names the refused field: {said:?}"
+    );
 }
 
 #[test]

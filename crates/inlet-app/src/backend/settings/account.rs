@@ -115,11 +115,14 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
                             });
                         }
                         Err(err) => {
+                            let fields = write::refused_fields(&err);
                             report(
                                 &events,
                                 &internal,
                                 gen,
-                                |reason| t!("settings-save-failed", reason = reason),
+                                |reason| {
+                                    t!("settings-save-failed", reason = format!("{reason}{fields}"))
+                                },
                                 err,
                             );
                             let _ = events.unbounded_send(Ev::SaveFailed {

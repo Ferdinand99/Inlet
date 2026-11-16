@@ -52,20 +52,18 @@ pub mod who {
         }
     }
 
-    /// The flags after picking `base`. A custom set keeps the groups it had, or starts
-    /// with friends of friends. The silent flag stays.
+    /// The flags after picking `base` (Fluxer's `nextFlagsForBaseChange`): a custom set
+    /// keeps the groups it had, or starts with friends of friends. The silent flag goes.
     pub fn with_base(flags: u8, base: Base) -> u8 {
-        let silent = flags & SILENT;
-        silent
-            | match base {
-                Base::Nobody => NOBODY,
-                Base::FriendsOnly => FRIENDS_ONLY,
-                Base::Everyone => EVERYONE,
-                Base::Custom => match flags & (FRIENDS_OF_FRIENDS | SERVER_MEMBERS) {
-                    0 => FRIENDS_OF_FRIENDS,
-                    groups => groups,
-                },
-            }
+        match base {
+            Base::Nobody => NOBODY,
+            Base::FriendsOnly => FRIENDS_ONLY,
+            Base::Everyone => EVERYONE,
+            Base::Custom => match flags & (FRIENDS_OF_FRIENDS | SERVER_MEMBERS) {
+                0 => FRIENDS_OF_FRIENDS,
+                groups => groups,
+            },
+        }
     }
 
     /// The flags after switching one group on or off in a custom set. With none left it
@@ -79,6 +77,33 @@ pub mod who {
             groups &= !group;
         }
         silent | if groups == 0 { FRIENDS_ONLY } else { groups }
+    }
+}
+
+/// The three places a sensitive media setting is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SensitiveRow {
+    FriendDms,
+    OtherDms,
+    Servers,
+}
+
+/// The values Fluxer offers for a row: show, blur and block for direct messages; only show
+/// and blur for community channels (its API refuses block there).
+pub fn sensitive_offered(row: SensitiveRow) -> &'static [u8] {
+    match row {
+        SensitiveRow::Servers => &[0, 1],
+        SensitiveRow::FriendDms | SensitiveRow::OtherDms => &[0, 1, 2],
+    }
+}
+
+/// Whether a value may be picked. An account that may not see mature content (`adult`
+/// false) cannot show sensitive media in direct messages and cannot change the community
+/// filter at all: Fluxer's server refuses both, and its own client disables them.
+pub fn sensitive_enabled(row: SensitiveRow, adult: bool, value: u8) -> bool {
+    match row {
+        SensitiveRow::Servers => adult,
+        SensitiveRow::FriendDms | SensitiveRow::OtherDms => adult || value != 0,
     }
 }
 
@@ -161,9 +186,17 @@ impl SettingsTab for PrivacyTab {
             cx,
         );
         col = profile_privacy(col, v.profile_privacy, cx);
+        // `nsfw_allowed` of the account, as Fluxer's `matureContentAllowed`.
+        let adult = with_app(cx, |app, cx| {
+            app.account
+                .as_ref()
+                .is_some_and(|a| a.read(cx).me().nsfw_allowed())
+        })
+        .unwrap_or(false);
         col = sensitive(
             col,
             [v.sensitive_friends, v.sensitive_others, v.sensitive_servers],
+            adult,
             cx,
         );
         col.into_any_element()
@@ -481,18 +514,39 @@ fn profile_privacy(col: gpui::Div, level: u8, cx: &mut Context<SettingsView>) ->
 }
 
 /// Show, blur or block, for three kinds of place.
-fn sensitive(col: gpui::Div, levels: [u8; 3], cx: &mut Context<SettingsView>) -> gpui::Div {
+fn sensitive(
+    col: gpui::Div,
+    levels: [u8; 3],
+    adult: bool,
+    cx: &mut Context<SettingsView>,
+) -> gpui::Div {
     let row = |label: String,
                hint: String,
+               kind: SensitiveRow,
                ids: [&'static str; 3],
                level: u8,
                make: fn(u8) -> Change,
                cx: &mut Context<SettingsView>| {
-        let seg = |id: &'static str, label: String, value: u8, cx: &mut Context<SettingsView>| {
-            segment(id, label, level == value).on_click(cx.listener(move |_, _, _, cx| {
-                store::change(cx, make(value));
-                cx.notify();
-            }))
+        let seg = |id: &'static str,
+                   label: String,
+                   value: u8,
+                   cx: &mut Context<SettingsView>|
+         -> Option<AnyElement> {
+            if !sensitive_offered(kind).contains(&value) {
+                return None;
+            }
+            let on = sensitive_enabled(kind, adult, value);
+            let seg = segment(id, label, level == value);
+            Some(if on {
+                seg.on_click(cx.listener(move |_, _, _, cx| {
+                    store::change(cx, make(value));
+                    cx.notify();
+                }))
+                .into_any_element()
+            } else {
+                // Not for this account: dimmed, and a click does nothing.
+                seg.opacity(0.4).into_any_element()
+            })
         };
         div()
             .flex()
@@ -511,16 +565,25 @@ fn sensitive(col: gpui::Div, levels: [u8; 3], cx: &mut Context<SettingsView>) ->
                     .flex()
                     .flex_row()
                     .gap_1()
-                    .child(seg(ids[0], t!("settings-privacy-sensitive-show"), 0, cx))
-                    .child(seg(ids[1], t!("settings-privacy-sensitive-blur"), 1, cx))
-                    .child(seg(ids[2], t!("settings-privacy-sensitive-block"), 2, cx)),
+                    .children(seg(ids[0], t!("settings-privacy-sensitive-show"), 0, cx))
+                    .children(seg(ids[1], t!("settings-privacy-sensitive-blur"), 1, cx))
+                    .children(seg(ids[2], t!("settings-privacy-sensitive-block"), 2, cx)),
             )
+            .when(!adult && kind == SensitiveRow::Servers, |d| {
+                d.child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(theme::text_muted())
+                        .child(t!("settings-privacy-sensitive-age")),
+                )
+            })
     };
     col.child(heading(t!("settings-privacy-sensitive").to_uppercase()))
         .child(note(t!("settings-privacy-sensitive-hint")).pl_0())
         .child(row(
             t!("settings-privacy-sensitive-friends"),
             t!("settings-privacy-sensitive-friends-hint"),
+            SensitiveRow::FriendDms,
             [
                 "settings-sensitive-friends-show",
                 "settings-sensitive-friends-blur",
@@ -533,6 +596,7 @@ fn sensitive(col: gpui::Div, levels: [u8; 3], cx: &mut Context<SettingsView>) ->
         .child(row(
             t!("settings-privacy-sensitive-others"),
             t!("settings-privacy-sensitive-others-hint"),
+            SensitiveRow::OtherDms,
             [
                 "settings-sensitive-others-show",
                 "settings-sensitive-others-blur",
@@ -545,6 +609,7 @@ fn sensitive(col: gpui::Div, levels: [u8; 3], cx: &mut Context<SettingsView>) ->
         .child(row(
             t!("settings-privacy-sensitive-servers"),
             t!("settings-privacy-sensitive-servers-hint"),
+            SensitiveRow::Servers,
             [
                 "settings-sensitive-servers-show",
                 "settings-sensitive-servers-blur",
@@ -591,6 +656,36 @@ mod tests {
         );
     }
 
+    /// What Fluxer's server accepts: no block for community channels, and for an account
+    /// that may not see mature content no show in direct messages and no change at all
+    /// to the community filter.
+    #[test]
+    fn the_sensitive_options_are_the_ones_fluxer_accepts() {
+        use SensitiveRow::*;
+        assert_eq!(
+            sensitive_offered(Servers),
+            [0, 1],
+            "no block for communities"
+        );
+        assert_eq!(sensitive_offered(FriendDms), [0, 1, 2]);
+        assert_eq!(sensitive_offered(OtherDms), [0, 1, 2]);
+        for value in [0, 1] {
+            assert!(sensitive_enabled(Servers, true, value));
+            assert!(
+                !sensitive_enabled(Servers, false, value),
+                "an under-18 account cannot change it"
+            );
+        }
+        for row in [FriendDms, OtherDms] {
+            assert!(
+                !sensitive_enabled(row, false, 0),
+                "no show for an under-18 account"
+            );
+            assert!(sensitive_enabled(row, false, 1) && sensitive_enabled(row, false, 2));
+            assert!((0..3).all(|v| sensitive_enabled(row, true, v)));
+        }
+    }
+
     #[test]
     fn the_who_flags_follow_fluxers_rules() {
         use who::*;
@@ -600,10 +695,10 @@ mod tests {
         // A custom set keeps its groups, or starts with friends of friends.
         assert_eq!(with_base(SERVER_MEMBERS, Base::Custom), SERVER_MEMBERS);
         assert_eq!(with_base(FRIENDS_ONLY, Base::Custom), FRIENDS_OF_FRIENDS);
-        // The silent flag survives a change of base.
+        // The silent flag goes with a change of base, as in Fluxer.
         assert_eq!(
             with_base(EVERYONE | SILENT, Base::FriendsOnly),
-            FRIENDS_ONLY | SILENT
+            FRIENDS_ONLY
         );
         // Switching groups: none left falls back to friends only.
         assert_eq!(

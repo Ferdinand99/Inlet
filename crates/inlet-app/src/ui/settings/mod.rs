@@ -209,8 +209,7 @@ impl Inlet {
     }
 
     /// The account's settings as its state holds them (READY, a settings update, or the
-    /// account becoming the active one): the store takes them in the order of their
-    /// versions.
+    /// account becoming the active one): the store takes them in the order they arrive.
     pub(crate) fn follow_account_settings(&mut self, cx: &mut Context<Self>) {
         let Some(account) = self.account.clone() else {
             return;
