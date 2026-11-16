@@ -10,8 +10,9 @@
 # (already cut to the window and compressed by inlet-visual) to
 # tests/visual/baseline/<os>/, and runs oxipng over them when it is installed. Scenes
 # whose result in the run's report.md is "same" are skipped, so a baseline PR holds only
-# real changes. It commits nothing: look at the new pictures, then commit them with the
-# change that caused them.
+# real changes (not with --other-run: "same" then means the baseline of that run's own
+# commit, which may differ from the files here, so every picture is taken). It commits
+# nothing: look at the new pictures, then commit them with the change that caused them.
 #
 # It refuses a run from a fork, from another workflow than build.yml, from another
 # branch than the one checked out, or of another commit than HEAD, unless --other-run
@@ -100,7 +101,8 @@ unchanged_scenes() {
 copied=()
 for os in "${oses[@]}"; do
   mkdir -p "tests/visual/baseline/$os"
-  same="$(unchanged_scenes "$tmp/$os/report.md")"
+  same=""
+  [ "$other_run" = 1 ] || same="$(unchanged_scenes "$tmp/$os/report.md")"
   taken=0
   skipped=0
   for picture in "$tmp/$os"/actual/*.png; do
