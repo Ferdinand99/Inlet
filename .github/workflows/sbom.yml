@@ -81,7 +81,10 @@ jobs:
           set -euo pipefail
           cargo cyclonedx --format json --spec-version 1.5 --target "$TARGET"
           mkdir sbom
-          cp crates/inlet-app/inlet.cdx.json "sbom/inlet-$PLATFORM.cdx.json"
+          # The component references of the workspace crates are file URLs of the build
+          # directory; make them the same everywhere (every reference is rewritten the
+          # same way, so the links between components stay intact).
+          sed "s|file://$PWD|file:///workspace|g" crates/inlet-app/inlet.cdx.json > "sbom/inlet-$PLATFORM.cdx.json"
           ls -l sbom
           # The generator must not have changed the lock file.
           git diff --exit-code Cargo.lock
