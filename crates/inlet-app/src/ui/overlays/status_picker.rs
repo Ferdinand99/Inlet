@@ -237,6 +237,7 @@ impl Inlet {
         let input = cx.new(|cx| {
             TextInput::new(t!("presence-custom-placeholder"), cx)
                 .max_chars(CUSTOM_STATUS_TEXT_LIMIT)
+                .max_utf16(CUSTOM_STATUS_TEXT_LIMIT)
                 .with_text(text)
         });
         let submit = cx.subscribe(&input, |this, _, _: &InputEvent, cx| {

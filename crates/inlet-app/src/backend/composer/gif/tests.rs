@@ -116,16 +116,10 @@ async fn gif_search_is_debounced_and_budgeted() {
         .count();
     assert_eq!(ok + refused, 10);
     assert!((1..=7).contains(&ok), "{ok} searches went out");
-    let mut times = times.lock().unwrap().clone();
-    times.sort();
-    assert_eq!(times.len(), ok);
-    for pair in times.windows(2) {
-        assert!(
-            pair[1] - pair[0] >= Duration::from_millis(450),
-            "searches {:?} apart",
-            pair[1] - pair[0]
-        );
-    }
+    // The exact pacing (slots half a second apart) is tested with injected time in
+    // inlet-protocol (`gif_searches_get_one_slot_per_half_second`); wall-clock gaps
+    // measured in the mock server depend on how busy the machine is.
+    assert_eq!(times.lock().unwrap().len(), ok);
     let all = server.received_requests().await.unwrap_or_default();
     assert!(all
         .iter()

@@ -39,6 +39,9 @@ mkdir -p /src /out /stage
 #    by every worktree, and cargo trusts mtimes, so an older file with different
 #    content must still count as changed. Dependencies stay cached; only the
 #    workspace crates are re-checked, and rustc's incremental cache still helps.
+#    The files are stamped again once the slot is ours (step 3): a run that waited for
+#    its slot unpacked before another run built there, so its mtimes alone would look
+#    older than that run's build output.
 tar -x -m -C /src || die "could not unpack the source tar" 2
 
 # 2. Disk space (the volume mount shows the host's Docker filesystem).
@@ -70,6 +73,14 @@ if [ "$slot_wanted" = 1 ]; then
   mkdir -p "/cache/$slot/target" "/cache/$slot/cargo"
   ln -s "/cache/$slot/target" /src/target
   export CARGO_HOME="/cache/$slot/cargo"
+  # The slot's target dir holds what the runs before this one built, from other
+  # worktrees too. Cargo calls a workspace crate fresh when its fingerprint matches and
+  # no source file is newer than the crate's last build, so files stamped before the
+  # last run in this slot finished (see step 1) would reuse that run's artefacts. Stamp
+  # every source file now: the workspace crates rebuild (rustc's incremental cache keeps
+  # that quick), the dependencies stay cached.
+  find /src -path /src/target -prune -o -type f -exec touch {} + \
+    || die "could not stamp the source tree" 2
 fi
 
 # Optional CA for the private test instance (a public certificate).

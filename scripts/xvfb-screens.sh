@@ -190,6 +190,9 @@ scene 50-rail-folders rail-folders c-general
 scene 51-guild-banner guild-banner c-general
 scene 52-guild-menu guild-menu c-general
 scene 53-invite-accept invite-accept c-general
+# The channel header with the search column open at 1280 px: a long channel name keeps
+# its place, the topic and the status line give way first.
+scene 80-header-search-long-name search-results c-rules
 
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,

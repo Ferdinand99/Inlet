@@ -128,7 +128,6 @@ pub fn to_message(m: &p::Message, names: &SharedNames) -> Message {
 
 fn convert_message(m: &p::Message, names: &SharedNames) -> Message {
     let (timestamp_ms, timestamp) = model::timestamp(&m.timestamp);
-    let reply = m.extra.get("referenced_message").and_then(to_reply);
     let snapshot = {
         let mut n = names.lock().unwrap();
         remember_user(&mut n, &m.author);
@@ -137,6 +136,10 @@ fn convert_message(m: &p::Message, names: &SharedNames) -> Message {
         }
         n.clone()
     };
+    let reply = m
+        .extra
+        .get("referenced_message")
+        .and_then(|r| to_reply(r, &snapshot));
     let mut out = Message {
         id: m.id.clone(),
         channel_id: m.channel_id.clone(),
@@ -170,7 +173,7 @@ fn convert_message(m: &p::Message, names: &SharedNames) -> Message {
     out
 }
 
-fn to_reply(v: &serde_json::Value) -> Option<Reply> {
+fn to_reply(v: &serde_json::Value, names: &Names) -> Option<Reply> {
     let author = v.get("author")?;
     let name = author
         .get("global_name")
@@ -181,41 +184,27 @@ fn to_reply(v: &serde_json::Value) -> Option<Reply> {
     let snippet = if content.trim().is_empty() {
         t!("reply-no-text")
     } else {
-        model::snippet(&hide_spoilers(content), 90)
+        // Only what the chat parses of a message (a huge reply target costs no more). A
+        // spoiler that opens before the cut and closes after it is closed here, or its
+        // text would show as plain text.
+        let (mut text, cut) = match content.char_indices().nth(model::DISPLAY_CHARS) {
+            Some((at, _)) => (content[..at].to_string(), true),
+            None => (content.to_string(), false),
+        };
+        if cut && text.matches("||").count() % 2 == 1 {
+            text.push_str("||");
+        }
+        let plain = crate::ui::markdown::plain_text(&text, names);
+        if plain.trim().is_empty() {
+            t!("reply-no-text")
+        } else {
+            model::snippet(&plain, 90)
+        }
     };
     Some(Reply {
         author: model::clean_name(name),
         snippet,
     })
-}
-
-/// What a spoiler's letters show as in a reply preview.
-const SPOILER_COVER: char = '\u{2588}';
-
-/// The preview above a reply is plain text: spoilers (`||text||`) are covered there,
-/// letter by letter, so their text cannot be read before it is revealed.
-fn hide_spoilers(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut rest = content;
-    while let Some(open) = rest.find("||") {
-        let after = &rest[open + 2..];
-        let Some(close) = after.find("||") else {
-            break;
-        };
-        out.push_str(&rest[..open]);
-        out.extend(after[..close].chars().map(
-            |c| {
-                if c.is_whitespace() {
-                    c
-                } else {
-                    SPOILER_COVER
-                }
-            },
-        ));
-        rest = &after[close + 2..];
-    }
-    out.push_str(rest);
-    out
 }
 
 fn str_at<'a>(v: &'a serde_json::Value, path: &[&str]) -> Option<&'a str> {
@@ -333,16 +322,41 @@ mod tests {
     #[test]
     fn reply_preview() {
         let v = serde_json::json!({"author": {"username": "ferdinand", "global_name": "Ferdinand99"}, "content": "Hi! I can't see the #events channel anymore"});
-        let r = to_reply(&v).unwrap();
+        let r = to_reply(&v, &Names::default()).unwrap();
         assert_eq!(r.author, "Ferdinand99");
         assert!(r.snippet.starts_with("Hi! I can't see"));
+    }
+
+    #[test]
+    fn a_spoiler_cut_by_the_size_cap_stays_covered() {
+        let content = format!(
+            "x ||secret {} still secret||",
+            "y".repeat(model::DISPLAY_CHARS)
+        );
+        let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
+        let r = to_reply(&v, &Names::default()).unwrap();
+        assert!(!r.snippet.contains("secret"), "{}", r.snippet);
+        assert!(r.snippet.starts_with("x \u{2588}"));
+    }
+
+    #[test]
+    fn reply_preview_has_no_markdown_markers() {
+        let mut names = Names::default();
+        names.users.insert("7".into(), "Ada".into());
+        let v = serde_json::json!({"author": {"username": "ana"},
+            "content": "Has anyone tried the **native client** *yet* `cargo run` <@7> <:wave:123> ||no||"});
+        let r = to_reply(&v, &names).unwrap();
+        assert_eq!(
+            r.snippet,
+            "Has anyone tried the native client yet cargo run @Ada :wave: \u{2588}\u{2588}"
+        );
     }
 
     #[test]
     fn reply_preview_covers_spoilers() {
         let v = serde_json::json!({"author": {"username": "ana"},
                                    "content": "the end: ||Bruce is dead|| ok ||x"});
-        let r = to_reply(&v).unwrap();
+        let r = to_reply(&v, &Names::default()).unwrap();
         assert_eq!(
             r.snippet,
             "the end: \u{2588}\u{2588}\u{2588}\u{2588}\u{2588} \u{2588}\u{2588} \u{2588}\u{2588}\u{2588}\u{2588} ok ||x"

@@ -8,9 +8,11 @@
 # wanted. The script shows where the run comes from (repository, branch, commit,
 # workflow), downloads those artifacts with the GitHub CLI, copies their actual/*.png
 # (already cut to the window and compressed by inlet-visual) to
-# tests/visual/baseline/<os>/, and runs oxipng over them when it is installed. It
-# commits nothing: look at the new pictures, then commit them with the change that
-# caused them.
+# tests/visual/baseline/<os>/, and runs oxipng over them when it is installed. Scenes
+# whose result in the run's report.md is "same" are skipped, so a baseline PR holds only
+# real changes (not with --other-run: "same" then means the baseline of that run's own
+# commit, which may differ from the files here, so every picture is taken). It commits
+# nothing: look at the new pictures, then commit them with the change that caused them.
 #
 # It refuses a run from a fork, from another workflow than build.yml, from another
 # branch than the one checked out, or of another commit than HEAD, unless --other-run
@@ -23,7 +25,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 other_run=0
 args=()
 for a in "$@"; do
@@ -81,15 +83,46 @@ for os in "${oses[@]}"; do
     exit 1
   fi
 done
+# The scenes whose comparison result in report.md is "same" are left alone: their
+# picture is pixel for pixel the baseline already, and copying it would only rewrite
+# the file (another compression, another commit entry) in a baseline PR. A table row is
+# "| <scene> | <result> | ..."; a scene that loosens its tolerance has a note after its
+# name. A run without a report.md (an older run) takes every picture.
+unchanged_scenes() {
+  [ -f "$1" ] || return 0
+  awk -F'|' '
+    /^\| / {
+      name = $2; result = $3
+      sub(/^ +/, "", name); sub(/ \(tolerance loosened.*$/, "", name); sub(/ +$/, "", name)
+      gsub(/^ +| +$/, "", result)
+      if (result == "same") print name
+    }' "$1"
+}
+copied=()
 for os in "${oses[@]}"; do
-  pictures=("$tmp/$os"/actual/*.png)
   mkdir -p "tests/visual/baseline/$os"
-  cp "${pictures[@]}" "tests/visual/baseline/$os/"
-  echo "$os: ${#pictures[@]} baselines from run $run"
+  same=""
+  [ "$other_run" = 1 ] || same="$(unchanged_scenes "$tmp/$os/report.md")"
+  taken=0
+  skipped=0
+  for picture in "$tmp/$os"/actual/*.png; do
+    scene="$(basename "$picture" .png)"
+    if printf '%s\n' "$same" | grep -Fxq -- "$scene"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    cp "$picture" "tests/visual/baseline/$os/"
+    copied+=("tests/visual/baseline/$os/$scene.png")
+    taken=$((taken + 1))
+  done
+  echo "$os: $taken baselines from run $run ($skipped unchanged, left alone)"
 done
-# Lossless, about a sixth smaller again; the pictures stay valid without it.
-if command -v oxipng >/dev/null 2>&1; then
-  oxipng -q -o 4 --strip safe tests/visual/baseline/*/*.png
+# Lossless, about a sixth smaller again; the pictures stay valid without it. Only the
+# pictures just copied: the others keep their bytes.
+if [ ${#copied[@]} -eq 0 ]; then
+  echo "nothing changed: every scene already matches its baseline"
+elif command -v oxipng >/dev/null 2>&1; then
+  oxipng -q -o 4 --strip safe "${copied[@]}"
 else
   echo "oxipng not found: the baselines are not compressed further (optional)" >&2
 fi

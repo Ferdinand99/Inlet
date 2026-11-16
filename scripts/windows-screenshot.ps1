@@ -232,6 +232,8 @@ Run-Demo "50-rail-folders" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; I
 Run-Demo "51-guild-banner" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "guild-banner"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 Run-Demo "52-guild-menu" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "guild-menu"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 Run-Demo "53-invite-accept" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "invite-accept"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+# The channel header with the search column open at 1280 px (a long channel name).
+Run-Demo "80-header-search-long-name" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "search-results"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-rules" } 10
 # The list of keyboard shortcuts (Ctrl+/).
 Run-Demo "70-keybind-help" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "keybind-help"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
 
