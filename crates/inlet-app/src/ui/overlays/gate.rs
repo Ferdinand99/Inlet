@@ -188,6 +188,16 @@ pub fn blocked(info: &GateInfo, nsfw_allowed: bool) -> bool {
     info.unknown || (info.restricted && !nsfw_allowed)
 }
 
+/// Whether the warning is about a forum or media channel (a thread-only channel, which
+/// is where its posts are): Fluxer keeps that answer on this computer, per account, also
+/// when the post asked for is a thread under it.
+fn scope_is_thread_only(state: &AccountState, info: &GateInfo) -> bool {
+    info.scope == GateScope::Channel
+        && ChannelId::parse(&info.scope_id)
+            .and_then(|id| state.channel(id))
+            .is_some_and(|c| matches!(c.kind, 15 | 16))
+}
+
 /// The channel type of a category (`4`).
 fn model_category() -> i64 {
     inlet_protocol::models::channel_type::GUILD_CATEGORY
@@ -214,6 +224,31 @@ impl Inlet {
             .agreed(info.scope.synced(), &info.scope_id)
     }
 
+    /// Whether what a channel says must stay out of lists and notifications: a gate
+    /// stands in front of it that the person has not passed. Fluxer leaves the messages
+    /// of such a channel out of desktop notifications, the mentions and unread lists and
+    /// search results, so nothing of it is read before the warning was accepted.
+    pub(crate) fn channel_gated(&self, channel: &str, cx: &gpui::App) -> bool {
+        self.gate_for(channel, cx).is_some()
+    }
+
+    /// The same for a message of an account that may not be the one on screen: the
+    /// accepted warnings are the shown account's, so another account's gated channel
+    /// stays quiet (fail closed).
+    pub(crate) fn account_channel_gated(
+        &self,
+        on_screen: bool,
+        state: &AccountState,
+        channel: ChannelId,
+        cx: &gpui::App,
+    ) -> bool {
+        if on_screen {
+            self.channel_gated(&channel.to_string(), cx)
+        } else {
+            gate_of(state, channel).is_some()
+        }
+    }
+
     /// The gate in front of a channel or thread, unless it needs none or the person
     /// accepted it before.
     pub(crate) fn gate_for(&self, channel: &str, cx: &gpui::App) -> Option<Gate> {
@@ -237,7 +272,7 @@ impl Inlet {
         let info = gate_of(state, id)?;
         let allowed = state.me().nsfw_allowed();
         let blocked = blocked(&info, allowed);
-        let thread_only = state.channel(id).is_some_and(|c| matches!(c.kind, 15 | 16));
+        let thread_only = scope_is_thread_only(state, &info);
         if !blocked && self.gate_agreed(&info, thread_only, cx) {
             return None;
         }
@@ -264,10 +299,11 @@ impl Inlet {
         if gate.blocked {
             return;
         }
-        let thread_only = ChannelId::parse(&gate.channel)
-            .and_then(|id| self.account.as_ref().and_then(|a| a.read(cx).channel(id)))
-            .is_some_and(|c| matches!(c.kind, 15 | 16));
-        if thread_only && gate.info.scope == GateScope::Channel {
+        let thread_only = self
+            .account
+            .as_ref()
+            .is_some_and(|a| scope_is_thread_only(a.read(cx), &gate.info));
+        if thread_only {
             if let Some(key) = self.nav_account_key(cx) {
                 if let Some(mem) = self.sidebar.remembered.of_mut(&key) {
                     mem.local_agreed.insert(&gate.info.scope_id);
@@ -439,6 +475,29 @@ mod tests {
         );
     }
 
+    /// A post in a forum under a restricted forum: the answer is about the forum, and a
+    /// forum keeps its answer on this computer (as Fluxer does), not in the synced list.
+    #[test]
+    fn a_post_in_a_gated_forum_is_judged_by_the_forum() {
+        let s = state(
+            json!({"nsfw": false}),
+            json!([
+                {"id": "500", "type": 15, "name": "forum", "position": 0, "nsfw_override": true},
+                {"id": "501", "type": 11, "name": "post", "parent_id": "500", "position": 1}
+            ]),
+        );
+        let info = gate_of(&s, ChannelId(501)).unwrap();
+        assert_eq!(
+            (info.scope, info.scope_id.as_str()),
+            (GateScope::Channel, "500")
+        );
+        assert!(scope_is_thread_only(&s, &info));
+        // A text channel's answer is the synced one.
+        let s = state(json!({}), channels());
+        let info = gate_of(&s, ChannelId(302)).unwrap();
+        assert!(!scope_is_thread_only(&s, &info));
+    }
+
     #[test]
     fn a_thread_under_a_gated_channel_asks_first() {
         let s = state(json!({"nsfw": false}), channels());
@@ -505,6 +564,16 @@ mod tests {
                 }
                 assert_eq!(inlet.selected_channel, was);
                 assert!(matches!(inlet.nav.dialog, Some(NavDialog::Gate(_))));
+                // What a gated channel says stays out of notifications, the mentions
+                // and unread lists and search: all ask `channel_gated`. Another
+                // account's gated channel stays quiet too (its answers are not known).
+                assert!(inlet.channel_gated(&mature, cx));
+                assert!(!inlet.channel_gated(&snowflake("c-dev"), cx));
+                let account = inlet.account.clone().unwrap();
+                let ch = |name: &str| ChannelId::parse(&snowflake(name)).unwrap();
+                assert!(inlet.account_channel_gated(true, account.read(cx), ch("c-mature"), cx));
+                assert!(inlet.account_channel_gated(false, account.read(cx), ch("c-mature"), cx));
+                assert!(!inlet.account_channel_gated(false, account.read(cx), ch("c-dev"), cx));
                 // A channel that needs nothing opens as before.
                 inlet.nav.dialog = None;
                 inlet.select_channel(snowflake("c-dev"), window, cx);

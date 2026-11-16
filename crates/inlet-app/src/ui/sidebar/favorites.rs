@@ -35,6 +35,20 @@ fn kind_of(kind: i64) -> ChannelKind {
     }
 }
 
+/// A channel as Fluxer stores it as a favourite: the server's category is not the
+/// favourites category, so `parent_id` is empty (it holds the ID of one of the person's
+/// own favourites categories, or nothing). A parent copied from the server would point at
+/// a category the favourites list does not have.
+pub fn new_favorite(channel: &str, guild: &str, count: usize) -> FavoriteChannel {
+    FavoriteChannel {
+        channel_id: channel.to_owned(),
+        guild_id: guild.to_owned(),
+        parent_id: None,
+        position: i32::try_from(count).unwrap_or(i32::MAX),
+        nickname: None,
+    }
+}
+
 /// A favourite channel with what the list shows of it.
 struct Shown {
     fav: FavoriteChannel,
@@ -69,22 +83,16 @@ impl Inlet {
         let Some(guild) = self.selected_guild.clone() else {
             return;
         };
-        let Some(c) = self.channels.iter().find(|c| c.id == channel).cloned() else {
+        if !self.channels.iter().any(|c| c.id == channel) {
             return;
-        };
+        }
         let count = self
             .composer
             .pickers
             .prefs
             .favourites_state()
             .map_or(0, |f| f.channels.len());
-        let fav = FavoriteChannel {
-            channel_id: channel.to_owned(),
-            guild_id: guild,
-            parent_id: c.parent_id.clone(),
-            position: i32::try_from(count).unwrap_or(i32::MAX),
-            nickname: None,
-        };
+        let fav = new_favorite(channel, &guild, count);
         self.edit_prefs(PrefEdit::FavouriteChannel { channel: fav, on });
         cx.notify();
     }
@@ -490,4 +498,29 @@ pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_favorite(&channel, cx)))
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_favorite_added_here_has_no_parent_so_fluxer_shows_it() {
+        let f = new_favorite("301", "100", 2);
+        assert_eq!(f.parent_id, None);
+        assert_eq!(
+            (f.channel_id.as_str(), f.guild_id.as_str(), f.position),
+            ("301", "100", 2)
+        );
+        // It survives the synced preferences: stored, read back, parent still empty.
+        let mut prefs = inlet_protocol::api::preferences::Preferences::default();
+        PrefEdit::FavouriteChannel {
+            channel: f.clone(),
+            on: true,
+        }
+        .apply(&mut prefs);
+        let stored = &prefs.favorites.as_ref().unwrap().channels;
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].parent_id, None);
+    }
 }
