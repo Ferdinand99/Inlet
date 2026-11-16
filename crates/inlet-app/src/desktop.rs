@@ -943,6 +943,7 @@ impl Inlet {
             switcher: self.switcher_layer_open(),
             panel: self.inbox.open.is_some(),
             settings: self.settings.view.is_some(),
+            keybind_help: self.keybind_help_open(),
             picker: self.composer.pickers.is_open(),
             viewer: self.media.viewer.is_some(),
             search: self.search_panel_open(),
@@ -1058,6 +1059,7 @@ impl Inlet {
             Some(Layer::AccountSwitcher) => self.switcher.open = false,
             Some(Layer::Panel) => self.inbox.open = None,
             Some(Layer::Settings) => self.settings.view = None,
+            Some(Layer::KeybindHelp) => self.overlays.keybind_help = false,
             Some(Layer::Picker) => self.composer.pickers.close(),
             Some(Layer::Viewer) => self.media.viewer = None,
             None => {}
@@ -1178,6 +1180,8 @@ pub(crate) enum Layer {
     /// The pinned messages or the inbox, under the channel header.
     Panel,
     Settings,
+    /// The list of keyboard shortcuts (Ctrl+/).
+    KeybindHelp,
     /// The emoji, GIF, sticker and meme picker.
     Picker,
     Viewer,
@@ -1207,6 +1211,7 @@ pub(crate) struct OpenLayers {
     pub switcher: bool,
     pub panel: bool,
     pub settings: bool,
+    pub keybind_help: bool,
     pub picker: bool,
     pub viewer: bool,
     pub search: bool,
@@ -1240,6 +1245,8 @@ impl OpenLayers {
             Some(Layer::AccountSwitcher)
         } else if self.notification_settings {
             Some(Layer::NotificationSettings)
+        } else if self.keybind_help {
+            Some(Layer::KeybindHelp)
         } else if self.settings {
             Some(Layer::Settings)
         } else if self.picker {
@@ -1275,6 +1282,7 @@ impl OpenLayers {
             Some(Layer::AccountSwitcher) => self.switcher = false,
             Some(Layer::Panel) => self.panel = false,
             Some(Layer::Settings) => self.settings = false,
+            Some(Layer::KeybindHelp) => self.keybind_help = false,
             Some(Layer::Picker) => self.picker = false,
             Some(Layer::Viewer) => self.viewer = false,
             None => {}
@@ -1652,6 +1660,7 @@ mod tests {
             switcher: true,
             panel: true,
             settings: true,
+            keybind_help: true,
             picker: true,
             viewer: true,
             search: true,
@@ -1677,6 +1686,7 @@ mod tests {
                 Layer::ProfileModal,
                 Layer::AccountSwitcher,
                 Layer::NotificationSettings,
+                Layer::KeybindHelp,
                 Layer::Settings,
                 Layer::Picker,
                 Layer::Viewer,
