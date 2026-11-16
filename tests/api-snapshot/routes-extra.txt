@@ -1,0 +1,6 @@
+# Routes that inlet-protocol builds from a shared base path, so the method cannot be
+# read off a single call site. Each entry needs a path in the protocol sources that it
+# starts with (`api_snapshot.py verify` fails otherwise). Parameter names do not matter.
+PUT /channels/{}/messages/{}/reactions/{}/@me
+DELETE /channels/{}/messages/{}/reactions/{}/@me
+GET /channels/{}/messages/{}/reactions/{}/users
