@@ -19,6 +19,7 @@ use crate::models::{
 use crate::ratelimit::{
     clamp_server_secs, route_key, LimiterKey, RateLimitConfig, RateLimiter, MAX_SERVER_WAIT,
 };
+use crate::sudo::{is_sudo_route, SudoRequired, SudoStore, SudoToken, SUDO_HEADER};
 use crate::token::Token;
 use crate::upload::{ProgressFn, UploadFile, UploadLimits};
 use tokio::time::Instant;
@@ -44,6 +45,8 @@ const MAX_GUILD_PAGES: usize = 25;
 pub(crate) struct RawResponse {
     pub(crate) status: u16,
     pub(crate) body: Vec<u8>,
+    /// The sudo token the answer carried (read only on sudo routes, see [`crate::sudo`]).
+    pub(crate) sudo_token: Option<SudoToken>,
 }
 
 impl RawResponse {
@@ -90,6 +93,8 @@ pub(crate) struct Request<'a> {
     pub(crate) headers: &'a [(&'static str, String)],
     /// A multipart body (uploads); replaces `body`.
     pub(crate) upload: Option<&'a crate::upload::Multipart>,
+    /// The sudo token to attach. Sent only to the routes that take it ([`is_sudo_route`]).
+    pub(crate) sudo: Option<&'a SudoToken>,
 }
 
 fn header_f64(headers: &reqwest::header::HeaderMap, name: &str) -> Option<f64> {
@@ -137,6 +142,14 @@ pub(crate) async fn send(
         }
         for (name, value) in req.headers {
             builder = builder.header(*name, value);
+        }
+        // The sudo token goes to the routes that take it, and nowhere else.
+        if let Some(t) = req.sudo.filter(|_| is_sudo_route(&req.method, req.path)) {
+            let mut v = HeaderValue::from_str(t.expose_secret()).map_err(|_| {
+                Error::Decode("the sudo token has characters a header cannot hold".into())
+            })?;
+            v.set_sensitive(true);
+            builder = builder.header(SUDO_HEADER, v);
         }
         if let Some(m) = req.upload {
             builder = builder
@@ -213,7 +226,20 @@ pub(crate) async fn send(
                 "the API answered with a redirect (HTTP {status}); not following it"
             )));
         }
-        return Ok(RawResponse { status, body });
+        // A sudo token is read from the answer of a sudo route only.
+        let sudo_token = if is_sudo_route(&req.method, req.path) {
+            headers
+                .get(SUDO_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(SudoToken::parse)
+        } else {
+            None
+        };
+        return Ok(RawResponse {
+            status,
+            body,
+            sudo_token,
+        });
     }
 }
 
@@ -231,6 +257,8 @@ pub struct Client {
     instance: Instance,
     token: Arc<Token>,
     limiter: Arc<Mutex<Arc<RateLimiter>>>,
+    /// The sudo token and wrong-proof count of this session (see [`crate::sudo`]).
+    sudo: Arc<SudoStore>,
 }
 
 impl std::fmt::Debug for Client {
@@ -257,6 +285,7 @@ impl Client {
             instance,
             token: Arc::new(token),
             limiter: Arc::new(Mutex::new(limiter)),
+            sudo: Arc::default(),
         }
     }
 
@@ -319,8 +348,30 @@ impl Client {
         path: &str,
         body: Option<&Value>,
     ) -> Result<RawResponse> {
+        let raw = self.send_for_sudo(method, path, body, true).await?;
+        if !raw.is_success() {
+            return Err(self.error_of(&raw));
+        }
+        Ok(raw)
+    }
+
+    /// Sends a request and hands back the answer whatever its status (the limiter, 429
+    /// and 401 are handled). The session's sudo token goes along when `attach_token` is
+    /// set and the route takes it; a token in the answer is kept.
+    pub(crate) async fn send_for_sudo(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        attach_token: bool,
+    ) -> Result<RawResponse> {
         let limiter = self.rate_limiter();
-        let raw = send(
+        let sudo = if attach_token {
+            self.sudo.token()
+        } else {
+            None
+        };
+        let mut raw = send(
             &self.instance,
             &limiter,
             Some(&self.token),
@@ -330,13 +381,28 @@ impl Client {
                 body,
                 headers: &[],
                 upload: None,
+                sudo: sudo.as_ref(),
             },
         )
         .await?;
-        if !raw.is_success() {
-            return Err(Error::Api(Box::new(raw.api_error())));
+        if let Some(token) = raw.sudo_token.take() {
+            self.sudo.set(token);
         }
         Ok(raw)
+    }
+
+    /// The error for a failed answer: `SUDO_MODE_REQUIRED` is [`Error::SudoRequired`]
+    /// (and drops a sudo token the instance no longer accepts), the rest is [`Error::Api`].
+    pub(crate) fn error_of(&self, raw: &RawResponse) -> Error {
+        if raw.status == 403 && raw.api_error().code == "SUDO_MODE_REQUIRED" {
+            self.sudo.clear();
+            return Error::SudoRequired(Box::new(SudoRequired::from_body(&raw.value())));
+        }
+        Error::Api(Box::new(raw.api_error()))
+    }
+
+    pub(crate) fn sudo_store(&self) -> &SudoStore {
+        &self.sudo
     }
 
     pub(crate) async fn get_list<T: DeserializeOwned>(
@@ -483,6 +549,7 @@ impl Client {
                 body: None,
                 headers: &[],
                 upload: Some(upload),
+                sudo: None,
             },
         )
         .await?;

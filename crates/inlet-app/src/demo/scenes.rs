@@ -60,6 +60,9 @@
 //!   `accounts` (their channels with mentions and unread messages).
 //! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
 //!   chat.
+//! - `sudo-confirm`, `sudo-confirm-code`: for `#general`, the "Confirm it's you" dialog open
+//!   over the chat, in the password way after a wrong password, or in the code way after a
+//!   wrong code (see `ui/overlays/sudo_confirm.rs`).
 //! - `sign-in-identifier`, `sign-in-classic`, `sign-in-password`, `sign-in-code`,
 //!   `sign-in-mfa`, `sign-in-ip`: the sign-in screen on that step, to add an account (see
 //!   `signin.rs`).
@@ -135,6 +138,8 @@ pub enum Scene {
     GuildMenu,
     InviteAccept,
     KeybindHelp,
+    SudoConfirm,
+    SudoConfirmCode,
     /// The sign-in screen on one of its steps (see `signin.rs`).
     SignIn(super::signin::Step),
 }
@@ -186,6 +191,8 @@ impl Scene {
             "guild-menu" => Scene::GuildMenu,
             "invite-accept" => Scene::InviteAccept,
             "keybind-help" => Scene::KeybindHelp,
+            "sudo-confirm" => Scene::SudoConfirm,
+            "sudo-confirm-code" => Scene::SudoConfirmCode,
             other => return super::signin::Step::from_name(other).map(Scene::SignIn),
         })
     }

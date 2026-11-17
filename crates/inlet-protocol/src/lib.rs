@@ -139,9 +139,21 @@
 //!   through the instance only ([`api::gifs`]), invites with checked codes
 //!   ([`api::invites`]).
 //!
+//! # Sudo mode
+//!
+//! Dangerous account and server actions ask the person to confirm it is them first
+//! ([`sudo`]). A request to such a route answers [`Error::SudoRequired`] with what the
+//! account can confirm with ([`SudoMethods`]); the UI asks, and
+//! [`Client::sudo_request`] sends the action again with the proof ([`SudoProof`]: a
+//! password, an authenticator or backup code, or an e-mailed code). When the account has
+//! a second factor the instance hands back a short-lived token, which the client keeps in
+//! memory ([`SudoToken`], wiped on drop, never in `Debug`) and attaches, for 4.5 minutes,
+//! to the sudo routes and to no other request ([`is_sudo_route`]). A wrong proof is
+//! [`Error::SudoRejected`], and after five of them in 15 minutes no more is sent.
+//!
 //! # Not covered yet
 //!
-//! Voice, pre-signed uploads, forum posts with files, WebAuthn.
+//! Voice, pre-signed uploads, forum posts with files, WebAuthn (also as a sudo proof).
 
 pub mod altcha;
 pub mod api;
@@ -159,8 +171,11 @@ pub mod proto;
 pub mod ratelimit;
 pub mod rest;
 pub mod secret;
+pub mod sudo;
 #[cfg(feature = "test-extra-ca")]
 pub mod test_ca;
+#[cfg(feature = "test-extra-ca")]
+pub mod test_support;
 pub mod token;
 pub mod upload;
 
@@ -215,5 +230,8 @@ pub use ratelimit::{RateLimitConfig, RateLimiter};
 pub use reqwest::Method;
 pub use rest::{new_nonce, Client};
 pub use secret::Secret;
+pub use sudo::{
+    is_sudo_route, SudoEmailCode, SudoMethods, SudoProof, SudoRejection, SudoRequired, SudoToken,
+};
 pub use token::Token;
 pub use upload::{safe_filename, ProgressFn, Segment, UploadData, UploadFile, UploadLimits};

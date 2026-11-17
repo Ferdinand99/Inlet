@@ -94,6 +94,15 @@ pub enum Error {
     /// reaction path, or too many files). Nothing was sent.
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    /// The action needs sudo mode: the person must confirm it is them (password or
+    /// second-factor code), then the action is sent again with the proof. See
+    /// [`crate::sudo`]. Nothing was changed.
+    #[error("this needs you to confirm it is you")]
+    SudoRequired(Box<crate::sudo::SudoRequired>),
+    /// The proof sent for sudo mode was not accepted (wrong password or code). Nothing
+    /// was changed. See [`crate::sudo`].
+    #[error("the confirmation was not accepted: {0:?}")]
+    SudoRejected(crate::sudo::SudoRejection),
     /// A response or gateway payload was larger than the limit.
     #[error("response too large (over {limit} bytes)")]
     TooLarge {

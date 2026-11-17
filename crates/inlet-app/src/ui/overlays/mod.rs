@@ -14,6 +14,7 @@ pub mod modal;
 pub mod nav_dialog;
 mod notification_settings;
 pub mod status_picker;
+pub mod sudo_confirm;
 mod tooltip;
 
 use gpui::{AnyElement, Context, FocusHandle, IntoElement};
@@ -38,6 +39,8 @@ pub struct OverlayState {
     pub focus_before: Option<FocusHandle>,
     /// The list of keyboard shortcuts is open (see `keybind_help`).
     pub keybind_help: bool,
+    /// The "Confirm it's you" dialog (see `sudo_confirm`).
+    pub sudo: sudo_confirm::Sudo,
     /// The keyboard was put on the window because no message box showed (see
     /// `app::keymap`); the box gets it back when a channel opens.
     pub keys_parked: bool,
@@ -103,6 +106,10 @@ impl Inlet {
         out.extend(self.render_message_overlays(cx));
         if let Some(prompt) = self.overlays.link_prompt.clone() {
             out.push(self.render_link_prompt(prompt, cx));
+        }
+        // "Confirm it's you": over everything, the sudo-mode prompt of an action.
+        if self.sudo_open() {
+            out.push(self.render_sudo_confirm(cx));
         }
         out
     }

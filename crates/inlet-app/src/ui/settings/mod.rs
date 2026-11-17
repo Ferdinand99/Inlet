@@ -189,6 +189,12 @@ impl Inlet {
     ) {
         let event = match event {
             SettingsEv::Account(event) => event,
+            // "Confirm it's you" (see `ui/overlays/sudo_confirm`).
+            SettingsEv::Sudo(ev) => {
+                self.on_sudo_event(ev, window, cx);
+                cx.notify();
+                return;
+            }
             SettingsEv::Guild(event) => {
                 self.on_guild_event(event, cx);
                 return;

@@ -185,6 +185,7 @@ async fn post_with_captcha(
                 body: Some(body),
                 headers: &headers,
                 upload: None,
+                sudo: None,
             },
         )
         .await?;
@@ -419,6 +420,7 @@ async fn anon(
             body,
             headers: &headers,
             upload: None,
+            sudo: None,
         },
     )
     .await

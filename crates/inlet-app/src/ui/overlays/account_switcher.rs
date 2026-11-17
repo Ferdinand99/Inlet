@@ -340,6 +340,8 @@ impl Inlet {
             self.instance = a.key.origin.to_string();
         }
         self.switcher.active = Some(key.clone());
+        // A "Confirm it's you" dialog was for the account that was active before.
+        self.sudo_reset();
         // Every command from here on is for the new account; the backend drops one that
         // reaches it while another account is active.
         self.backend.set_account(Some(key.clone()));

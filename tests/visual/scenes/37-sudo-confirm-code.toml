@@ -1,0 +1,9 @@
+# The Confirm it is you dialog in the code way after a wrong code, over #general.
+name = "sudo-confirm-code"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "sudo-confirm-code"
+guild = "g1"
+channel = "c-general"

@@ -31,6 +31,7 @@
 pub mod account;
 pub mod guilds;
 pub mod profile;
+pub mod sudo;
 pub mod write;
 
 use std::sync::{Arc, Mutex};
@@ -54,6 +55,8 @@ pub type SharedOps = Arc<Mutex<Ops>>;
 /// the guild order and folders, each with its own `Cmd`.
 pub enum Cmd {
     Account(account::Cmd),
+    /// Sudo mode: an action Fluxer protects, and the proof for it.
+    Sudo(sudo::Cmd),
     /// Look at an invite, join through it, leave a server.
     Guild(guilds::Cmd),
 }
@@ -61,6 +64,7 @@ pub enum Cmd {
 /// Events of this domain, by part.
 pub enum Ev {
     Account(account::Ev),
+    Sudo(sudo::Ev),
     Guild(guilds::Ev),
 }
 
@@ -73,6 +77,18 @@ impl From<account::Cmd> for Command {
 impl From<account::Ev> for Event {
     fn from(ev: account::Ev) -> Self {
         Event::Settings(Ev::Account(ev))
+    }
+}
+
+impl From<sudo::Cmd> for Command {
+    fn from(cmd: sudo::Cmd) -> Self {
+        Command::Settings(Cmd::Sudo(cmd))
+    }
+}
+
+impl From<sudo::Ev> for Event {
+    fn from(ev: sudo::Ev) -> Self {
+        Event::Settings(Ev::Sudo(ev))
     }
 }
 
@@ -91,6 +107,7 @@ impl From<guilds::Ev> for Event {
 pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     match cmd {
         Cmd::Account(cmd) => account::handle(backend, cmd),
+        Cmd::Sudo(cmd) => sudo::handle(backend, cmd),
         Cmd::Guild(cmd) => guilds::handle(backend, cmd),
     }
 }

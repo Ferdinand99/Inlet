@@ -296,6 +296,7 @@ impl Inlet {
         self.overlays.pending_link = None;
         self.overlays.link_prompt = None;
         self.overlays.link_channel = None;
+        self.sudo_reset();
         self.rail.pending = None;
         self.nav.dialog = None;
         self.nav.join_target = None;

@@ -227,6 +227,22 @@
     "204": {}
    }
   },
+  "DELETE /users/@me/authorized-ips": {
+   "documentedPath": "/users/@me/authorized-ips",
+   "operationId": "forget_authorized_ips",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "204": {}
+   }
+  },
   "DELETE /users/@me/channels/{}/pin": {
    "documentedPath": "/users/@me/channels/{channel_id}/pin",
    "operationId": "unpin_direct_message_channel",
@@ -342,6 +358,22 @@
      }
     }
    ],
+   "responses": {
+    "204": {}
+   }
+  },
+  "DELETE /users/@me/sso": {
+   "documentedPath": "/users/@me/sso",
+   "operationId": "unlink_sso",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
    "responses": {
     "204": {}
    }
@@ -1398,6 +1430,18 @@
     }
    }
   },
+  "GET /users/@me/sudo/mfa-methods": {
+   "documentedPath": "/users/@me/sudo/mfa-methods",
+   "operationId": "list_sudo_mfa_methods",
+   "parameters": [],
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "SudoMfaMethodsResponse"
+     }
+    }
+   }
+  },
   "GET /users/{}": {
    "documentedPath": "/users/{user_id}",
    "operationId": "get_user_by_id",
@@ -1921,6 +1965,22 @@
     "204": {}
    }
   },
+  "POST /auth/sessions/logout": {
+   "documentedPath": "/auth/sessions/logout",
+   "operationId": "logout_all_sessions",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "LogoutAuthSessionsWithVerificationRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "204": {}
+   }
+  },
   "POST /channels/{}/attachments": {
    "documentedPath": "/channels/{channel_id}/attachments",
    "operationId": "request_presigned_message_attachment_uploads",
@@ -2278,6 +2338,62 @@
     }
    }
   },
+  "POST /users/@me/delete": {
+   "documentedPath": "/users/@me/delete",
+   "operationId": "delete_current_user_account",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "UserAccountDeleteRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "UserAccountDeleteResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/disable": {
+   "documentedPath": "/users/@me/disable",
+   "operationId": "disable_current_user_account",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "204": {}
+   }
+  },
+  "POST /users/@me/email-change/apply": {
+   "documentedPath": "/users/@me/email-change/apply",
+   "operationId": "apply_email_change",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "EmailChangeApplyRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "UserPrivateResponse"
+     }
+    }
+   }
+  },
   "POST /users/@me/memes": {
    "documentedPath": "/users/@me/memes",
    "operationId": "create_meme_from_url",
@@ -2312,6 +2428,191 @@
    },
    "responses": {
     "204": {}
+   }
+  },
+  "POST /users/@me/messages/bulk-delete-mine": {
+   "documentedPath": "/users/@me/messages/bulk-delete-mine",
+   "operationId": "bulk_delete_my_messages",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "BulkDeleteSelfMessagesRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "202": {}
+   }
+  },
+  "POST /users/@me/messages/delete": {
+   "documentedPath": "/users/@me/messages/delete",
+   "operationId": "request_bulk_message_deletion",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "204": {}
+   }
+  },
+  "POST /users/@me/mfa/backup-codes": {
+   "documentedPath": "/users/@me/mfa/backup-codes",
+   "operationId": "get_backup_codes_mfa",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "MfaBackupCodesRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "MfaBackupCodesResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/mfa/totp/disable": {
+   "documentedPath": "/users/@me/mfa/totp/disable",
+   "operationId": "disable_totp_mfa",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "DisableTotpRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "204": {}
+   }
+  },
+  "POST /users/@me/mfa/totp/enable": {
+   "documentedPath": "/users/@me/mfa/totp/enable",
+   "operationId": "enable_totp_mfa",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "EnableMfaTotpRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "MfaBackupCodesResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/mfa/webauthn/credentials/registration-options": {
+   "documentedPath": "/users/@me/mfa/webauthn/credentials/registration-options",
+   "operationId": "get_webauthn_registration_options",
+   "parameters": [
+    {
+     "in": "query",
+     "name": "rp_id",
+     "required": false,
+     "schema": {
+      "anyOf": [
+       {
+        "maxLength": 253,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "WebAuthnChallengeResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/password": {
+   "documentedPath": "/users/@me/password",
+   "operationId": "update_current_user_password",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "UserPasswordUpdateRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "UserPasswordUpdateResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/password-change/complete": {
+   "documentedPath": "/users/@me/password-change/complete",
+   "operationId": "complete_password_change",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "PasswordChangeCompleteRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "PasswordChangeCompleteResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/recovery-kit": {
+   "documentedPath": "/users/@me/recovery-kit",
+   "operationId": "create_recovery_kit",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "RecoveryKitCreateResponse"
+     }
+    }
    }
   },
   "POST /users/@me/relationships": {
@@ -2377,6 +2678,38 @@
    },
    "responses": {
     "204": {}
+   }
+  },
+  "POST /users/@me/sso/link/start": {
+   "documentedPath": "/users/@me/sso/link/start",
+   "operationId": "start_sso_link",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "SsoStartResponse"
+     }
+    }
+   }
+  },
+  "POST /users/@me/sudo/email-code": {
+   "documentedPath": "/users/@me/sudo/email-code",
+   "operationId": "send_sudo_email_code",
+   "parameters": [],
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "SudoEmailCodeResponse"
+     }
+    }
    }
   },
   "PUT /channels/{}/messages/{}/reactions/{}/@me": {
@@ -2502,6 +2835,26 @@
    ],
    "responses": {
     "204": {}
+   }
+  },
+  "PUT /users/@me/mfa/webauthn/two-factor": {
+   "documentedPath": "/users/@me/mfa/webauthn/two-factor",
+   "operationId": "set_webauthn_two_factor",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "WebAuthnTwoFactorRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "WebAuthnTwoFactorResponse"
+     }
+    }
    }
   },
   "PUT /users/@me/notes/{}": {
@@ -2785,6 +3138,137 @@
   },
   "Base64ImageType": {
    "type": "string"
+  },
+  "BulkDeleteSelfMessagesGuildFilterMode": {
+   "enum": [
+    "exclude",
+    "include_only"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Apply only to the guilds listed in included_guild_ids; all other guilds are left untouched.",
+    "Apply to every guild except those listed in excluded_guild_ids."
+   ],
+   "x-enumNames": [
+    "Exclude",
+    "Include Only"
+   ]
+  },
+  "BulkDeleteSelfMessagesRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "end_date": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "excluded_guild_ids": {
+     "items": {
+      "$ref": "SnowflakeType"
+     },
+     "maxItems": 500,
+     "type": "array"
+    },
+    "guild_filter_mode": {
+     "$ref": "BulkDeleteSelfMessagesGuildFilterMode"
+    },
+    "include_dms": {
+     "default": true,
+     "type": "boolean"
+    },
+    "include_dms_closed": {
+     "default": true,
+     "type": "boolean"
+    },
+    "include_group_dms": {
+     "default": true,
+     "type": "boolean"
+    },
+    "include_guilds": {
+     "default": true,
+     "type": "boolean"
+    },
+    "included_guild_ids": {
+     "items": {
+      "$ref": "SnowflakeType"
+     },
+     "maxItems": 500,
+     "type": "array"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "scope": {
+     "$ref": "BulkDeleteSelfMessagesScope"
+    },
+    "start_date": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "type": "object"
+  },
+  "BulkDeleteSelfMessagesScope": {
+   "enum": [
+    "inaccessible_only",
+    "selected"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Delete messages matching the explicit include_* toggles and excluded_guild_ids.",
+    "Delete only messages in places the caller no longer has access to (guilds left or removed from, group DMs left). Direct messages are not affected by this mode since the caller can always reopen them."
+   ],
+   "x-enumNames": [
+    "Inaccessible Only",
+    "Selected"
+   ]
   },
   "ChannelListResponse": {
    "items": {
@@ -5666,11 +6150,105 @@
    ],
    "type": "string"
   },
+  "DisableTotpRequest": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "code"
+   ],
+   "type": "object"
+  },
   "DiscriminatorType": {
    "type": [
     "number",
     "string"
    ]
+  },
+  "EmailChangeApplyRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "email_token": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "email_token"
+   ],
+   "type": "object"
   },
   "EmailCodeSendRequest": {
    "properties": {
@@ -6019,6 +6597,57 @@
    },
    "required": [
     "name"
+   ],
+   "type": "object"
+  },
+  "EnableMfaTotpRequest": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "secret": {
+     "type": "string"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "code",
+    "secret"
    ],
    "type": "object"
   },
@@ -8484,6 +9113,57 @@
    ],
    "type": "object"
   },
+  "LogoutAuthSessionsWithVerificationRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "session_id_hashes": {
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 100,
+     "type": "array"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "session_id_hashes"
+   ],
+   "type": "object"
+  },
   "MarkMentionsReadRequest": {
    "properties": {
     "message_ids": {
@@ -10588,6 +11268,81 @@
    },
    "type": "object"
   },
+  "MfaBackupCodesRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "regenerate": {
+     "type": "boolean"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "regenerate"
+   ],
+   "type": "object"
+  },
+  "MfaBackupCodesResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "backup_codes": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "code": {
+        "type": "string"
+       },
+       "consumed": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "code",
+       "consumed"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "backup_codes"
+   ],
+   "type": "object"
+  },
   "MfaTicketRequest": {
    "properties": {
     "ticket": {
@@ -10818,6 +11573,77 @@
    "maximum": 9007199254740991,
    "minimum": 0,
    "type": "integer"
+  },
+  "PasswordChangeCompleteRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "new_password": {
+     "$ref": "PasswordType"
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "ticket": {
+     "type": "string"
+    },
+    "verification_proof": {
+     "type": "string"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "new_password",
+    "ticket",
+    "verification_proof"
+   ],
+   "type": "object"
+  },
+  "PasswordChangeCompleteResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "auth_session_id_hash": {
+     "type": "string"
+    },
+    "token": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "auth_session_id_hash",
+    "token"
+   ],
+   "type": "object"
   },
   "PasswordType": {
    "type": "string"
@@ -11374,6 +12200,24 @@
     "last_message_id",
     "last_pin_timestamp",
     "mention_count"
+   ],
+   "type": "object"
+  },
+  "RecoveryKitCreateResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "created_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    },
+    "recovery_key": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "created_at",
+    "recovery_key"
    ],
    "type": "object"
   },
@@ -11970,6 +12814,30 @@
    ],
    "format": "snowflake"
   },
+  "SsoStartResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "authorization_url": {
+     "type": "string"
+    },
+    "client_binding": {
+     "type": "string"
+    },
+    "redirect_uri": {
+     "type": "string"
+    },
+    "state": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "authorization_url",
+    "client_binding",
+    "redirect_uri",
+    "state"
+   ],
+   "type": "object"
+  },
   "StartForumThreadRequest": {
    "properties": {
     "applied_tags": {
@@ -12377,6 +13245,60 @@
     "ANIMATE_ON_INTERACTION",
     "NEVER_ANIMATE"
    ]
+  },
+  "SudoEmailCodeResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "code_expires_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    },
+    "resend_available_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    },
+    "ticket": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "code_expires_at",
+    "resend_available_at",
+    "ticket"
+   ],
+   "type": "object"
+  },
+  "SudoMfaMethodsResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "backup_codes": {
+     "type": "boolean"
+    },
+    "email_code": {
+     "type": "boolean"
+    },
+    "has_mfa": {
+     "type": "boolean"
+    },
+    "password": {
+     "type": "boolean"
+    },
+    "totp": {
+     "type": "boolean"
+    },
+    "webauthn": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "backup_codes",
+    "has_mfa",
+    "totp",
+    "webauthn"
+   ],
+   "type": "object"
   },
   "SudoVerificationSchema": {
    "properties": {
@@ -13144,6 +14066,65 @@
    },
    "type": "object"
   },
+  "UserAccountDeleteRequest": {
+   "properties": {
+    "delete_messages": {
+     "type": "boolean"
+    },
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "immediate": {
+     "type": "boolean"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "type": "object"
+  },
+  "UserAccountDeleteResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "pending_deletion_at": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "pending_deletion_at"
+   ],
+   "type": "object"
+  },
   "UserAuthenticatorTypes": {
    "enum": [
     0,
@@ -13609,6 +14590,69 @@
     "global_name",
     "id",
     "username"
+   ],
+   "type": "object"
+  },
+  "UserPasswordUpdateRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "new_password": {
+     "$ref": "PasswordType"
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "new_password"
+   ],
+   "type": "object"
+  },
+  "UserPasswordUpdateResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "auth_session_id_hash": {
+     "type": "string"
+    },
+    "token": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "auth_session_id_hash",
+    "token"
    ],
    "type": "object"
   },
@@ -15403,6 +16447,104 @@
     "rawId",
     "response",
     "type"
+   ],
+   "type": "object"
+  },
+  "WebAuthnChallengeResponse": {
+   "additionalProperties": {},
+   "properties": {
+    "challenge": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "challenge"
+   ],
+   "type": "object"
+  },
+  "WebAuthnTwoFactorRequest": {
+   "properties": {
+    "email_code": {
+     "type": "string"
+    },
+    "email_code_ticket": {
+     "type": "string"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "mfa_code": {
+     "type": "string"
+    },
+    "mfa_method": {
+     "enum": [
+      "email_code",
+      "totp",
+      "webauthn"
+     ],
+     "type": "string",
+     "x-enumDescriptions": [
+      "A 6-digit code sent to the account email address",
+      "Security key or biometric authentication",
+      "Time-based one-time password authentication via authenticator app"
+     ],
+     "x-enumNames": [
+      "Email code",
+      "TOTP",
+      "WebAuthn"
+     ]
+    },
+    "password": {
+     "$ref": "PasswordType"
+    },
+    "webauthn_challenge": {
+     "type": "string"
+    },
+    "webauthn_response": {
+     "$ref": "WebAuthnAuthenticationResponse"
+    }
+   },
+   "required": [
+    "enabled"
+   ],
+   "type": "object"
+  },
+  "WebAuthnTwoFactorResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "backup_codes": {
+     "anyOf": [
+      {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "type": "string"
+         },
+         "consumed": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "code",
+         "consumed"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "user": {
+     "$ref": "UserPrivateResponse"
+    }
+   },
+   "required": [
+    "backup_codes",
+    "user"
    ],
    "type": "object"
   }
