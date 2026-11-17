@@ -172,13 +172,15 @@ impl SudoProof {
         match self {
             SudoProof::Password(p) => {
                 if p.expose_secret().chars().count() == 0
-                    || p.expose_secret().chars().count() > MAX_PASSWORD_CHARS {
+                    || p.expose_secret().chars().count() > MAX_PASSWORD_CHARS
+                {
                     return bad("the password is empty or too long");
                 }
             }
             SudoProof::Code(c) => {
                 if c.expose_secret().chars().count() == 0
-                    || c.expose_secret().chars().count() > MAX_CODE_CHARS {
+                    || c.expose_secret().chars().count() > MAX_CODE_CHARS
+                {
                     return bad("the code is empty or too long");
                 }
             }
@@ -198,16 +200,28 @@ impl SudoProof {
     fn put_into(&self, body: &mut Map<String, Value>) {
         match self {
             SudoProof::Password(p) => {
-                body.insert("password".into(), Value::String(p.expose_secret().to_owned()));
+                body.insert(
+                    "password".into(),
+                    Value::String(p.expose_secret().to_owned()),
+                );
             }
             SudoProof::Code(c) => {
                 body.insert("mfa_method".into(), json!("totp"));
-                body.insert("mfa_code".into(), Value::String(c.expose_secret().to_owned()));
+                body.insert(
+                    "mfa_code".into(),
+                    Value::String(c.expose_secret().to_owned()),
+                );
             }
             SudoProof::EmailCode { ticket, code } => {
                 body.insert("mfa_method".into(), json!("email_code"));
-                body.insert("email_code_ticket".into(), Value::String(ticket.expose_secret().to_owned()));
-                body.insert("email_code".into(), Value::String(code.expose_secret().to_owned()));
+                body.insert(
+                    "email_code_ticket".into(),
+                    Value::String(ticket.expose_secret().to_owned()),
+                );
+                body.insert(
+                    "email_code".into(),
+                    Value::String(code.expose_secret().to_owned()),
+                );
             }
         }
     }

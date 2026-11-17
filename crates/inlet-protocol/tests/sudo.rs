@@ -5,7 +5,7 @@ mod common;
 
 use inlet_protocol::sudo::{MAX_WRONG_PROOFS, SUDO_HEADER};
 use inlet_protocol::{
-    Client, Error, Instance, Method, SudoMethods, SudoProof, SudoRejection, Secret, Token,
+    Client, Error, Instance, Method, Secret, SudoMethods, SudoProof, SudoRejection, Token,
 };
 use serde_json::{json, Value};
 use wiremock::matchers::{body_json, method, path};

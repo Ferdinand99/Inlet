@@ -170,8 +170,8 @@ pub mod presigned;
 pub mod proto;
 pub mod ratelimit;
 pub mod rest;
-pub mod sudo;
 pub mod secret;
+pub mod sudo;
 #[cfg(feature = "test-extra-ca")]
 pub mod test_ca;
 #[cfg(feature = "test-extra-ca")]
@@ -229,9 +229,9 @@ pub use presigned::{PresignFile, UploadMode, UploadPlan, UploadUrl, UploadedFile
 pub use ratelimit::{RateLimitConfig, RateLimiter};
 pub use reqwest::Method;
 pub use rest::{new_nonce, Client};
+pub use secret::Secret;
 pub use sudo::{
     is_sudo_route, SudoEmailCode, SudoMethods, SudoProof, SudoRejection, SudoRequired, SudoToken,
 };
-pub use secret::Secret;
 pub use token::Token;
 pub use upload::{safe_filename, ProgressFn, Segment, UploadData, UploadFile, UploadLimits};
