@@ -182,7 +182,7 @@ fn the_byte_budget_of_a_window_is_the_heap_it_takes() {
             "{kind:?}: {n} messages, budget {approx} B, heap {heap} B, heap/budget {ratio:.2}"
         );
         assert!(
-            n == MAX_MESSAGES_PER_CHANNEL || approx > MAX_WINDOW_BYTES / 10 * 9,
+            (100..=MAX_MESSAGES_PER_CHANNEL).contains(&n) || approx > MAX_WINDOW_BYTES / 10 * 9,
             "{kind:?}: neither cap limited the window ({n} messages, {approx} bytes)"
         );
         assert!(

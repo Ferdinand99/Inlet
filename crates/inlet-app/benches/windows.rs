@@ -165,14 +165,15 @@ fn main() {
         // What the pages left behind is the window's.
         let heap = live() - before;
         let win = state.messages(ch).expect("a window");
-        let n = win.len().max(1) as f64;
+        let kept = win.len() + win.buffered().0 + win.buffered().1;
+        let n = kept.max(1) as f64;
         let budget = win.approx_bytes() as f64 / n;
         println!(
             "{name:<14} {:>14.0} {:>14.0} {:>7.2}x   ({} messages kept)",
             heap as f64 / n,
             budget,
             heap as f64 / n / budget,
-            win.len()
+            kept
         );
         drop(state);
     }
@@ -191,10 +192,9 @@ fn main() {
     }
     let heap = live() - before;
     let win = state.messages(ch).expect("a window");
+    let kept = win.len() + win.buffered().0 + win.buffered().1;
     println!(
-        "live, plain   {:>14.0} B/msg over {} messages (30 full windows would hold {:.0} MiB)",
-        heap as f64 / win.len().max(1) as f64,
-        win.len(),
-        heap as f64 / win.len().max(1) as f64 * 500. * 30. / 1048576.
+        "live, plain   {:>14.0} B/msg over {kept} messages (list and buffers)",
+        heap as f64 / kept.max(1) as f64,
     );
 }

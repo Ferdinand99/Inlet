@@ -118,11 +118,15 @@ fn run(track: bool) -> (isize, usize, Vec<usize>) {
 #[test]
 fn thirty_windows_weigh_one_open_window_and_twenty_nine_small_ones() {
     let (full, full_budget, lens) = run(false);
-    assert!(lens.iter().all(|n| *n == MAX_MESSAGES_PER_CHANNEL));
+    assert!(lens
+        .iter()
+        .all(|n| (100..=MAX_MESSAGES_PER_CHANNEL).contains(n)));
     let (cut, cut_budget, lens) = run(true);
+    // The window on screen holds its list (past 100, up to 200) and the buffer; the others
+    // are at 100 and hold nothing else.
     let open = lens
         .iter()
-        .filter(|n| **n == MAX_MESSAGES_PER_CHANNEL)
+        .filter(|n| **n > MAX_BACKGROUND_MESSAGES)
         .count();
     let small = lens
         .iter()
@@ -142,9 +146,10 @@ fn thirty_windows_weigh_one_open_window_and_twenty_nine_small_ones() {
         cut as usize <= cut_budget * 12 / 10 + 256 * 1024,
         "{cut} bytes of heap for windows budgeted at {cut_budget}"
     );
-    // And it is the saving that was meant: about (500 + 29 x 100) / (30 x 500) of the full set.
-    let expected = full as usize * (MAX_MESSAGES_PER_CHANNEL + 29 * MAX_BACKGROUND_MESSAGES)
-        / (30 * MAX_MESSAGES_PER_CHANNEL);
+    // And it is the saving that was meant: each window was sent 300 messages, so the set
+    // holds 29 x 100 and one window of 300 (list and buffer), against 30 x 300.
+    let sent = MAX_MESSAGES_PER_CHANNEL + 100;
+    let expected = full as usize * (sent + 29 * MAX_BACKGROUND_MESSAGES) / (30 * sent);
     assert!(
         (cut as usize) < expected * 12 / 10,
         "{cut} bytes against an expected {expected}"

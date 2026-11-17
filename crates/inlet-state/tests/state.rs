@@ -619,12 +619,18 @@ fn message_page_merges_with_live_messages() {
     );
     assert!(s.messages(c).unwrap().get(mid(6, 0)).is_none());
 
-    // The window never holds more than the cap; live messages push out the oldest.
+    // The window never holds more than the cap; live messages push out the oldest (a list
+    // that passes the cap is cut to 100, and the cut messages wait in the buffer).
     for i in 0..(MAX_MESSAGES_PER_CHANNEL as u64 + 20) {
         s.apply(&create(mid(100 + i, 0), GENERAL, OTHER, json!({})));
     }
     let w = s.messages(c).unwrap();
-    assert_eq!(w.len(), MAX_MESSAGES_PER_CHANNEL);
+    assert!(
+        w.len() <= MAX_MESSAGES_PER_CHANNEL && w.len() >= 100,
+        "{}",
+        w.len()
+    );
+    assert!(w.buffered().0 > 0);
     assert!(w.has_more_before());
     assert_eq!(
         w.newest_id(),
