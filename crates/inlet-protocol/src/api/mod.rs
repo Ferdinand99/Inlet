@@ -23,6 +23,14 @@
 //! - [`invites`]: look up and accept invites (codes checked before use).
 //! - [`links`]: the domains an account trusts for links (user settings).
 //!
+//! Instance and account notices:
+//!
+//! - [`experiments`]: the staged features the instance has switched on for the
+//!   account (`GET /experiments`, revalidated with `If-None-Match`).
+//! - [`verification`]: sending the verification email again, and accepting updated
+//!   terms. [`crate::instance_info`] reads the discovery document's feature flags,
+//!   policy, branding and notice.
+//!
 //! Every call is a method on [`crate::Client`] and goes through the
 //! account's shared rate limiter like the rest. On top of that, message and
 //! thread searches of one account start at least
@@ -35,6 +43,7 @@
 //! ([`crate::gateway::FLAG_CHANNEL_THREADS`]) by default.
 
 pub mod dms;
+pub mod experiments;
 pub mod expressions;
 pub mod folders;
 pub mod gifs;
@@ -48,6 +57,7 @@ pub mod relationships;
 pub mod saved;
 pub mod search;
 pub mod threads;
+pub mod verification;
 
 use std::time::Duration;
 

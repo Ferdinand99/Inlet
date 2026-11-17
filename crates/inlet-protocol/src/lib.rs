@@ -150,6 +150,7 @@ pub mod coalesce;
 pub mod error;
 pub mod gateway;
 pub mod instance;
+pub mod instance_info;
 pub mod limits;
 pub mod media;
 pub mod models;
@@ -171,6 +172,7 @@ compile_error!(
 );
 
 pub use api::dms::{GroupDmEdit, GroupDmOutcome};
+pub use api::experiments::{Assignments, Experiments, ExperimentsAnswer};
 pub use api::expressions::Meme;
 pub use api::gifs::Gif;
 pub use api::inbox::MentionsQuery;
@@ -200,6 +202,10 @@ pub use gateway::{
 };
 pub use instance::{
     ClientInfo, Discovery, EndpointPins, Endpoints, Identity, Instance, SessionPins, SignInOptions,
+};
+pub use instance_info::{
+    Branding, DomainMigrationSwitch, InstanceCommunity, InstanceFeatures, InstanceNotice,
+    InstanceServices, LegalLinks,
 };
 pub use media::{ImageFormat, ImageOptions, Media, Transform};
 pub use models::{

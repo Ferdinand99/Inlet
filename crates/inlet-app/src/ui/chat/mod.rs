@@ -24,9 +24,7 @@ mod welcome;
 use gpui::{div, list, prelude::*, px, Context, FollowMode, ListAlignment, ListState, Window};
 
 use crate::app::Inlet;
-use crate::backend::accounts::Cmd;
 use crate::theme;
-use crate::ui::widgets::button;
 pub use context_menu::bind_keys;
 #[cfg(test)]
 pub(crate) use context_menu::unread_mark;
@@ -110,30 +108,7 @@ impl Inlet {
                     cx.notify();
                 }))
             }))
-            .children(self.chat.gateway_down.clone().map(|message| {
-                div()
-                    .px_4()
-                    .py_2()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .bg(theme::selected_bg())
-                    .text_color(theme::text_strong())
-                    .child(t!("chat-disconnected", message = message))
-                    .child(
-                        button("reconnect", t!("chat-reconnect"), true).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.chat.gateway_down = None;
-                                this.chat.status = t!("status-reconnecting");
-                                this.backend
-                                    .send(Cmd::Reconnect(this.switcher.active.clone()));
-                                cx.notify();
-                            },
-                        )),
-                    )
-            }))
+            // A stopped connection is the banner across the top (`ui/banners`).
             .children(self.chat.notice.clone().map(|n| {
                 bar("notice", n, theme::selected_bg()).on_click(cx.listener(|this, _, _, cx| {
                     this.chat.notice = None;

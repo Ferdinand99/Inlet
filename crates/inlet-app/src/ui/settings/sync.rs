@@ -24,6 +24,7 @@
 //! stand after a short wait, so a lost echo cannot pin an edit.
 
 use inlet_protocol as p;
+use inlet_state::flags::{Flag, FlagSet};
 use inlet_state::settings::Display;
 
 use crate::backend::settings::write::Change;
@@ -91,6 +92,8 @@ pub struct Values {
     pub compact_group_spacing: u8,
     pub compact_avatars: bool,
     pub convert_emoticons: bool,
+    /// The on/off switches of [`inlet_state::flags`], synced and local.
+    pub flags: FlagSet,
 }
 
 impl Default for Values {
@@ -121,6 +124,7 @@ impl Default for Values {
             compact_group_spacing: 0,
             compact_avatars: false,
             convert_emoticons: false,
+            flags: FlagSet::default(),
         }
     }
 }
@@ -154,6 +158,7 @@ impl Values {
             Change::CompactGroupSpacing(v) => self.compact_group_spacing = v.min(64),
             Change::CompactAvatars(v) => self.compact_avatars = v,
             Change::ConvertEmoticons(v) => self.convert_emoticons = v,
+            Change::Flag(flag, on) => self.flags = self.flags.with(flag, on),
         }
     }
 
@@ -178,6 +183,12 @@ impl Values {
         if let Some(on) = d.convert_emoticons {
             self.convert_emoticons = on;
         }
+        self.flags = self.flags.with_synced(&d.flags);
+    }
+
+    /// The state of one on/off switch.
+    pub fn flag(&self, flag: Flag) -> bool {
+        self.flags.get(flag)
     }
 
     /// The settings as the server's user settings say, with `base` for what they do
@@ -293,6 +304,17 @@ impl Tracker {
             echoed: false,
         });
         self.seq
+    }
+
+    /// A change that is only for this computer: nothing is sent, so nothing waits for the
+    /// server. It is what this computer holds from now on.
+    pub fn set_local(&mut self, change: Change) {
+        self.pending.retain(|p| p.change.kind() != change.kind());
+        self.confirmed.apply(&change);
+        // The answer kept for [`Tracker::expire`] must not take it back.
+        if let Some(answer) = &mut self.answer {
+            answer.apply(&change);
+        }
     }
 
     /// Whether an edit of this kind waits for the server.
@@ -649,5 +671,93 @@ pub(crate) mod tests {
         t.reset_account();
         assert!(t.gateway(snapshot("dark")));
         assert_eq!(shown(&t), Pref::Dark);
+    }
+
+    /// The display part of a snapshot of the synced preferences with the action bar set.
+    fn action_bar_echo(on: bool) -> Display {
+        let mut prefs = inlet_protocol::api::preferences::Preferences::default();
+        Flag::ActionBar.write(&mut prefs, on);
+        Display::of_preferences(&prefs)
+    }
+
+    #[test]
+    fn a_switch_edit_stays_on_top_until_the_synced_preferences_echo_it() {
+        let mut t = Tracker::new(Values::default());
+        let seq = t.edit(Change::Flag(Flag::ActionBar, false));
+        assert!(!t.values().flag(Flag::ActionBar), "shown at once");
+        let kind = Change::Flag(Flag::ActionBar, false).kind();
+
+        // The echo of an earlier write still holds the old value: the edit stays.
+        let old = Values::from_server(
+            &fluxer("dark", 3),
+            Some(action_bar_echo(true)),
+            t.confirmed(),
+        );
+        t.gateway(old);
+        assert!(!t.values().flag(Flag::ActionBar));
+        assert!(t.is_waiting(kind));
+        // The answer alone does not settle it either.
+        t.answered(None, seq, true);
+        assert!(t.is_waiting(kind));
+        // The snapshot that holds the edit does.
+        let echo = Values::from_server(
+            &fluxer("dark", 3),
+            Some(action_bar_echo(false)),
+            t.confirmed(),
+        );
+        t.gateway(echo);
+        assert!(!t.is_waiting(kind));
+        assert!(!t.values().flag(Flag::ActionBar));
+
+        // Another client turns it back on: that wins.
+        let other = Values::from_server(
+            &fluxer("dark", 3),
+            Some(action_bar_echo(true)),
+            t.confirmed(),
+        );
+        t.gateway(other);
+        assert!(t.values().flag(Flag::ActionBar));
+    }
+
+    #[test]
+    fn a_local_switch_is_held_at_once_and_survives_the_servers_snapshots() {
+        let mut t = Tracker::new(Values::default());
+        t.set_local(Change::Flag(Flag::HideBlockedMessages, true));
+        assert!(t.values().flag(Flag::HideBlockedMessages));
+        assert!(!t.is_waiting(Change::Flag(Flag::HideBlockedMessages, true).kind()));
+        // A snapshot says nothing about it (it is not in the preferences).
+        let snap = Values::from_server(
+            &fluxer("dark", 3),
+            Some(action_bar_echo(true)),
+            t.confirmed(),
+        );
+        t.gateway(snap);
+        assert!(t.values().flag(Flag::HideBlockedMessages));
+    }
+
+    #[test]
+    fn a_local_switch_flipped_before_an_echo_expires_is_not_taken_back() {
+        let mut t = Tracker::new(Values::default());
+        let seq = t.edit(Change::Theme(Pref::Coal));
+        // The write is answered with the values from then; the echo has not come.
+        let answer = Values::from_server(&fluxer("coal", 3), None, t.confirmed());
+        t.answered(Some(answer), seq, false);
+        // In the wait, the person flips a switch that is only for this computer.
+        t.set_local(Change::Flag(Flag::HideBlockedMessages, true));
+        // The echo never comes: the answer's values stand, and the switch keeps its value.
+        t.expire(seq, false);
+        assert!(t.values().flag(Flag::HideBlockedMessages));
+        assert_eq!(shown(&t), Pref::Coal);
+    }
+
+    #[test]
+    fn switches_of_a_new_account_without_preferences_have_fluxers_defaults() {
+        // An account that never wrote its preferences has none: every switch is at its
+        // default, whatever the last account had.
+        let mut off = Values::default();
+        off.apply(&Change::Flag(Flag::ActionBar, false));
+        let v = Values::from_server(&fluxer("dark", 3), Some(Display::default()), &off);
+        assert!(v.flag(Flag::ActionBar));
+        assert!(!v.flag(Flag::DoubleClickActions));
     }
 }

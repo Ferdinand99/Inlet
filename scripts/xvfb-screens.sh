@@ -171,6 +171,12 @@ scene 38-picker-gif picker-gif c-general
 # Message search: the search panel with results; the quick switcher over every account.
 scene 41-search-results search-results c-general
 scene 42-quick-switcher quick-switcher c-general
+# The banners: a notice and the unconfirmed address; paused messaging and planned
+# maintenance; a lost connection with an incident; the updated terms.
+scene 100-banners banners c-general
+scene 101-banners-maintenance banners-maintenance c-general
+scene 102-banners-connection banners-connection c-general
+scene 103-terms terms c-general
 # The list of keyboard shortcuts (Ctrl+/).
 scene 70-keybind-help keybind-help c-general
 
@@ -220,6 +226,10 @@ done
 # Media tools: the downloads panel and the `/gif` result list.
 scene 110-downloads-panel downloads-panel c-general
 scene 111-gif-command gif-command c-general
+
+# 11c. The Advanced settings tab, and the search across the settings with some words.
+settings_tab 130-settings-advanced advanced dark
+settings_tab 131-settings-search search:message dark
 
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,

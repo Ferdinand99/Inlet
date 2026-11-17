@@ -158,6 +158,41 @@ class ScannerTests(unittest.TestCase):
         self.assertIn(("PATCH", "/users/@me/guilds/{}/settings"), routes)
         self.assertIn(("PATCH", "/users/@me/guilds/@me/settings"), routes)
 
+    def test_the_discovery_document_and_the_experiments_are_in_the_snapshots(self):
+        routes = tool.inlet_routes()
+        self.assertIn(("GET", "/.well-known/fluxer"), routes)
+        self.assertIn(("GET", "/experiments"), routes)
+        self.assertIn(("POST", "/auth/verify/resend"), routes)
+        self.assertIn(("POST", "/users/@me/terms-acceptance"), routes)
+        for instance in tool.INSTANCES:
+            snap = json.loads(tool.snapshot_file(instance).read_text(encoding="utf-8"))
+            for label in ("GET /.well-known/fluxer", "GET /experiments"):
+                self.assertIn(label, snap["routes"], instance)
+                self.assertNotIn("missing", snap["routes"][label], f"{instance}: {label}")
+            # The schemas they refer to are there, with the fields Inlet reads.
+            for name in ("WellKnownFluxerResponse", "ExperimentAssignmentsResponse"):
+                self.assertIn(name, snap["schemas"], instance)
+            features = snap["schemas"]["InstanceFeaturesSchema"]["properties"]
+            for field in ("voice_enabled", "self_hosted", "emails_enabled", "discovery_enabled"):
+                self.assertIn(field, features, instance)
+            notice = snap["schemas"]["InstanceNoticeSchema"]["properties"]
+            for field in ("id", "message", "url", "starts_at", "ends_at"):
+                self.assertIn(field, notice, instance)
+            assignments = snap["schemas"]["ExperimentAssignmentsResponse"]["properties"]
+            for field in ("poll_interval_seconds", "poll_jitter_percent", "assignments"):
+                self.assertIn(field, assignments, instance)
+
+    def test_the_discovery_route_needs_the_code_that_reads_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            crates = Path(d) / "crates"
+            src = crates / tool.PROTOCOL_CRATE / "src"
+            src.mkdir(parents=True)
+            (src / "lib.rs").write_text("fn nothing() {}\n", encoding="utf-8")
+            with mock.patch.object(tool, "CRATES", crates), mock.patch.object(tool, "REPO", Path(d)):
+                with self.assertRaises(tool.ToolError) as caught:
+                    tool.inlet_routes()
+            self.assertIn(".well-known/fluxer", str(caught.exception))
+
     def test_a_stale_extra_route_fails(self):
         with tempfile.TemporaryDirectory() as d:
             extra = Path(d) / "extra.txt"

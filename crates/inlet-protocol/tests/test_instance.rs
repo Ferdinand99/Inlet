@@ -65,3 +65,49 @@ async fn test_instance_discovery_and_gateway_hello() {
     assert_eq!(hello["op"], 10);
     let _ = ws.close(None).await;
 }
+
+/// The discovery document of the test instance, read the way the capabilities read it,
+/// and read again with its `ETag` (the second read must say "not modified"). No sign-in.
+#[tokio::test]
+#[ignore = "talks to the private test instance"]
+async fn test_instance_discovery_flags_and_revalidation() {
+    assert!(
+        std::env::var_os(inlet_protocol::test_ca::ENV).is_some(),
+        "set {} to the test CA",
+        inlet_protocol::test_ca::ENV
+    );
+    let instance = Instance::discover(&origin()).await.expect("discovery");
+    let doc = instance.discovery();
+    let features = doc.instance_features();
+    let community = doc.community();
+    println!("features     {features:?}");
+    println!("community    {community:?}");
+    println!("services     {:?}", doc.services());
+    println!("branding     {:?}", doc.branding());
+    println!("notice       {:?}", doc.notice());
+    println!("domain move  {:?}", doc.domain_migration());
+    // A private instance is self-hosted, and says what an account needs to sign in.
+    assert!(features.self_hosted, "the test instance is self-hosted");
+    assert!(doc.branding().product_name.is_some());
+    assert!(!doc.domain_migration().enabled);
+
+    // Read again with the ETag it gave: 304, and no new instance.
+    let etag = instance
+        .etag()
+        .expect("the instance sends an ETag")
+        .to_owned();
+    let again = instance
+        .fetch_discovery(Some(&etag))
+        .await
+        .expect("a second read");
+    assert!(again.is_none(), "the same ETag must give 'not modified'");
+    // Without the ETag the full document comes back, equal to the one held.
+    let (fresh, tag) = instance
+        .fetch_discovery(None)
+        .await
+        .expect("a full read")
+        .expect("a document");
+    assert_eq!(tag.as_deref(), Some(etag.as_str()));
+    assert_eq!(fresh.instance_features(), features);
+    assert_eq!(fresh.community(), community);
+}

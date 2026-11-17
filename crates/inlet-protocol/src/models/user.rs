@@ -5,8 +5,8 @@ use serde_json::{Map, Value};
 
 use super::{
     extra_field, extra_list, lenient_bool, lenient_vec, null_as_default, opt_i64, opt_sf, opt_u64,
-    sf, sf_list, snowflake_cmp, u64_or_zero, value_u64, CurrentUser, GuildMember, Ready, Snowflake,
-    User,
+    parse_timestamp_ms, sf, sf_list, snowflake_cmp, u64_or_zero, value_u64, CurrentUser,
+    GuildMember, Ready, Snowflake, User,
 };
 
 /// A custom status.
@@ -454,6 +454,39 @@ impl CurrentUser {
     /// Whether the email address is verified (needed to add reactions).
     pub fn verified(&self) -> bool {
         self.user.extra.get("verified") == Some(&Value::Bool(true))
+    }
+
+    /// Messaging is paused on the account until it completes a step the instance
+    /// emailed (`account_limited`).
+    pub fn account_limited(&self) -> bool {
+        self.user.extra.get("account_limited") == Some(&Value::Bool(true))
+    }
+
+    /// Emails to the account's address bounce (`email_bounced`).
+    pub fn email_bounced(&self) -> bool {
+        self.user.extra.get("email_bounced") == Some(&Value::Bool(true))
+    }
+
+    /// What the account still needs to finish setting up (`verification_need`), for
+    /// example `confirm_email`.
+    pub fn verification_need(&self) -> Option<&str> {
+        self.user.extra.get("verification_need")?.as_str()
+    }
+
+    /// The account's tier (`account_tier`), for example `unverified` or `verified`,
+    /// when the instance reports it.
+    pub fn account_tier(&self) -> Option<&str> {
+        self.user.extra.get("account_tier")?.as_str()
+    }
+
+    /// When the account accepted the terms (Unix milliseconds), if it did.
+    pub fn terms_agreed_at_ms(&self) -> Option<i64> {
+        parse_timestamp_ms(self.user.extra.get("terms_agreed_at")?.as_str()?)
+    }
+
+    /// When the account read the privacy policy (Unix milliseconds), if it did.
+    pub fn privacy_agreed_at_ms(&self) -> Option<i64> {
+        parse_timestamp_ms(self.user.extra.get("privacy_agreed_at")?.as_str()?)
     }
 
     /// Whether the account can see age-restricted content.

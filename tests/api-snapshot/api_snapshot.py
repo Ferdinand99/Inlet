@@ -32,6 +32,14 @@ CRATES = REPO / "crates"
 PROTOCOL_CRATE = "inlet-protocol"
 EXTRA_ROUTES = HERE / "routes-extra.txt"
 
+# The discovery document is read from the origin, not from a path under /v1, so the
+# scanner does not see it as an API path. The OpenAPI document describes it
+# (`WellKnownFluxerResponse`), and Inlet depends on its feature flags, community policy,
+# services, branding and notice, so it is part of every snapshot. The tool checks that
+# the code still reads it (a literal of this name below inlet-protocol/src).
+DOCUMENT_ROUTES = [("GET", "/.well-known/fluxer")]
+DOCUMENT_ROUTE_LITERAL = ".well-known/fluxer"
+
 # The instances Inlet is tested against. Origins only; the API address comes from
 # the instance's own discovery document, as in the client.
 INSTANCES = {
@@ -347,9 +355,18 @@ def inlet_routes():
             problems.append(f"routes-extra.txt: {method} {path} matches no path in the scanned sources")
     if len(resolved) + len(extra) < 20:
         problems.append(f"only {len(resolved) + len(extra)} routes found: the scanner is broken")
+    protocol_src = CRATES / PROTOCOL_CRATE / "src"
+    reads_discovery = any(
+        DOCUMENT_ROUTE_LITERAL in f.read_text(encoding="utf-8") for f in protocol_src.rglob("*.rs")
+    )
+    if not reads_discovery:
+        problems.append(
+            f"{PROTOCOL_CRATE} no longer reads {DOCUMENT_ROUTE_LITERAL}: "
+            "drop DOCUMENT_ROUTES from the tool, or restore the call"
+        )
     if problems:
         raise ToolError("\n".join(problems))
-    return sorted(set(resolved) | extra)
+    return sorted(set(resolved) | extra | set(DOCUMENT_ROUTES))
 
 
 # ---------------------------------------------------------------------------

@@ -39,12 +39,14 @@ mod sticker;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::ui::settings::sync::Values;
 use gpui::{
     actions, anchored, deferred, div, point, prelude::*, px, AnyElement, App, Context, Entity,
     FocusHandle, Focusable, FontWeight, KeyBinding, MouseDownEvent, Pixels, Point, SharedString,
     Svg, UniformListScrollHandle, Window,
 };
 use inlet_protocol as p;
+use inlet_state::flags::Flag;
 use inlet_state::{ChannelId, GuildId, MessageId};
 
 use super::editor::ComposerView;
@@ -314,6 +316,25 @@ pub struct PickerButtons {
     pub gif: bool,
 }
 
+/// Which picker buttons the message input shows (Fluxer's "message input buttons"): the
+/// GIF button needs the instance to have GIFs as well.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShownButtons {
+    pub gif: bool,
+    pub stickers: bool,
+    pub emoji: bool,
+}
+
+impl ShownButtons {
+    pub fn of(settings: &Values, instance_has_gifs: bool) -> Self {
+        ShownButtons {
+            gif: instance_has_gifs && settings.flag(Flag::InputGifButton),
+            stickers: settings.flag(Flag::InputStickersButton),
+            emoji: settings.flag(Flag::InputEmojiButton),
+        }
+    }
+}
+
 impl ComposerView {
     /// Puts a pick into the composer at the caret. Returns whether it went in: not
     /// without an open channel, while a message is edited inline (the pickers write into
@@ -349,6 +370,8 @@ impl ComposerView {
     /// 22 px icons. Only the main composer has them.
     pub(super) fn render_picker_buttons(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let buttons = self.pickers?;
+        // Fluxer's "Message input buttons": the person picks which of them show.
+        let shown = ShownButtons::of(&crate::ui::settings::store::values(cx), buttons.gif);
         let button = |id: &'static str, icon: PickerIcon, action: Box<dyn gpui::Action>| {
             div()
                 .id(id)
@@ -373,23 +396,27 @@ impl ComposerView {
                 .items_center()
                 .gap(px(2.))
                 .my(px(-5.))
-                .when(buttons.gif, |d| {
+                .when(shown.gif, |d| {
                     d.child(button(
                         "composer-gif-button",
                         PickerIcon::Gif,
                         Box::new(ToggleGifPicker),
                     ))
                 })
-                .child(button(
-                    "composer-sticker-button",
-                    PickerIcon::Sticker,
-                    Box::new(ToggleStickerPicker),
-                ))
-                .child(button(
-                    "composer-emoji-button",
-                    PickerIcon::Smiley,
-                    Box::new(ToggleEmojiPicker),
-                ))
+                .when(shown.stickers, |d| {
+                    d.child(button(
+                        "composer-sticker-button",
+                        PickerIcon::Sticker,
+                        Box::new(ToggleStickerPicker),
+                    ))
+                })
+                .when(shown.emoji, |d| {
+                    d.child(button(
+                        "composer-emoji-button",
+                        PickerIcon::Smiley,
+                        Box::new(ToggleEmojiPicker),
+                    ))
+                })
                 .into_any_element(),
         )
     }
@@ -1245,5 +1272,39 @@ mod tests {
         view.read_with(cx, |v, cx| {
             assert!(!v.editor.read(cx).buffer().text().contains('\u{1F44D}'));
         });
+    }
+}
+
+#[cfg(test)]
+mod shown_button_tests {
+    use super::*;
+    use crate::backend::settings::write::Change;
+
+    fn with(changes: &[(Flag, bool)]) -> Values {
+        let mut v = Values::default();
+        for (flag, on) in changes {
+            v.apply(&Change::Flag(*flag, *on));
+        }
+        v
+    }
+
+    #[test]
+    fn each_input_button_follows_its_own_switch() {
+        let all = ShownButtons::of(&Values::default(), true);
+        assert_eq!((all.gif, all.stickers, all.emoji), (true, true, true));
+        let v = with(&[(Flag::InputStickersButton, false)]);
+        let b = ShownButtons::of(&v, true);
+        assert_eq!((b.gif, b.stickers, b.emoji), (true, false, true));
+        let v = with(&[
+            (Flag::InputEmojiButton, false),
+            (Flag::InputGifButton, false),
+        ]);
+        let b = ShownButtons::of(&v, true);
+        assert_eq!((b.gif, b.stickers, b.emoji), (false, true, false));
+    }
+
+    #[test]
+    fn the_gif_button_also_needs_an_instance_with_gifs() {
+        assert!(!ShownButtons::of(&Values::default(), false).gif);
     }
 }

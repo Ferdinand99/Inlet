@@ -1,0 +1,9 @@
+# The updated-terms window over the app, with the policies banner behind it.
+name = "terms"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "terms"
+guild = "g1"
+channel = "c-general"

@@ -22,6 +22,7 @@ use inlet_protocol as p;
 use inlet_protocol::permissions::{
     ADMINISTRATOR, MANAGE_MESSAGES, READ_MESSAGE_HISTORY, VIEW_CHANNEL,
 };
+use inlet_state::flags::Flag;
 use inlet_state::{AccountState, ChannelId, MessageId, Permissions, UserId};
 
 use super::context_menu::Overlay;
@@ -32,6 +33,7 @@ use crate::backend::messages::actions::{self, Kind};
 use crate::backend::messages::Cmd;
 use crate::theme;
 use crate::ui::composer;
+use crate::ui::settings::sync::Values;
 
 /// Size of a bar button (Fluxer: 28 × 28, radius 6, icon 20).
 const BUTTON: f32 = 28.;
@@ -304,6 +306,54 @@ pub fn menu_actions(f: &Facts) -> Vec<Action> {
     out
 }
 
+/// What the hover bar of a message shows, from the settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarLayout {
+    /// The quick reaction buttons.
+    pub quick_reactions: bool,
+    /// The buttons between them and "more".
+    pub buttons: Vec<Action>,
+    /// "More" opens the message menu.
+    pub more_opens_menu: bool,
+}
+
+/// The bar as Fluxer's settings make it (`MessageActionBar.tsx`): "only the more button"
+/// leaves just that button; quick reactions follow their own switch; with "show message
+/// action bar" off the bar stays, and its More button opens nothing.
+pub fn bar_layout(settings: &Values, f: &Facts) -> BarLayout {
+    let only_more = settings.flag(Flag::ActionBarOnlyMore);
+    let buttons = if only_more {
+        Vec::new()
+    } else {
+        bar_actions(f)
+    };
+    BarLayout {
+        quick_reactions: !only_more
+            && settings.flag(Flag::ActionBarQuickReactions)
+            && menu_actions(f).contains(&Action::AddReaction),
+        buttons,
+        more_opens_menu: settings.flag(Flag::ActionBar),
+    }
+}
+
+/// What a double click on the message does (Fluxer's "double-click a message to edit or
+/// reply", `ChannelMessage.tsx`): nothing with the setting off or without the right to
+/// send; the message is edited when it can be, and replied to otherwise (also the
+/// account's own message that cannot be edited).
+pub fn double_click_action(settings: &Values, f: &Facts) -> Option<Action> {
+    if !settings.flag(Flag::DoubleClickActions) {
+        return None;
+    }
+    let menu = menu_actions(f);
+    if menu.contains(&Action::Edit) {
+        Some(Action::Edit)
+    } else if menu.contains(&Action::Reply) {
+        Some(Action::Reply)
+    } else {
+        None
+    }
+}
+
 /// The menu's groups: a line goes between two actions of different groups.
 pub fn group_of(a: Action) -> u8 {
     match a {
@@ -377,6 +427,8 @@ impl Inlet {
         }
         let ch = ChannelId::parse(&row.message.channel_id)?;
         let facts = self.action_facts(ch, id, cx)?;
+        // The settings of the bar (Fluxer's "Message action bar").
+        let layout = bar_layout(self.settings_values(), &facts);
         let mut bar = div()
             .id(SharedString::from(format!("bar-{id}")))
             .flex()
@@ -401,8 +453,9 @@ impl Inlet {
                 this.chat.actions.hover_bar(id, *hovered);
                 cx.notify();
             }));
-        let actions = bar_actions(&facts);
-        if actions.contains(&Action::AddReaction) {
+        let more_opens_menu = layout.more_opens_menu;
+        let actions = layout.buttons;
+        if layout.quick_reactions {
             for (i, glyph) in reactions::QUICK.iter().enumerate() {
                 let emoji = p::Emoji::unicode(*glyph);
                 bar = bar.child(
@@ -432,10 +485,35 @@ impl Inlet {
             bar_button(format!("more-{id}"))
                 .child(ActionIcon::More.el(px(ICON), theme::text_tertiary()))
                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                    this.open_message_menu(ch, id, e.position(), window, cx)
+                    // Fluxer keeps the bar when "show message action bar" is off, but
+                    // its More button then opens nothing.
+                    if more_opens_menu {
+                        this.open_message_menu(ch, id, e.position(), window, cx)
+                    }
                 })),
         );
         Some(bar.into_any_element())
+    }
+
+    /// A double click on a message (see [`double_click_action`]).
+    pub(crate) fn double_click_message(
+        &mut self,
+        ch: ChannelId,
+        id: MessageId,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(facts) = self.action_facts(ch, id, cx) else {
+            return;
+        };
+        // Fluxer does nothing while the message is being edited or replied to.
+        if self.composer.view.read(cx).is_busy_with(&id.to_string()) {
+            return;
+        }
+        if let Some(action) = double_click_action(self.settings_values(), &facts) {
+            self.run_action(action, ch, id, false, at, window, cx);
+        }
     }
 
     /// Runs an action on message `id`, after checking the rights again. `shift` skips
@@ -831,6 +909,71 @@ mod tests {
         };
         assert!(!menu_actions(&off).contains(&Action::CopyId));
         assert!(menu_actions(&off).contains(&Action::CopyLink));
+    }
+
+    /// The settings with these switches changed.
+    fn settings(changes: &[(Flag, bool)]) -> Values {
+        let mut v = Values::default();
+        for (flag, on) in changes {
+            v.apply(&crate::backend::settings::write::Change::Flag(*flag, *on));
+        }
+        v
+    }
+
+    #[test]
+    fn a_double_click_edits_a_message_that_can_be_edited_and_replies_to_any_other() {
+        let state = state(MEMBER, 0);
+        let on = settings(&[(Flag::DoubleClickActions, true)]);
+        let mine = facts(&state, 100, true);
+        assert_eq!(double_click_action(&on, &mine), Some(Action::Edit));
+        let theirs = facts(&state, 100, false);
+        assert_eq!(double_click_action(&on, &theirs), Some(Action::Reply));
+        // The account's own message that cannot be edited (a forwarded one) is replied to,
+        // as in Fluxer.
+        let mut locked = facts(&state, 100, true);
+        locked.editable = false;
+        assert_eq!(double_click_action(&on, &locked), Some(Action::Reply));
+        // Without the right to send, a double click does nothing.
+        let muted = facts(&self::state(READER, 0), 100, false);
+        assert_eq!(double_click_action(&on, &muted), None);
+    }
+
+    #[test]
+    fn a_double_click_does_nothing_while_the_setting_is_off() {
+        let state = state(MEMBER, 0);
+        let off = Values::default();
+        assert!(!off.flag(Flag::DoubleClickActions));
+        assert_eq!(double_click_action(&off, &facts(&state, 100, true)), None);
+        assert_eq!(double_click_action(&off, &facts(&state, 100, false)), None);
+    }
+
+    #[test]
+    fn the_bar_follows_its_settings_and_stays_when_the_switch_is_off() {
+        let state = state(MEMBER, 0);
+        let f = facts(&state, 100, false);
+        // The defaults: quick reactions and the buttons, and More opens the menu.
+        let layout = bar_layout(&Values::default(), &f);
+        assert!(layout.quick_reactions && layout.more_opens_menu);
+        assert_eq!(layout.buttons, bar_actions(&f));
+
+        // "Show only the more button": nothing else.
+        let only = bar_layout(&settings(&[(Flag::ActionBarOnlyMore, true)]), &f);
+        assert!(only.buttons.is_empty() && !only.quick_reactions && only.more_opens_menu);
+
+        // No quick reactions: the buttons stay.
+        let no_quick = bar_layout(&settings(&[(Flag::ActionBarQuickReactions, false)]), &f);
+        assert!(!no_quick.quick_reactions && !no_quick.buttons.is_empty());
+
+        // "Show message action bar" off: the bar keeps everything (Fluxer mounts it
+        // whatever that switch says), but its More button opens nothing.
+        let off = bar_layout(&settings(&[(Flag::ActionBar, false)]), &f);
+        assert!(!off.more_opens_menu);
+        assert_eq!(off.buttons, bar_actions(&f));
+        assert!(off.quick_reactions);
+
+        // Without the right to react there are no quick reactions.
+        let read_only = facts(&self::state(READER, 0), 100, false);
+        assert!(!bar_layout(&Values::default(), &read_only).quick_reactions);
     }
 
     #[test]

@@ -27,6 +27,7 @@ use gpui::{
 use inlet_editor::actions::{Down, Submit, Up};
 use inlet_editor::{Editor, EditorEvent, EditorStyle, Trigger};
 use inlet_protocol as p;
+use inlet_state::flags::Flag;
 use inlet_state::{AccountState, ChannelId, GuildId};
 
 use super::attachments::{Attachments, InFlight};
@@ -585,7 +586,12 @@ impl ComposerView {
         if let (Trigger::Mention(q), Some(g)) = (&trigger, &guild) {
             self.search_members(g.clone(), q.clone(), cx);
         }
+        let shown = crate::ui::settings::store::values(cx);
         let src = Sources {
+            emoji: autocomplete::EmojiKinds {
+                default: shown.flag(Flag::AutocompleteDefaultEmojis),
+                custom: shown.flag(Flag::AutocompleteCustomEmojis),
+            },
             directory: self.directory(),
             members: self.known_members(),
             in_guild: guild.is_some(),

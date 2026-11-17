@@ -57,8 +57,28 @@ pub struct Candidate {
     pub pick: Pick,
 }
 
+/// Which emoji the colon autocomplete offers (Fluxer's "expression autocomplete" settings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EmojiKinds {
+    /// The default (Unicode) emoji.
+    pub default: bool,
+    /// The custom emoji of the account's communities.
+    pub custom: bool,
+}
+
+impl Default for EmojiKinds {
+    fn default() -> Self {
+        EmojiKinds {
+            default: true,
+            custom: true,
+        }
+    }
+}
+
 /// What autocomplete can offer in the open channel.
 pub struct Sources<'a> {
+    /// Which emoji the colon offers.
+    pub emoji: EmojiKinds,
     pub directory: Option<&'a Directory>,
     /// Members found by searches in this guild.
     pub members: &'a [Person],
@@ -178,7 +198,7 @@ fn channels(query: &str, src: &Sources) -> Vec<Candidate> {
 fn emoji(query: &str, src: &Sources) -> Vec<Candidate> {
     let q = query.to_lowercase();
     let mut out: Vec<Candidate> = Vec::new();
-    if let Some(dir) = src.directory {
+    if let Some(dir) = src.directory.filter(|_| src.emoji.custom) {
         let mut custom: Vec<(u8, &CustomEmoji)> = dir
             .emojis
             .iter()
@@ -199,7 +219,13 @@ fn emoji(query: &str, src: &Sources) -> Vec<Candidate> {
             ),
         }));
     }
-    let room = MAX_ROWS.saturating_sub(out.len());
+    // A kind that is off is left out before the rows are shared out, so the other kind
+    // still fills the list.
+    let room = if src.emoji.default {
+        MAX_ROWS.saturating_sub(out.len())
+    } else {
+        0
+    };
     out.extend(
         inlet_emoji::search(&q, room)
             .into_iter()
@@ -472,6 +498,7 @@ mod tests {
         let members = people();
         let d = dir();
         let src = Sources {
+            emoji: EmojiKinds::default(),
             directory: Some(&d),
             members: &members,
             in_guild: true,
@@ -511,6 +538,7 @@ mod tests {
         let (_, rows) = candidates(&Trigger::Mention("every".into()), &src);
         assert!(rows.is_empty());
         let dm = Sources {
+            emoji: EmojiKinds::default(),
             directory: None,
             members: &members,
             in_guild: false,
@@ -523,6 +551,7 @@ mod tests {
     fn everyone_is_offered_only_with_the_right() {
         let d = dir();
         let src = Sources {
+            emoji: EmojiKinds::default(),
             directory: Some(&d),
             members: &[],
             in_guild: true,
@@ -541,9 +570,46 @@ mod tests {
     }
 
     #[test]
+    fn the_emoji_settings_filter_before_the_list_is_filled() {
+        let mut d = dir();
+        d.emojis = (0..MAX_ROWS as u64 + 5)
+            .map(|i| CustomEmoji {
+                id: 100 + i,
+                name: format!("smile_{i}"),
+                animated: false,
+            })
+            .collect();
+        let rows = |default, custom| {
+            let src = Sources {
+                emoji: EmojiKinds { default, custom },
+                directory: Some(&d),
+                members: &[],
+                in_guild: true,
+                rights: Rights::default(),
+            };
+            candidates(&Trigger::Emoji("smile".into()), &src).1
+        };
+        let custom_only = |r: &[Candidate]| r.iter().all(|c| matches!(c.pick, Pick::Token(..)));
+        let default_only = |r: &[Candidate]| r.iter().all(|c| matches!(c.pick, Pick::Text(_)));
+        // Custom emoji fill the list when both are on.
+        let both = rows(true, true);
+        assert_eq!(both.len(), MAX_ROWS);
+        assert!(custom_only(&both));
+        // With custom emoji off, the default ones still show, though the custom ones
+        // would have filled every row.
+        let defaults = rows(true, false);
+        assert!(!defaults.is_empty() && default_only(&defaults));
+        let customs = rows(false, true);
+        assert_eq!(customs.len(), MAX_ROWS);
+        assert!(custom_only(&customs));
+        assert!(rows(false, false).is_empty());
+    }
+
+    #[test]
     fn channels_emoji_and_commands() {
         let d = dir();
         let src = Sources {
+            emoji: EmojiKinds::default(),
             directory: Some(&d),
             members: &[],
             in_guild: true,

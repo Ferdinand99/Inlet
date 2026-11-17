@@ -39,7 +39,9 @@
 
 mod account;
 mod bounded;
+pub mod capabilities;
 pub mod channels;
+pub mod flags;
 pub mod guild_settings;
 pub mod guilds;
 mod ids;
@@ -58,6 +60,10 @@ pub mod users;
 pub mod voice;
 
 pub use account::AccountState;
+pub use capabilities::{
+    AccountNotices, Cap, Capabilities, ExperimentState, GuildFeature, InstanceSnapshot,
+    PolicyDates, TermsUpdate,
+};
 pub use ids::{ChannelId, GuildId, MessageId, RoleId, UserId};
 pub use messages::{MessageWindow, MessageWindows, MessagesPage};
 pub use permissions::Permissions;
@@ -266,6 +272,9 @@ pub struct Changes {
     pub settings: bool,
     /// Relationships (friends, requests, blocks) or the pinned DMs.
     pub relationships: bool,
+    /// What the instance lets the account do ([`crate::Capabilities`]): its discovery
+    /// document, the experiment assignments, or the account's own flags changed.
+    pub capabilities: bool,
     /// The guild order and folders in the account settings.
     pub folders: bool,
     /// Someone joined, moved in or left a voice channel, or changed their voice state.
@@ -289,6 +298,7 @@ impl Changes {
         self.users |= other.users;
         self.settings |= other.settings;
         self.relationships |= other.relationships;
+        self.capabilities |= other.capabilities;
         self.folders |= other.folders;
         self.voice |= other.voice;
         self.channels.merge(other.channels);

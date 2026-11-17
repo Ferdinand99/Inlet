@@ -204,6 +204,15 @@ impl State {
     }
 }
 
+/// Whether the animations count the window as focused: it is, or Fluxer's "stay fully
+/// interactive when unfocused" keeps them going.
+pub(crate) fn animations_active(
+    window_active: bool,
+    settings: &crate::ui::settings::sync::Values,
+) -> bool {
+    window_active || settings.flag(inlet_state::flags::Flag::StayInteractiveUnfocused)
+}
+
 impl Inlet {
     /// Once per frame, before anything is drawn: lets go of the images the last frame
     /// did not draw and frees textures nothing draws any more.
@@ -221,7 +230,7 @@ impl Inlet {
         #[cfg(feature = "demo")]
         self.media.demo_note_frame(window.is_window_active());
         let stage = Stage {
-            active: window.is_window_active(),
+            active: animations_active(window.is_window_active(), self.settings_values()),
             idle: self.media.last_input.elapsed() >= IDLE_AFTER,
             reduce_motion: cx.reduce_motion(),
             layer_open: self.layer_open(),
@@ -414,10 +423,11 @@ pub fn file_size(bytes: u64) -> String {
         v /= 1024.;
         unit += 1;
     }
+    // The decimal separator is the locale's ("1,5 MB" in Norwegian).
     let size = if v >= 100. {
-        format!("{v:.0}")
+        crate::i18n::decimal(v, 0)
     } else {
-        format!("{v:.1}")
+        crate::i18n::decimal(v, 1)
     };
     match unit {
         0 => t!("media-size-kb", size = size),
@@ -469,5 +479,26 @@ mod tests {
         assert!(!s.is_revealed("k0"));
         assert!(s.is_revealed(&format!("k{}", MAX_REVEALED + 9)));
         assert_eq!(s.revealed.len(), MAX_REVEALED);
+    }
+}
+
+#[cfg(test)]
+mod stay_interactive_tests {
+    use super::animations_active;
+    use crate::backend::settings::write::Change;
+    use crate::ui::settings::sync::Values;
+    use inlet_state::flags::Flag;
+
+    #[test]
+    fn animations_stop_in_an_unfocused_window_unless_the_setting_keeps_them_going() {
+        let off = Values::default();
+        assert!(animations_active(true, &off), "a focused window plays");
+        assert!(
+            !animations_active(false, &off),
+            "an unfocused one stands still"
+        );
+        let mut on = Values::default();
+        on.apply(&Change::Flag(Flag::StayInteractiveUnfocused, true));
+        assert!(animations_active(false, &on));
     }
 }

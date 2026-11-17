@@ -376,12 +376,37 @@ pub fn normalize_origin(origin: &str) -> Result<String> {
     Ok(url.origin().ascii_serialization())
 }
 
+/// The `Accept-Language` value for clients built from now on; unset sends none.
+static ACCEPT_LANGUAGE: std::sync::RwLock<Option<reqwest::header::HeaderValue>> =
+    std::sync::RwLock::new(None);
+
+/// Sets the `Accept-Language` header (for example `nb-NO,nb;q=0.9,en;q=0.5`) that every
+/// client built after this call sends, so the instance can answer in the app's language.
+/// Clients that already exist keep the value they were built with. A value that is not a
+/// valid header is ignored.
+pub fn set_accept_language(value: &str) {
+    if let Ok(value) = reqwest::header::HeaderValue::from_str(value) {
+        *ACCEPT_LANGUAGE
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value);
+    }
+}
+
 fn http_builder(info: &ClientInfo) -> reqwest::ClientBuilder {
-    let builder = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .user_agent(info.user_agent.clone())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .use_rustls_tls();
+    let language = ACCEPT_LANGUAGE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let Some(language) = language {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::ACCEPT_LANGUAGE, language);
+        builder = builder.default_headers(headers);
+    }
     extra_roots(builder)
 }
 
@@ -549,6 +574,26 @@ impl Instance {
                 i.anon_limiter.clone(),
             ),
         }
+    }
+
+    /// Fetches the discovery document again, with `If-None-Match` when `etag` is given,
+    /// and returns it with its new `ETag`, or `None` when it has not changed. Unlike
+    /// [`Instance::refresh`] it builds no new instance, so a client can follow the
+    /// document's feature flags and notice for as long as a session lives without ever
+    /// moving the session's pinned hosts. Fails with [`Error::UnsupportedApiVersion`]
+    /// when the instance now needs a newer client.
+    pub async fn fetch_discovery(
+        &self,
+        etag: Option<&str>,
+    ) -> Result<Option<(Discovery, Option<String>)>> {
+        let i = &self.inner;
+        let fetched = fetch(&i.discovery_http, &i.anon_limiter, &i.origin, etag).await?;
+        if let Some((d, _)) = &fetched {
+            if d.api_code_version > SUPPORTED_API_CODE_VERSION {
+                return Err(Error::UnsupportedApiVersion(d.api_code_version));
+            }
+        }
+        Ok(fetched)
     }
 
     /// The hosts a token for this instance goes to.
@@ -774,6 +819,31 @@ mod tests {
     fn plain_http_origin_is_refused() {
         let err = normalize_origin("http://fluxer.opland.net").unwrap_err();
         assert!(matches!(err, Error::Url(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn clients_send_the_accept_language_they_were_built_with() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(|request: &Request| {
+                request
+                    .headers
+                    .get("accept-language")
+                    .is_some_and(|v| v.as_bytes() == b"nb-NO,nb;q=0.9,en;q=0.5")
+            })
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // A value that is no header changes nothing.
+        set_accept_language("nb-NO,nb;q=0.9,en;q=0.5");
+        set_accept_language("bad\nvalue");
+        let (api, _) = build_http(&ClientInfo::default()).unwrap();
+        let response = api.get(server.uri()).send().await.unwrap();
+        assert_eq!(response.status(), 204);
     }
 
     fn build(d: Discovery) -> Result<Instance> {

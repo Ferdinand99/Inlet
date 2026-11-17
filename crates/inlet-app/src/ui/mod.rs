@@ -5,6 +5,7 @@
 //! files.
 
 pub mod accounts;
+pub mod banners;
 pub mod chat;
 pub mod composer;
 pub mod inbox;

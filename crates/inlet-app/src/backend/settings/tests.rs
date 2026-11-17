@@ -538,3 +538,43 @@ fn the_bio_limit_and_the_banner_follow_the_account_plan() {
         Some(1)
     );
 }
+
+#[test]
+fn a_switch_goes_into_the_synced_preferences_and_never_into_the_account_settings() {
+    use inlet_state::flags::Flag;
+    let synced = Change::Flag(Flag::ActionBarOnlyMore, true);
+    assert!(synced.is_preference() && !synced.is_local());
+    assert!(
+        Wish::of(1, &[synced]).is_empty(),
+        "nothing goes into the account settings"
+    );
+    let mut prefs = p::api::preferences::Preferences::default();
+    synced.set_preference(&mut prefs);
+    assert_eq!(Flag::ActionBarOnlyMore.read(&prefs), Some(true));
+    // The write sets values, it never toggles: applying it again changes nothing.
+    let once = prefs.clone();
+    synced.set_preference(&mut prefs);
+    assert_eq!(prefs, once);
+
+    // A switch of this computer is neither: it is never sent.
+    let local = Change::Flag(Flag::HideBlockedMessages, true);
+    assert!(local.is_local() && !local.is_preference());
+    assert!(Wish::of(1, &[local]).is_empty());
+    let mut untouched = p::api::preferences::Preferences::default();
+    local.set_preference(&mut untouched);
+    assert_eq!(untouched, p::api::preferences::Preferences::default());
+}
+
+#[test]
+fn the_newest_edit_of_a_switch_replaces_the_older_one_of_that_switch_only() {
+    use inlet_state::flags::Flag;
+    let on = Change::Flag(Flag::ActionBar, true);
+    let off = Change::Flag(Flag::ActionBar, false);
+    assert_eq!(on.kind(), off.kind(), "the same switch");
+    assert_ne!(
+        on.kind(),
+        Change::Flag(Flag::DoubleClickActions, true).kind(),
+        "another switch is another kind"
+    );
+    assert_ne!(on.kind(), Change::CompactAvatars(true).kind());
+}

@@ -7,8 +7,8 @@
 //! time it is drawn, and [`refresh_due`] tells the message list when a label on screen
 //! is about to change, so it can draw again without parsing anything.
 //!
-//! Deviation: month and weekday names are English, like the rest of the UI until it is
-//! translated; Fluxer uses the browser locale's names.
+//! Deviation: month and weekday names come from the text catalogue, in the language of
+//! the UI; Fluxer uses the names of the browser locale.
 
 use std::cell::Cell;
 
@@ -17,7 +17,7 @@ use fluxer_markdown_parser::ast::TimestampStyle;
 
 use super::inline::{push_live, push_marked};
 use super::{Inline, LiveKind, Style};
-use crate::ui::chat::time::{self, LocaleFormat};
+use crate::ui::chat::time::{self, month_name, weekday_name, LocaleFormat};
 
 thread_local! {
     /// The soonest moment (Unix seconds) a relative timestamp drawn on screen changes.
@@ -43,36 +43,6 @@ pub(super) fn push(timestamp: u64, style: TimestampStyle, inline: &mut Inline) {
         ),
         Some(unix) => push_marked(inline, &label(unix, style, now_s()), Style::Timestamp),
         None => push_marked(inline, &timestamp.to_string(), Style::Timestamp),
-    }
-}
-
-fn month_name(month: u32) -> String {
-    match month {
-        1 => t!("markdown-month-1"),
-        2 => t!("markdown-month-2"),
-        3 => t!("markdown-month-3"),
-        4 => t!("markdown-month-4"),
-        5 => t!("markdown-month-5"),
-        6 => t!("markdown-month-6"),
-        7 => t!("markdown-month-7"),
-        8 => t!("markdown-month-8"),
-        9 => t!("markdown-month-9"),
-        10 => t!("markdown-month-10"),
-        11 => t!("markdown-month-11"),
-        _ => t!("markdown-month-12"),
-    }
-}
-
-/// `weekday` counts from Monday = 1.
-fn weekday_name(weekday: u32) -> String {
-    match weekday {
-        1 => t!("markdown-weekday-1"),
-        2 => t!("markdown-weekday-2"),
-        3 => t!("markdown-weekday-3"),
-        4 => t!("markdown-weekday-4"),
-        5 => t!("markdown-weekday-5"),
-        6 => t!("markdown-weekday-6"),
-        _ => t!("markdown-weekday-7"),
     }
 }
 

@@ -44,6 +44,8 @@ const MAX_GUILD_PAGES: usize = 25;
 pub(crate) struct RawResponse {
     pub(crate) status: u16,
     pub(crate) body: Vec<u8>,
+    /// The `ETag` header, for the routes a caller revalidates.
+    pub(crate) etag: Option<String>,
 }
 
 impl RawResponse {
@@ -207,13 +209,30 @@ pub(crate) async fn send(
         if status == 401 && token.is_some() {
             return Err(Error::Unauthorized);
         }
+        let revalidating = req
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("if-none-match"));
+        if status == 304 && revalidating {
+            // "Not modified" answers the `If-None-Match` this request carries.
+            return Ok(RawResponse {
+                status,
+                body: Vec::new(),
+                etag: None,
+            });
+        }
         if (300..400).contains(&status) {
             // Redirects are never followed (they could carry secrets elsewhere).
             return Err(Error::Decode(format!(
                 "the API answered with a redirect (HTTP {status}); not following it"
             )));
         }
-        return Ok(RawResponse { status, body });
+        let etag = headers
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.len() <= 256)
+            .map(str::to_owned);
+        return Ok(RawResponse { status, body, etag });
     }
 }
 
