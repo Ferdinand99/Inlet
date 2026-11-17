@@ -1,19 +1,22 @@
-//! Sign-in: password (+ TOTP), new-IP authorization, and the browser handoff.
+//! Sign-in: password (+ TOTP or backup code), identifier-first with an emailed
+//! code, new-IP authorization, and the browser handoff.
 //!
-//! Two ways in:
+//! Ways in:
 //!
-//! 1. **Browser handoff** ([`Handoff`]): the app shows a 12-character code and
+//! 1. **Password** ([`sign_in_password`]) and, on an instance with
+//!    `identifier_first`, **identify then password or email code** ([`identify`],
+//!    [`send_email_code`], [`verify_email_code`]). Gated requests need the ALTCHA
+//!    proof-of-work, which this crate solves the way Fluxer's own client does (see
+//!    [`crate::altcha`]); if the instance rejects the answer, the result is
+//!    [`SignInResult::Captcha`]. Accounts with a second factor get
+//!    [`SignInResult::NeedsMfa`], finished with [`sign_in_totp`] (an authenticator
+//!    code or a backup code). A sign-in from a new IP may need the email link
+//!    ([`SignInResult::IpAuthorizationRequired`], then [`poll_ip_authorization`] and
+//!    [`resend_ip_authorization`]). Passwords and codes are [`Secret`]s.
+//! 2. **Browser handoff** ([`Handoff`]): the app shows a 12-character code and
 //!    opens `{webapp}/login?handoff=1`; the person signs in there (any method:
 //!    passkey, SSO, email code) and types the code; the app polls and gets a
-//!    token. This always works and is the recommended path.
-//! 2. **Password** ([`sign_in_password`]): needs the ALTCHA proof-of-work,
-//!    which this crate solves (see [`crate::altcha`]). The solver follows
-//!    altcha-lib but is only tested against mocks so far; if the instance
-//!    rejects it, the result is [`SignInResult::Captcha`] and the UI should fall
-//!    back to the handoff. Accounts with a second factor get
-//!    [`SignInResult::NeedsMfa`], finished with [`sign_in_totp`]. A sign-in from
-//!    a new IP may need the email link ([`SignInResult::IpAuthorizationRequired`],
-//!    then [`poll_ip_authorization`]).
+//!    token. It stays available for methods this crate does not do (passkeys, SSO).
 
 use std::fmt;
 use std::time::Duration;
@@ -26,7 +29,14 @@ use crate::error::{ApiError, Error, Result};
 use crate::instance::{EndpointPins, Instance, SessionPins};
 use crate::models::{Snowflake, User};
 use crate::rest::{send, Client, RawResponse, Request};
+use crate::secret::Secret;
 use crate::token::Token;
+
+mod entry;
+pub use entry::{
+    identify, send_email_code, verify_email_code, verify_email_code_with_invite, CodePurpose,
+    CodeSent, Identified, SignInMethod,
+};
 
 /// How long the CAPTCHA solver may run.
 const CAPTCHA_TIMEOUT: Duration = Duration::from_secs(60);
@@ -100,8 +110,12 @@ pub enum SignInResult {
     },
     /// New IP address: Fluxer emailed a link. Poll [`poll_ip_authorization`] until it is used.
     IpAuthorizationRequired {
-        /// Pass to [`poll_ip_authorization`].
+        /// Pass to [`poll_ip_authorization`] and [`resend_ip_authorization`].
         ticket: Ticket,
+        /// The address the email went to, as Fluxer sent it.
+        email: Option<String>,
+        /// Seconds until the email can be sent again (30 when Fluxer does not say).
+        resend_available_in: u64,
     },
     /// A CAPTCHA was required and could not be passed: the answer was not
     /// accepted, the challenge was too hard or expired, or the algorithm is
@@ -110,6 +124,16 @@ pub enum SignInResult {
     /// The API refused (wrong password, invalid code, SSO required, suspended, ...).
     /// [`ApiError::field_code`] has codes like `INVALID_EMAIL_OR_PASSWORD` or `INVALID_CODE`.
     Error(ApiError),
+}
+
+/// `Accept-Language` for the sign-in requests, when the client names a language and it is
+/// a plain tag (letters, digits and hyphens).
+fn language_header(instance: &Instance) -> Option<(&'static str, String)> {
+    let tag = instance.client_info().locale.as_deref()?;
+    let plain = !tag.is_empty()
+        && tag.len() <= 35
+        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    plain.then(|| ("Accept-Language", tag.to_owned()))
 }
 
 fn client_properties(instance: &Instance) -> String {
@@ -147,6 +171,7 @@ async fn post_with_captcha(
     loop {
         let mut headers: Vec<(&'static str, String)> =
             vec![("X-Fluxer-Client-Properties", props.clone())];
+        headers.extend(language_header(instance));
         if let Some(t) = &captcha_token {
             headers.push(("X-Captcha-Token", t.clone()));
         }
@@ -172,6 +197,7 @@ async fn post_with_captcha(
                 tracing::info!("solving the sign-in CAPTCHA");
                 match crate::altcha::solve(challenge, CAPTCHA_TIMEOUT).await {
                     Ok(t) => captcha_token = Some(t),
+                    Err(Error::Cancelled) => return Err(Error::Cancelled),
                     Err(e) => {
                         tracing::warn!("CAPTCHA not solved: {e}");
                         return Ok((raw, true));
@@ -224,13 +250,38 @@ fn interpret_login(raw: RawResponse, captcha_failed: bool) -> Result<SignInResul
     }
     let err = raw.api_error();
     if err.code == "IP_AUTHORIZATION_REQUIRED" {
-        if let Some(ticket) = v.get("ticket").and_then(Value::as_str) {
+        if let Some(ticket) = error_context(&v, "ticket").and_then(Value::as_str) {
             return Ok(SignInResult::IpAuthorizationRequired {
                 ticket: Ticket(ticket.to_owned()),
+                email: error_context(&v, "email")
+                    .and_then(Value::as_str)
+                    .map(|e| e.chars().take(320).collect()),
+                resend_available_in: error_context(&v, "resend_available_in")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(30)
+                    .min(3600),
             });
         }
     }
     Ok(SignInResult::Error(err))
+}
+
+/// A field of an error body: at the top level, or under `details.context` (where newer
+/// instances put it). Fluxer's own client reads both.
+fn error_context<'a>(body: &'a Value, key: &str) -> Option<&'a Value> {
+    body.get(key)
+        .or_else(|| body.get("details")?.get("context")?.get(key))
+}
+
+/// Overwrites the string values of `keys` in a request body, so a password or code the
+/// body held does not stay in memory after the request. The copies inside the HTTP
+/// client's own buffers are out of reach (see the crate docs).
+fn wipe(body: &mut Value, keys: &[&str]) {
+    for key in keys {
+        if let Some(Value::String(s)) = body.get_mut(*key) {
+            zeroize::Zeroize::zeroize(s);
+        }
+    }
 }
 
 /// `POST /auth/login`. `login` is an email address or, on a username instance, a username.
@@ -238,10 +289,31 @@ fn interpret_login(raw: RawResponse, captcha_failed: bool) -> Result<SignInResul
 pub async fn sign_in_password(
     instance: &Instance,
     login: &str,
-    password: &str,
+    password: &Secret,
 ) -> Result<SignInResult> {
-    let body = json!({ "login": login, "password": password });
-    let (raw, captcha_failed) = post_with_captcha(instance, "/auth/login", &body).await?;
+    sign_in_password_with_invite(instance, login, password, None).await
+}
+
+/// Adds the invite the person is signing in for; the instance joins the server after a
+/// sign-in without a second factor (and after the second factor, with the same code).
+fn with_invite(body: &mut Value, invite_code: Option<&str>) {
+    if let Some(code) = invite_code.filter(|c| !c.is_empty() && c.len() <= 256) {
+        body["invite_code"] = Value::String(code.to_owned());
+    }
+}
+
+/// [`sign_in_password`] for a sign-in that starts from an invite (`invite_code`).
+pub async fn sign_in_password_with_invite(
+    instance: &Instance,
+    login: &str,
+    password: &Secret,
+    invite_code: Option<&str>,
+) -> Result<SignInResult> {
+    let mut body = json!({ "login": login, "password": password.expose_secret() });
+    with_invite(&mut body, invite_code);
+    let sent = post_with_captcha(instance, "/auth/login", &body).await;
+    wipe(&mut body, &["password"]);
+    let (raw, captcha_failed) = sent?;
     interpret_login(raw, captcha_failed)
 }
 
@@ -249,10 +321,23 @@ pub async fn sign_in_password(
 pub async fn sign_in_totp(
     instance: &Instance,
     ticket: &Ticket,
-    code: &str,
+    code: &Secret,
 ) -> Result<SignInResult> {
-    let body = json!({ "ticket": ticket.expose_secret(), "code": code.trim() });
-    let (raw, captcha_failed) = post_with_captcha(instance, "/auth/login/mfa/totp", &body).await?;
+    sign_in_totp_with_invite(instance, ticket, code, None).await
+}
+
+/// [`sign_in_totp`] for a sign-in that starts from an invite.
+pub async fn sign_in_totp_with_invite(
+    instance: &Instance,
+    ticket: &Ticket,
+    code: &Secret,
+    invite_code: Option<&str>,
+) -> Result<SignInResult> {
+    let mut body = json!({ "ticket": ticket.expose_secret(), "code": code.expose_secret().trim() });
+    with_invite(&mut body, invite_code);
+    let sent = post_with_captcha(instance, "/auth/login/mfa/totp", &body).await;
+    wipe(&mut body, &["code", "ticket"]);
+    let (raw, captcha_failed) = sent?;
     interpret_login(raw, captcha_failed)
 }
 
@@ -288,6 +373,28 @@ pub async fn poll_ip_authorization(
     Ok(IpAuthorization::Pending)
 }
 
+/// `POST /auth/ip-authorization/resend`: sends the new-IP email again. Each ticket allows
+/// one resend, 30 seconds or more after the sign-in; the refusals are API errors
+/// (`IP_AUTHORIZATION_RESEND_LIMIT_EXCEEDED`, `IP_AUTHORIZATION_RESEND_COOLDOWN`).
+pub async fn resend_ip_authorization(instance: &Instance, ticket: &Ticket) -> Result<()> {
+    let mut body = json!({ "ticket": ticket.expose_secret() });
+    let sent = anon(
+        instance,
+        Method::POST,
+        "/auth/ip-authorization/resend",
+        Some(&body),
+        false,
+    )
+    .await;
+    wipe(&mut body, &["ticket"]);
+    let raw = sent?;
+    if raw.is_success() {
+        Ok(())
+    } else {
+        Err(Error::Api(Box::new(raw.api_error())))
+    }
+}
+
 async fn anon(
     instance: &Instance,
     method: Method,
@@ -295,12 +402,13 @@ async fn anon(
     body: Option<&Value>,
     origin_header: bool,
 ) -> Result<RawResponse> {
-    let headers: Vec<(&'static str, String)> = if origin_header {
+    let mut headers: Vec<(&'static str, String)> = if origin_header {
         // The official desktop shell sends the web app origin on handoff POSTs.
         vec![("Origin", web_origin(instance))]
     } else {
         Vec::new()
     };
+    headers.extend(language_header(instance));
     send(
         instance,
         &instance.inner.anon_limiter,
@@ -616,5 +724,35 @@ impl Session {
         tokio::sync::mpsc::Receiver<crate::gateway::GatewayEvent>,
     ) {
         crate::gateway::Gateway::connect(self.instance().clone(), self.token().clone(), options)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_body_is_wiped_after_use() {
+        let mut body = json!({ "login": "ana", "password": "correct horse", "ticket": "t" });
+        wipe(&mut body, &["password", "missing"]);
+        assert_eq!(body["password"], "");
+        // What is not named stays.
+        assert_eq!(body["login"], "ana");
+        assert_eq!(body["ticket"], "t");
+    }
+
+    #[test]
+    fn error_fields_are_read_from_the_top_level_or_the_details() {
+        let top = json!({ "ticket": "a" });
+        let nested = json!({ "details": { "context": { "ticket": "b" } } });
+        assert_eq!(
+            error_context(&top, "ticket").and_then(Value::as_str),
+            Some("a")
+        );
+        assert_eq!(
+            error_context(&nested, "ticket").and_then(Value::as_str),
+            Some("b")
+        );
+        assert!(error_context(&top, "email").is_none());
     }
 }

@@ -64,13 +64,14 @@
 //! - Zeroizing the token is best effort: copies in request bodies, JSON trees
 //!   and the zstd window are not wiped.
 
-//! # Sign-in on fluxer.opland.net
+//! # Sign-in
 //!
-//! Password sign-in needs an ALTCHA proof-of-work CAPTCHA there. This crate
-//! solves it ([`altcha`]), but the solver is only tested against mocks. The
-//! browser handoff ([`Handoff`]) is the path that is known to work and supports
-//! every sign-in method (passkeys, SSO, email codes); use it as the primary
-//! button and password sign-in as the second.
+//! Password and email-code sign-in need an ALTCHA proof-of-work CAPTCHA on an
+//! instance that has it turned on. This crate solves it ([`altcha`]) the way
+//! Fluxer's own client does (checked against altcha-lib 2.8); the solver is tested
+//! against mock servers and challenges built like the server's. The browser
+//! handoff ([`Handoff`]) stays the way in for what this crate does not do
+//! (passkeys, SSO).
 //!
 //! # Using it from a UI
 //!
@@ -157,6 +158,7 @@ pub mod presigned;
 pub mod proto;
 pub mod ratelimit;
 pub mod rest;
+pub mod secret;
 #[cfg(feature = "test-extra-ca")]
 pub mod test_ca;
 pub mod token;
@@ -185,8 +187,10 @@ pub use api::threads::{
 };
 pub use api::SearchOutcome;
 pub use auth::{
-    poll_ip_authorization, sign_in_password, sign_in_totp, Handoff, HandoffStatus, IpAuthorization,
-    MfaMethod, Session, SignInResult, SignedIn, Ticket,
+    identify, poll_ip_authorization, resend_ip_authorization, send_email_code, sign_in_password,
+    sign_in_password_with_invite, sign_in_totp, sign_in_totp_with_invite, verify_email_code,
+    verify_email_code_with_invite, CodePurpose, CodeSent, Handoff, HandoffStatus, Identified,
+    IpAuthorization, MfaMethod, Session, SignInMethod, SignInResult, SignedIn, Ticket,
 };
 pub use error::{ApiError, Error, Result};
 pub use gateway::events::ForumUnreadRequest;
@@ -194,7 +198,9 @@ pub use gateway::{
     CloseReason, ConnectionState, Dispatch, Gateway, GatewayEvent, GatewayHandle, GatewayOptions,
     IdentifyProperties,
 };
-pub use instance::{ClientInfo, Discovery, EndpointPins, Endpoints, Instance, SessionPins};
+pub use instance::{
+    ClientInfo, Discovery, EndpointPins, Endpoints, Identity, Instance, SessionPins, SignInOptions,
+};
 pub use media::{ImageFormat, ImageOptions, Media, Transform};
 pub use models::{
     AllowedMentions, AllowedMentionsError, Attachment, Channel, CurrentUser, Embed, Emoji,
@@ -208,5 +214,6 @@ pub use presigned::{PresignFile, UploadMode, UploadPlan, UploadUrl, UploadedFile
 pub use ratelimit::{RateLimitConfig, RateLimiter};
 pub use reqwest::Method;
 pub use rest::{new_nonce, Client};
+pub use secret::Secret;
 pub use token::Token;
 pub use upload::{safe_filename, ProgressFn, Segment, UploadData, UploadFile, UploadLimits};

@@ -60,6 +60,9 @@
 //!   `accounts` (their channels with mentions and unread messages).
 //! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
 //!   chat.
+//! - `sign-in-identifier`, `sign-in-classic`, `sign-in-password`, `sign-in-code`,
+//!   `sign-in-mfa`, `sign-in-ip`: the sign-in screen on that step, to add an account (see
+//!   `signin.rs`).
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -123,6 +126,8 @@ pub enum Scene {
     SearchResults,
     QuickSwitcher,
     KeybindHelp,
+    /// The sign-in screen on one of its steps (see `signin.rs`).
+    SignIn(super::signin::Step),
 }
 
 impl Scene {
@@ -168,7 +173,7 @@ impl Scene {
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
             "keybind-help" => Scene::KeybindHelp,
-            _ => return None,
+            other => return super::signin::Step::from_name(other).map(Scene::SignIn),
         })
     }
 }
@@ -581,6 +586,12 @@ mod tests {
             "profile-popout",
             "search-results",
             "quick-switcher",
+            "sign-in-identifier",
+            "sign-in-classic",
+            "sign-in-password",
+            "sign-in-code",
+            "sign-in-mfa",
+            "sign-in-ip",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);
