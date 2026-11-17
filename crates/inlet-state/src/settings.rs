@@ -116,10 +116,7 @@ impl Settings {
     /// The settings READY carries, if it carries any.
     pub fn from_ready(r: &Ready) -> Self {
         let user = r.user_settings().filter(is_full);
-        let (display, sound) = user
-            .as_ref()
-            .and_then(read_preferences)
-            .unwrap_or_default();
+        let (display, sound) = user.as_ref().and_then(read_preferences).unwrap_or_default();
         Settings {
             display,
             sound,
