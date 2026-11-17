@@ -1003,6 +1003,7 @@ impl Backend {
             policy,
             restart_timer: None,
             settings_writes: Vec::new(),
+            ops: Default::default(),
         }));
         Some(key)
     }
@@ -1108,6 +1109,7 @@ impl Backend {
             policy,
             restart_timer: None,
             settings_writes: Vec::new(),
+            ops: Default::default(),
         });
     }
 
@@ -1210,6 +1212,7 @@ impl Backend {
         super::media::session_started(self, session);
         // The instance's flags and the account's experiments, polled while it is active.
         super::instance::activated(self, key, session, gen);
+        super::settings::guilds::instance_known(self, session);
     }
 
     /// Makes `key` the active account: a connected one at once, a stored one that is not

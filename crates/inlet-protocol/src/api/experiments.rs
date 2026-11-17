@@ -31,6 +31,10 @@ pub const DEFAULT_POLL_JITTER_PERCENT: u8 = 15;
 /// The shortest wait between two polls whatever the jitter does (half the shortest
 /// interval, as Fluxer's client).
 pub const MIN_POLL_DELAY: Duration = Duration::from_secs(MIN_POLL_INTERVAL_SECS / 2);
+/// Fewest and most participants of a peer-to-peer call the schema allows.
+pub const MIN_P2P_PARTICIPANTS: u64 = 2;
+/// See [`MIN_P2P_PARTICIPANTS`] (Fluxer's `VOICE_P2P_MAX_PARTICIPANTS`).
+pub const MAX_P2P_PARTICIPANTS: u64 = 4;
 /// Answers of 404 in a row after which the client stops asking (Fluxer's client).
 pub const MAX_NOT_FOUND_STREAK: u32 = 3;
 
@@ -135,7 +139,9 @@ impl Experiments {
         .ok()?;
         let voice_p2p = entry(a, "voice_p2p", |v| {
             let max = v.get("max_participants")?.as_u64()?;
-            (max >= 2).then_some(())?;
+            (MIN_P2P_PARTICIPANTS..=MAX_P2P_PARTICIPANTS)
+                .contains(&max)
+                .then_some(())?;
             Some(VoiceP2p {
                 enabled: v.get("enabled")?.as_bool()?,
                 max_participants: u32::try_from(max).ok(),
@@ -274,6 +280,7 @@ mod tests {
             // `active` is `true` or the entry is not there.
             json!({"channel_threads": {"active": false, "config_version": 1}}),
             json!({"voice_p2p": {"enabled": true, "max_participants": 1}}),
+            json!({"voice_p2p": {"enabled": true, "max_participants": 5}}),
             json!({"voice_p2p": {"enabled": true}}),
             json!({"domain_migration": {"enabled": 1}}),
         ] {

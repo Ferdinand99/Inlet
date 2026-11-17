@@ -191,6 +191,11 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# The rail with folders, the banner with voice participants, the server menu, an invite.
+scene 50-rail-folders rail-folders c-general
+scene 51-guild-banner guild-banner c-general
+scene 52-guild-menu guild-menu c-general
+scene 53-invite-accept invite-accept c-general
 # 11b. The settings tabs of the account (My profile, Appearance on coal, Messages and
 #      media, Privacy, Advanced, Accounts), and the chat in the light and coal themes.
 settings_tab() {

@@ -448,6 +448,8 @@ struct RealActive {
     restart_timer: Option<AbortHandle>,
     /// Notification settings writes still running; aborted when the session ends.
     settings_writes: Vec<AbortHandle>,
+    /// The guild order and membership commands of this account (see `settings`).
+    ops: settings::SharedOps,
 }
 
 /// A new sign-in waiting for "Continue".
@@ -458,6 +460,8 @@ struct PendingConfirm {
     from_handoff: bool,
 }
 
+// The demo variant exists only in the demo build; the real one is the account in use.
+#[allow(clippy::large_enum_variant)]
 enum Active {
     Real(RealActive),
     #[cfg(feature = "demo")]

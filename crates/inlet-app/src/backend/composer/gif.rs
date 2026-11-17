@@ -35,7 +35,8 @@ use inlet_protocol as p;
 use inlet_protocol::api::gifs::GifCategory;
 use inlet_protocol::api::preferences::Preferences;
 use inlet_protocol::proto::preferences::{
-    EmojiPickerState, EmojiState, FavoriteGifEntry, FavoriteGifSettings, UsageStat,
+    EmojiPickerState, EmojiState, FavoriteCategory, FavoriteChannel, FavoriteGifEntry,
+    FavoriteGifSettings, UsageStat,
 };
 
 use super::State;
@@ -179,6 +180,38 @@ pub enum PrefEdit {
         entry: Box<FavoriteGifEntry>,
         on: bool,
     },
+    /// The person accepted a content warning for a channel, category or server (Fluxer's
+    /// `guild_nsfw_agreements`).
+    NsfwAgree { scope: NsfwScope, id: String },
+    /// A channel is a favourite (`on`) or not (`favorites.channels`).
+    FavouriteChannel { channel: FavoriteChannel, on: bool },
+    /// A favourites category of the person's own exists (`on`) or not.
+    FavouriteCategory {
+        category: FavoriteCategory,
+        on: bool,
+    },
+    /// A favourites category is folded (`favorites.collapsed_category_ids`).
+    FavouriteFolded { id: String, on: bool },
+    /// Whether muted channels are left out of the favourites list.
+    FavouriteHideMuted(bool),
+}
+
+/// What an accepted content warning covers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NsfwScope {
+    Channel,
+    Category,
+    Guild,
+}
+
+/// Accepted content warnings kept per kind.
+pub const MAX_AGREEMENTS: usize = 2_000;
+/// Favourite channels and categories kept.
+pub const MAX_FAVOURITE_CHANNELS: usize = 500;
+pub const MAX_FAVOURITE_CATEGORIES: usize = 100;
+
+fn is_snowflake(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 20 && s.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Whether `key` is one of Fluxer's emoji usage keys: `unicode:<name>` with a name, or
@@ -298,6 +331,72 @@ impl PrefEdit {
                 } else if !*on {
                     gifs.entries.retain(|e| e.url != entry.url);
                 }
+            }
+            PrefEdit::NsfwAgree { scope, id } => {
+                if !is_snowflake(id) {
+                    return;
+                }
+                let a = prefs
+                    .guild_nsfw_agreements
+                    .get_or_insert_with(Default::default);
+                let list = match scope {
+                    NsfwScope::Channel => &mut a.agreed_channel_ids,
+                    NsfwScope::Category => &mut a.agreed_category_ids,
+                    NsfwScope::Guild => &mut a.agreed_guild_ids,
+                };
+                if !list.contains(id) && list.len() < MAX_AGREEMENTS {
+                    list.push(id.clone());
+                }
+            }
+            PrefEdit::FavouriteChannel { channel, on } => {
+                if !is_snowflake(&channel.channel_id) || !is_snowflake(&channel.guild_id) {
+                    return;
+                }
+                let f = prefs.favorites.get_or_insert_with(Default::default);
+                let has = f
+                    .channels
+                    .iter()
+                    .any(|c| c.channel_id == channel.channel_id);
+                if *on && !has && f.channels.len() < MAX_FAVOURITE_CHANNELS {
+                    f.channels.push(channel.clone());
+                } else if !*on {
+                    f.channels.retain(|c| c.channel_id != channel.channel_id);
+                }
+            }
+            PrefEdit::FavouriteCategory { category, on } => {
+                if category.id.is_empty() || category.id.len() > 64 || category.name.len() > 200 {
+                    return;
+                }
+                let f = prefs.favorites.get_or_insert_with(Default::default);
+                let has = f.categories.iter().any(|c| c.id == category.id);
+                if *on && !has && f.categories.len() < MAX_FAVOURITE_CATEGORIES {
+                    f.categories.push(category.clone());
+                } else if !*on {
+                    f.categories.retain(|c| c.id != category.id);
+                    for c in f.channels.iter_mut() {
+                        if c.parent_id.as_deref() == Some(category.id.as_str()) {
+                            c.parent_id = None;
+                        }
+                    }
+                }
+            }
+            PrefEdit::FavouriteFolded { id, on } => {
+                if id.is_empty() || id.len() > 64 {
+                    return;
+                }
+                let f = prefs.favorites.get_or_insert_with(Default::default);
+                let has = f.collapsed_category_ids.contains(id);
+                if *on && !has && f.collapsed_category_ids.len() < MAX_FAVOURITE_CATEGORIES {
+                    f.collapsed_category_ids.push(id.clone());
+                } else if !*on {
+                    f.collapsed_category_ids.retain(|c| c != id);
+                }
+            }
+            PrefEdit::FavouriteHideMuted(on) => {
+                prefs
+                    .favorites
+                    .get_or_insert_with(Default::default)
+                    .hide_muted_channels = *on;
             }
         }
     }

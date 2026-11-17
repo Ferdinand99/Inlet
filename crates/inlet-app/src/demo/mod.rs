@@ -24,6 +24,7 @@ mod markdown;
 pub mod media;
 mod members;
 mod messages;
+pub mod nav;
 pub mod pickers;
 pub mod scene_file;
 pub mod scenes;
@@ -448,6 +449,11 @@ impl MockSession {
             rendered: Vec::new(),
         });
         let _ = self.events.unbounded_send(msgs::Ev::Guilds(guilds));
+    }
+
+    /// Invite and leave commands: there is no server, so the answers come from `nav`.
+    pub fn guild_command(&self, cmd: crate::backend::settings::guilds::Cmd) {
+        nav::answer(&self.events, cmd);
     }
 
     pub fn open_guild(&mut self, guild_id: Option<String>) {

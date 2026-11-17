@@ -3,10 +3,15 @@
 
 pub mod account_switcher;
 mod context_menu;
+pub mod gate;
+pub mod guild_menu;
+mod guild_privacy;
+pub mod invite_accept;
 pub mod keybind_help;
 mod link_confirm;
 mod link_prompt;
 pub mod modal;
+pub mod nav_dialog;
 mod notification_settings;
 pub mod status_picker;
 mod tooltip;
@@ -78,6 +83,11 @@ impl Inlet {
         // The social windows (add friend, group DM, the DM menu, confirmations): over
         // the status picker, under the link prompts.
         out.extend(self.render_social_overlays(cx));
+        // The windows of the rail and the channel list: over the social windows, under
+        // the quick switcher and the link prompts.
+        if self.screen == crate::app::Screen::Main {
+            out.extend(self.render_nav(cx));
+        }
         // The quick switcher: over the status picker, under the link prompts.
         out.extend(self.render_quick_switcher(cx));
         // The updated-terms window: under the link confirmation, so a link opened from it

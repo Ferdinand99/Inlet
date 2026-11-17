@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Drawing the banners and the two windows they open (the updated terms, and the steps
-//! after a domain move).
+//! Drawing the banners and the window they open (the updated terms).
 //!
 //! The look follows Fluxer's `Nagbar`: a bar across the top of the app, at least 36 px
 //! high, bold 14 px text centred, an inverted button (the tone's text colour on white)
 //! and a close button on the right of one that can be dismissed. The tones are the fixed
-//! colours of Fluxer's `NagbarTones` (they do not follow the theme); the brand tone is
-//! the instance's accent.
+//! colours of Fluxer's `NagbarTones` (they do not follow the theme).
 
 use gpui::{
     div, prelude::*, px, rgb, AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, SharedString,

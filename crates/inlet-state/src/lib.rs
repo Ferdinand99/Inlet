@@ -274,6 +274,10 @@ pub struct Changes {
     /// What the instance lets the account do ([`crate::Capabilities`]): its discovery
     /// document, the experiment assignments, or the account's own flags changed.
     pub capabilities: bool,
+    /// The guild order and folders in the account settings.
+    pub folders: bool,
+    /// Someone joined, moved in or left a voice channel, or changed their voice state.
+    pub voice: bool,
 }
 
 impl Changes {
@@ -294,6 +298,8 @@ impl Changes {
         self.settings |= other.settings;
         self.relationships |= other.relationships;
         self.capabilities |= other.capabilities;
+        self.folders |= other.folders;
+        self.voice |= other.voice;
         self.channels.merge(other.channels);
         self.messages.merge(other.messages);
         self.member_guilds.merge(other.member_guilds);
