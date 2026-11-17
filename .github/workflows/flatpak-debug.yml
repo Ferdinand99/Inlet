@@ -18,7 +18,7 @@ jobs:
       - name: Install
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream desktop-file-utils xauth
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream desktop-file-utils xauth librsvg2-common xvfb
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           dpkg -l | grep -E "appstream|gdk-pixbuf|librsvg|libappstream" | awk '{print $2, $3}'
       - name: Get the binary
@@ -31,3 +31,9 @@ jobs:
           ls -l dist
       - name: Build
         run: packaging/linux/flatpak/build-flatpak.sh dist/inlet packages
+      - name: Smoke test
+        run: |
+          bundle=$(ls packages/inlet-*-linux-x86_64.flatpak)
+          version=${bundle#packages/inlet-}
+          version=${version%-linux-x86_64.flatpak}
+          dbus-run-session -- packaging/linux/flatpak/smoke-test.sh "$bundle" "$version"

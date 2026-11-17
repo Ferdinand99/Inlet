@@ -888,7 +888,7 @@ jobs:
             sleep 15
           done
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::ForceIPv4=true install -y --no-install-recommends \
-            flatpak flatpak-builder appstream desktop-file-utils xauth
+            flatpak flatpak-builder appstream desktop-file-utils xauth librsvg2-common xvfb
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build the Flatpak bundle
