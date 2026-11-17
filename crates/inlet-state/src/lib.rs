@@ -40,6 +40,7 @@
 mod account;
 mod bounded;
 pub mod channels;
+pub mod flags;
 pub mod guild_settings;
 pub mod guilds;
 mod ids;

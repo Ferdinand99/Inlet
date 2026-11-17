@@ -12,6 +12,8 @@ mod my_profile;
 mod notifications;
 mod privacy;
 
+pub(super) use advanced::{account_id, item_row};
+
 use super::SettingsTab;
 
 /// Every tab, in the order the list shows them.
@@ -24,7 +26,7 @@ pub fn all() -> Vec<Box<dyn SettingsTab>> {
         Box::new(notifications::NotificationsTab),
         Box::new(desktop::DesktopTab),
         Box::new(keybinds::KeybindsTab),
-        Box::new(advanced::AdvancedTab),
+        Box::new(advanced::AdvancedTab::default()),
         Box::new(accounts::AccountsTab),
     ]
 }
