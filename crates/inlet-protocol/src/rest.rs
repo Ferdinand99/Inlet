@@ -842,7 +842,14 @@ impl Client {
     /// `PATCH /users/@me/settings`: changes the fields that are set and
     /// returns the new settings (USER_SETTINGS_UPDATE follows on the gateway).
     pub async fn update_user_settings(&self, update: &UserSettingsUpdate) -> Result<UserSettings> {
-        let body = serde_json::to_value(update).map_err(|e| Error::Decode(e.to_string()))?;
+        let mut body = serde_json::to_value(update).map_err(|e| Error::Decode(e.to_string()))?;
+        // The folders are checked before anything is sent, and go with the other fields.
+        if let (Some(folders), Some(map)) = (&update.guild_folders, body.as_object_mut()) {
+            map.insert(
+                "guild_folders".into(),
+                crate::api::folders::guild_folders_json(folders)?,
+            );
+        }
         self.raw(Method::PATCH, "/users/@me/settings", Some(&body))
             .await?
             .json()

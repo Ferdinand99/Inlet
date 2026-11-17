@@ -1,0 +1,10 @@
+# The server banner with the name over it, the Members row, people in a voice
+# channel (muted, deafened, camera, screen share) and a link channel.
+name = "guild-banner"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "guild-banner"
+guild = "g1"
+channel = "c-general"

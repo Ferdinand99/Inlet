@@ -153,6 +153,8 @@ pub struct GuildNotificationSettings {
     /// is then not the server's whole map, and a write that replaces the map
     /// would delete what is missing: see [`GuildSettings::can_write_overrides`].
     pub lossy: bool,
+    /// Muted channels are left out of the channel list (`hide_muted_channels`).
+    pub hide_muted_channels: bool,
 }
 
 impl Default for GuildNotificationSettings {
@@ -166,6 +168,7 @@ impl Default for GuildNotificationSettings {
             message_notifications: notifications::INHERIT,
             channel_overrides: BTreeMap::new(),
             lossy: false,
+            hide_muted_channels: false,
         }
     }
 }
@@ -203,6 +206,9 @@ impl GuildNotificationSettings {
         }
         if let Some(v) = obj.get("suppress_roles") {
             self.suppress_roles = v.as_bool().unwrap_or(false);
+        }
+        if let Some(v) = obj.get("hide_muted_channels") {
+            self.hide_muted_channels = v.as_bool().unwrap_or(false);
         }
         self.mute = Mute::read(obj, self.mute);
         if let Some(v) = obj.get("message_notifications") {

@@ -244,6 +244,40 @@
     "204": {}
    }
   },
+  "DELETE /users/@me/guilds/{}": {
+   "documentedPath": "/users/@me/guilds/{guild_id}",
+   "operationId": "leave_guild",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "guild_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    },
+    {
+     "in": "query",
+     "name": "delete_messages",
+     "required": false,
+     "schema": {
+      "default": "false",
+      "type": "string"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "204": {}
+   }
+  },
   "DELETE /users/@me/memes/{}": {
    "documentedPath": "/users/@me/memes/{meme_id}",
    "operationId": "delete_favorite_meme",
