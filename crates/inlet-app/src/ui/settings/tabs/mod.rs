@@ -11,6 +11,7 @@ mod messages_media;
 mod my_profile;
 mod notifications;
 mod privacy;
+mod sounds;
 
 use super::SettingsTab;
 

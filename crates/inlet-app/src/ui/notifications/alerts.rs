@@ -2,7 +2,8 @@
 //! Desktop notifications on the UI thread: every new message of every signed-in account
 //! goes through the rules in `backend::notifications::alerts`, and what they return is
 //! shown through `inlet_platform` (Windows toasts from the platform crate's own thread,
-//! gpui on macOS and Linux), with Inlet's own sound and a flash of the taskbar button.
+//! gpui on macOS and Linux), with a sound effect (`backend::sounds`) and a flash of the
+//! taskbar button.
 //!
 //! The message view hands over the account on screen ([`Inlet::alert_after`] around its
 //! `apply`), the account switcher the accounts in the background. A click on a
@@ -27,7 +28,7 @@ use crate::backend::accounts::AccountKey;
 use crate::backend::notifications::alerts::{
     self as rules, AlertPrefs, Delivery, Engine, Input, Probe,
 };
-use crate::backend::notifications::sound::SoundPlayer;
+use crate::backend::sounds::SoundKind;
 use crate::ui::overlays::account_switcher::Place;
 
 /// The tag of the test notification; a click on it only shows the window.
@@ -38,9 +39,6 @@ pub struct Alerts {
     pub engine: Engine,
     /// `settings.json`; `None` in demo runs and tests, which write nothing.
     path: Option<PathBuf>,
-    /// Started with the first sound.
-    #[cfg_attr(test, allow(dead_code))]
-    sound: Option<SoundPlayer>,
     /// What was shown, instead of the system, in tests.
     #[cfg(test)]
     pub sent: Vec<(Option<Notification>, bool)>,
@@ -59,7 +57,6 @@ impl Alerts {
         Alerts {
             engine: Engine::new(prefs),
             path,
-            sound: None,
             #[cfg(test)]
             sent: Vec::new(),
             #[cfg(test)]
@@ -120,6 +117,12 @@ pub fn change_prefs(cx: &mut App, change: impl FnOnce(&mut AlertPrefs)) {
     }
 }
 
+/// Whether the old switch of the notification sound is on. The sound effects settings
+/// replaced it; it is only read once, to carry an Inlet that had it off over.
+pub fn sound_switch(cx: &mut App) -> bool {
+    alerts(cx).engine.prefs.sound
+}
+
 /// A notification with a fixed text, to check that the system shows them.
 pub fn send_test_notification(cx: &mut App) {
     match Notification::new(TEST_TAG, &t!("alerts-test-title"), &t!("alerts-test-body")) {
@@ -132,17 +135,19 @@ pub fn send_test_notification(cx: &mut App) {
                     sound,
                     flash: false,
                 },
+                SoundKind::Message,
             )
         }
         Err(err) => log::warn!("test notification: {err}"),
     }
 }
 
-/// Shows the notification, plays the sound and flashes the window, outside the update
-/// that decided it.
-fn deliver(cx: &mut App, d: Delivery) {
+/// Shows the notification, plays the sound (`kind`: a message in a community or in a
+/// DM) and flashes the window, outside the update that decided it.
+fn deliver(cx: &mut App, d: Delivery, kind: SoundKind) {
     #[cfg(test)]
     {
+        let _ = kind;
         let a = alerts(cx);
         a.flashes += usize::from(d.flash);
         a.sent.push((d.notification, d.sound));
@@ -150,13 +155,7 @@ fn deliver(cx: &mut App, d: Delivery) {
     #[cfg(not(test))]
     {
         if d.sound {
-            let a = alerts(cx);
-            if a.sound.is_none() {
-                a.sound = SoundPlayer::start();
-            }
-            if let Some(player) = &a.sound {
-                player.play();
-            }
+            crate::ui::sounds::play(cx, kind);
         }
         if let Some(n) = d.notification {
             cx.defer(move |cx| {
@@ -236,9 +235,38 @@ impl Inlet {
             state,
             cx,
         );
-        if let Some(d) = delivery {
-            deliver(cx, d);
+        match delivery {
+            Some(d) => {
+                // Fluxer plays the same sound for every community and its own for a DM.
+                let kind = if m.guild_id.is_some() {
+                    SoundKind::Message
+                } else {
+                    SoundKind::DirectMessage
+                };
+                deliver(cx, d, kind);
+            }
+            // The message is in the channel on screen, with the window in focus: no
+            // notification, but Fluxer's soft "same channel" tick (off until it is
+            // turned on in the sound settings).
+            None if inlet_state::ChannelId::parse(&m.channel_id)
+                .is_some_and(|c| focused.contains(&c))
+                && self.is_heard(m, state, cx) =>
+            {
+                #[cfg(not(test))]
+                crate::ui::sounds::play(cx, SoundKind::SameChannelMessage);
+            }
+            None => {}
         }
+    }
+
+    /// A message from somebody else that Fluxer's client would also sound for in the open
+    /// channel: not the person's own, not from a blocked user.
+    fn is_heard(&self, m: &Message, state: &Entity<AccountState>, cx: &Context<Self>) -> bool {
+        let state = state.read(cx);
+        let Some(author) = inlet_state::UserId::parse(&m.author.id) else {
+            return false;
+        };
+        author != state.me_id() && !state.is_blocked(author)
     }
 
     #[allow(clippy::too_many_arguments)]

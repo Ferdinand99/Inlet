@@ -85,6 +85,9 @@ log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Reads the sound files a person picks for a sound effect (MP3, WAV, Ogg Vorbis, FLAC,
+# AAC/M4A), pure Rust, MPL-2.0.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "ogg", "vorbis", "flac", "pcm", "aac", "isomp4"] }
 # Code block highlighting: the parser and grammars only, with the pure-Rust regex engine.
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 # The system locale, for the date and time format in the chat.

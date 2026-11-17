@@ -30,10 +30,13 @@ pub mod jump_list;
 mod launch_path;
 #[cfg(target_os = "linux")]
 mod linux_bus;
+pub mod mac_permissions;
 mod motion;
 mod notify;
 mod quiet;
+mod relaunch;
 mod single_instance;
+mod taskbar;
 #[cfg(windows)]
 mod toast;
 mod tray;
@@ -57,8 +60,13 @@ pub use notify::{
     TITLE_MAX_GRAPHEMES,
 };
 pub use quiet::quiet_mode;
+pub use relaunch::{
+    relaunch_parent, spawn_relaunch, spawn_relaunch_with, wait_for_exit, wait_for_relaunch_parent,
+    RELAUNCH_FLAG,
+};
 pub use single_instance::{single_instance, Instance, SingleInstance};
-pub use tray::{Tray, TrayItem, TrayState};
+pub use taskbar::taskbar_is_dark;
+pub use tray::{Tray, TrayIcons, TrayItem, TrayLook, TrayState, TrayTone};
 
 /// Application id: the Wayland app id, the Linux desktop entry name, the Windows
 /// AppUserModelID and the macOS LaunchAgent label.

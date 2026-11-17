@@ -15,7 +15,8 @@
 //! ```
 //!
 //! Optional too: `settings` (a settings tab to open), `deep_link` (an `inlet://` link to
-//! offer), `accent` (an instance accent such as `"#ff7e00"`), and `tolerance`
+//! offer), `accent` (an instance accent such as `"#ff7e00"`), `titlebar` (`true`: Inlet
+//! draws its own title bar, as it does for a person), and `tolerance`
 //! (`{ channel = 2, pixels = 0.0 }`: how far a colour channel may be off before a pixel
 //! counts as different, and the share of pixels that may differ). CI draws every scene
 //! pixel for pixel the same, so the defaults are strict; a scene may loosen them up to
@@ -56,6 +57,9 @@ pub struct SceneFile {
     pub settings: Option<String>,
     pub deep_link: Option<String>,
     pub accent: Option<String>,
+    /// Inlet's own title bar (the other scenes keep the system's).
+    #[serde(default)]
+    pub titlebar: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]

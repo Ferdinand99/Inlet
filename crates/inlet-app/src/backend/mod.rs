@@ -33,6 +33,7 @@ pub mod search;
 mod session;
 pub mod settings;
 pub mod social;
+pub mod sounds;
 pub mod voice;
 
 use std::collections::HashMap;

@@ -31,6 +31,7 @@
 pub mod account;
 pub mod guilds;
 pub mod profile;
+pub mod sounds;
 pub mod write;
 
 use std::sync::{Arc, Mutex};
@@ -56,6 +57,7 @@ pub enum Cmd {
     Account(account::Cmd),
     /// Look at an invite, join through it, leave a server.
     Guild(guilds::Cmd),
+    Sounds(sounds::Cmd),
 }
 
 /// Events of this domain, by part.
@@ -67,6 +69,12 @@ pub enum Ev {
 impl From<account::Cmd> for Command {
     fn from(cmd: account::Cmd) -> Self {
         Command::Settings(Cmd::Account(cmd))
+    }
+}
+
+impl From<sounds::Cmd> for Command {
+    fn from(cmd: sounds::Cmd) -> Self {
+        Command::Settings(Cmd::Sounds(cmd))
     }
 }
 
@@ -92,6 +100,7 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     match cmd {
         Cmd::Account(cmd) => account::handle(backend, cmd),
         Cmd::Guild(cmd) => guilds::handle(backend, cmd),
+        Cmd::Sounds(cmd) => sounds::handle(backend, cmd),
     }
 }
 

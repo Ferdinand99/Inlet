@@ -7,9 +7,11 @@
 //! - [`links`]: deep links and invite links. Every link asks before it does anything.
 //! - [`window_state`]: where the window was, per monitor.
 //! - [`prefs`]: the desktop settings in `settings.json`.
+//! - [`reset`]: "reset app data and restart".
 
 pub mod links;
 pub mod prefs;
+pub mod reset;
 pub mod window_state;
 
 use std::sync::mpsc;

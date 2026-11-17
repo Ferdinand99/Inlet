@@ -24,7 +24,6 @@ settings-notifications-preview = Show the message in notifications
 settings-notifications-preview-note = When this is off, a notification only says who wrote and where.
 settings-notifications-flash = Flash the taskbar button while Inlet is in the background
 settings-notifications-sounds = SOUNDS
-settings-notifications-sound = Play a sound for messages that notify
 settings-notifications-rules = WHICH MESSAGES NOTIFY
 settings-notifications-rules-note = Choose all messages, only @mentions or nothing per server and channel with the bell in the channel header. Muted servers and channels never notify. In a server with more than 250 members, all messages notify only while that server is open; otherwise only @mentions reach Inlet.
 settings-notifications-dnd-note = Do Not Disturb silences notifications and sounds for that account.

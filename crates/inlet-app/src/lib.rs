@@ -14,6 +14,7 @@ mod i18n;
 
 mod about;
 mod app;
+mod app_menu;
 mod assets;
 mod backend;
 mod brand_icon;
@@ -53,6 +54,17 @@ pub fn run() {
         .filter_module("reqwest", log::LevelFilter::Warn)
         .filter_module("rustls", log::LevelFilter::Warn)
         .init();
+    // A start that follows a restart or a reset waits for the old Inlet to be gone; a
+    // reset wipes what Inlet kept before anything reads it.
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .filter_map(|a| a.into_string().ok())
+        .collect();
+    if inlet_platform::wait_for_relaunch_parent(&args, std::time::Duration::from_secs(15))
+        && backend::platform::reset::requested(&args)
+    {
+        backend::platform::reset::run();
+    }
     // A demo scene file (tests/visual/scenes) sets the demo variables before anything
     // reads them.
     #[cfg(feature = "demo")]
@@ -75,7 +87,10 @@ pub fn run() {
         bind_keys(cx);
         assets::load_fonts(cx);
         desktop::init(cx);
+        app_menu::install(cx);
         ui::notifications::alerts::init(cx);
+        ui::sounds::init(cx);
+        ui::neko::init(cx);
         ui::settings::store::init(cx);
         let options = desktop::window_options(&start, cx);
         let window = cx

@@ -217,6 +217,10 @@ for step in identifier classic password code mfa ip; do
   scene "90-sign-in-$step" "sign-in-$step" c-general
 done
 
+# Inlet's own title bar, and the Neko cat (idle in the lower right corner).
+INLET_DEMO_TITLEBAR=1 scene 140-titlebar default c-general
+INLET_DEMO_NEKO=1 scene 141-neko default c-general
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no

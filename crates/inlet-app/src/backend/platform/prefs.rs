@@ -16,15 +16,48 @@ use super::window_state::WindowMemory;
 /// The zoom steps Ctrl + and Ctrl − move through, as in a browser.
 pub const ZOOM_STEPS: [f32; 11] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
-/// The desktop settings.
+/// The colour of the monochrome tray icon (Windows and Linux).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrayTone {
+    /// White or black, from the colour of the taskbar.
+    #[default]
+    Auto,
+    White,
+    Black,
+}
+
+/// The desktop settings. Names and defaults follow Fluxer's desktop window settings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DesktopPrefs {
     /// Closing the window keeps Inlet running in the tray (only while a tray icon is
     /// shown; without one the window closes and Inlet quits).
     pub close_to_tray: bool,
+    /// Minimizing the window with Inlet's own button (or Command-M) hides it to the
+    /// tray (only while a tray icon is shown).
+    pub minimize_to_tray: bool,
     /// The login item starts Inlet hidden in the tray.
     pub start_minimized: bool,
+    /// Inlet puts an icon in the system tray (the menu bar on macOS).
+    pub show_tray_icon: bool,
+    /// The full-colour icon instead of a monochrome one (Windows and Linux).
+    pub colored_tray_icon: bool,
+    /// The colour of the monochrome tray icon.
+    pub tray_tone: TrayTone,
+    /// The unread badge on the taskbar button is dark grey instead of red (Windows).
+    pub dark_taskbar_badge: bool,
+    /// Unread messages without mentions put a badge "1" on the launcher icon (Linux).
+    pub unread_launcher_badge: bool,
+    /// The window comes back where it was and as big as it was.
+    pub remember_window_state: bool,
+    /// The system's title bar instead of Inlet's own (Windows and Linux). Applies at
+    /// the next start.
+    pub use_system_title_bar: bool,
+    /// The cat that follows the pointer.
+    pub show_neko: bool,
+    /// The cat sits still.
+    pub keep_neko_still: bool,
     /// The zoom level, one of [`ZOOM_STEPS`].
     pub zoom: f32,
     /// Where the window was.
@@ -35,7 +68,17 @@ impl Default for DesktopPrefs {
     fn default() -> Self {
         DesktopPrefs {
             close_to_tray: true,
+            minimize_to_tray: false,
             start_minimized: false,
+            show_tray_icon: true,
+            colored_tray_icon: false,
+            tray_tone: TrayTone::Auto,
+            dark_taskbar_badge: false,
+            unread_launcher_badge: true,
+            remember_window_state: true,
+            use_system_title_bar: false,
+            show_neko: false,
+            keep_neko_still: false,
             zoom: 1.0,
             window: WindowMemory::default(),
         }
@@ -246,5 +289,57 @@ mod tests {
         assert_eq!(zoom_step(0.5, -1), 0.5);
         assert_eq!(nearest_step(f32::NAN), 1.0);
         assert_eq!(nearest_step(1.12), 1.1);
+    }
+
+    #[test]
+    fn the_defaults_are_fluxers_desktop_defaults() {
+        let d = DesktopPrefs::default();
+        // Fluxer's `getDefaultDesktopWindowBehaviorSettings`.
+        assert!(d.show_tray_icon);
+        assert!(!d.colored_tray_icon);
+        assert_eq!(d.tray_tone, TrayTone::Auto);
+        assert!(!d.dark_taskbar_badge);
+        assert!(d.unread_launcher_badge);
+        assert!(!d.minimize_to_tray);
+        assert!(d.close_to_tray);
+        assert!(!d.start_minimized);
+        assert!(!d.use_system_title_bar);
+        assert!(d.remember_window_state);
+        // The cat is off until the person asks for it.
+        assert!(!d.show_neko && !d.keep_neko_still);
+    }
+
+    #[test]
+    fn the_new_switches_survive_a_restart_and_an_older_file_gets_the_defaults() {
+        let path = temp_file("switches");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // A file an older Inlet wrote: only what it knew.
+        std::fs::write(
+            &path,
+            r#"{"desktop": {"close_to_tray": false, "start_minimized": true, "zoom": 1.25}}"#,
+        )
+        .unwrap();
+        let old = load(&path);
+        assert!(!old.close_to_tray && old.start_minimized && old.zoom == 1.25);
+        assert!(old.show_tray_icon && old.remember_window_state && old.unread_launcher_badge);
+
+        let mut prefs = old;
+        prefs.show_tray_icon = false;
+        prefs.colored_tray_icon = true;
+        prefs.tray_tone = TrayTone::Black;
+        prefs.dark_taskbar_badge = true;
+        prefs.unread_launcher_badge = false;
+        prefs.minimize_to_tray = true;
+        prefs.remember_window_state = false;
+        prefs.use_system_title_bar = true;
+        prefs.show_neko = true;
+        prefs.keep_neko_still = true;
+        save(&path, &prefs).unwrap();
+        assert_eq!(load(&path), prefs);
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // The tone is written as a plain word.
+        assert_eq!(raw["desktop"]["tray_tone"], "black");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

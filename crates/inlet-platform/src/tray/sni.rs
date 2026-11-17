@@ -461,7 +461,10 @@ mod tests {
             TrayItem::action("quit", "Quit_Inlet"),
         ];
         let tray = super::super::Tray {
-            base: base.clone(),
+            icons: super::super::TrayIcons::single(base.clone()),
+            state: std::cell::Cell::new(super::super::TrayState::Normal),
+            look: std::cell::Cell::new(super::super::TrayLook::default()),
+            dark_taskbar: std::cell::Cell::new(None),
             inner: Tray::on(Connection::session().unwrap(), &base, &items).unwrap(),
         };
         let service = registered.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -485,7 +488,14 @@ mod tests {
         .deserialize()
         .unwrap();
         assert_eq!(String::try_from(id).unwrap(), crate::APP_ID);
-        let expected = |state| owned(Value::from(pixmap(&super::super::icon_for(&base, state))));
+        let icons = super::super::TrayIcons::single(base.clone());
+        let expected = |state| {
+            owned(Value::from(pixmap(&super::super::icon_for(
+                &icons,
+                state,
+                super::super::Appearance::Colored,
+            ))))
+        };
         assert_eq!(
             icon_pixmap(&call),
             expected(super::super::TrayState::Normal)

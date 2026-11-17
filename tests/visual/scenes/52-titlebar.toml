@@ -1,0 +1,12 @@
+# Inlet's own title bar over the chat (the name and mark, and the window buttons). The left
+# 200 px are left out: on macOS the system's traffic lights sit there and change with the
+# window's focus.
+name = "titlebar"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = [[0, 0, 200, 32]]
+scene = "default"
+guild = "g1"
+channel = "c-general"
+titlebar = true
