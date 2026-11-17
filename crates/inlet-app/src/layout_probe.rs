@@ -98,12 +98,6 @@ impl Probe {
 }
 
 impl Probe {
-    /// Opens the search column, as a click on the header's search field does.
-    pub fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.inlet
-            .update(cx, |inlet, cx| inlet.open_search(window, cx));
-    }
-
     /// The app view, for tests that look at its state.
     #[cfg(test)]
     pub(crate) fn inlet(&self) -> &Entity<Inlet> {
