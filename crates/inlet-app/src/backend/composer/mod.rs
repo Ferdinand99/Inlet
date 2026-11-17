@@ -29,7 +29,7 @@ mod links;
 mod send;
 pub mod upload;
 
-pub(super) use directory::{members_chunk, State};
+pub(crate) use directory::{members_chunk, State};
 pub use directory::{unix_ms, ChannelEntry, CustomEmoji, Directory, Person, Rights, RoleEntry};
 pub use send::{snowflake_u64, Mentions, Outgoing};
 pub use upload::{FileToSend, Limits, Refused, Source, Upload, Uploads};

@@ -29,7 +29,7 @@ use crate::limits::{
     MAX_PENDING_LIVE, MAX_PENDING_REACTIONS, MAX_REACTIONS_PER_MESSAGE, MAX_RECENTLY_DELETED,
     MAX_WINDOW_BYTES,
 };
-use crate::size::{map_size, opt_len, value_size};
+use crate::size::{heap_map, heap_value, opt_len};
 
 /// One page from `GET /channels/{id}/messages`, as the protocol crate's
 /// `Client::messages` returns it (any order; newest first from the API).
@@ -561,46 +561,67 @@ fn apply_reaction(m: &mut Message, op: &ReactionOp) -> bool {
     changed
 }
 
-/// A cheap estimate of the memory a message takes: its text, plus every
-/// string and number in its JSON parts. Used to cap a window's size, so a
-/// server sending huge messages cannot fill memory.
+/// The heap a stored message takes, as the program asks the allocator for it (checked
+/// against a counting allocator in `tests/window_heap.rs`, to within 20 %): the message
+/// as it sits in the window's tree (a leaf holds 11 and is rarely full), the text of every
+/// string, and every JSON part (`extra`, embeds, flags) with the entries and tables of its
+/// objects. It is what caps a window's size, so a server sending huge messages cannot fill
+/// memory. The allocator adds about 16 bytes to each block on top.
 pub fn approx_size(m: &Message) -> usize {
+    use std::mem::size_of;
     fn user(u: &inlet_protocol::User) -> usize {
-        128 + u.id.len()
+        u.id.len()
             + u.username.len()
             + u.discriminator.len()
             + opt_len(&u.global_name)
             + opt_len(&u.avatar)
-            + u.flags.as_ref().map_or(0, value_size)
-            + map_size(&u.extra)
+            + u.flags.as_ref().map_or(0, heap_value)
+            + heap_map(&u.extra)
     }
     let attachments: usize = m
         .attachments
         .iter()
         .map(|a| {
-            160 + a.id.len()
+            size_of::<inlet_protocol::Attachment>()
+                + a.id.len()
                 + a.filename.len()
                 + opt_len(&a.content_type)
                 + opt_len(&a.url)
                 + opt_len(&a.proxy_url)
                 + opt_len(&a.description)
-                + map_size(&a.extra)
+                + heap_map(&a.extra)
         })
         .sum();
-    256 + m.id.len()
+    let mentions: usize = m
+        .mentions
+        .iter()
+        .map(|u| size_of::<inlet_protocol::User>() + user(u))
+        .sum();
+    let embeds: usize = m
+        .embeds
+        .iter()
+        .map(|e| size_of::<Value>() + heap_value(e))
+        .sum();
+    TREE_SLOT
+        + size_of::<Message>()
+        + m.id.len()
         + m.channel_id.len()
         + opt_len(&m.guild_id)
         + m.content.len()
         + m.timestamp.len()
         + opt_len(&m.edited_timestamp)
         + opt_len(&m.nonce)
-        + m.flags.as_ref().map_or(0, value_size)
+        + m.flags.as_ref().map_or(0, heap_value)
         + user(&m.author)
-        + m.mentions.iter().map(user).sum::<usize>()
-        + m.embeds.iter().map(value_size).sum::<usize>()
-        + map_size(&m.extra)
+        + mentions
+        + embeds
+        + heap_map(&m.extra)
         + attachments
 }
+
+/// What a message costs in the window's tree beyond its own size: the key, and the empty
+/// slots of leaves that are not full (calibrated with the counting allocator).
+const TREE_SLOT: usize = 160;
 
 /// The edit time in milliseconds; an unedited message is 0.
 fn edited_ms(m: &Message) -> i64 {
