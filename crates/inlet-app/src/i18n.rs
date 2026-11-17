@@ -166,12 +166,19 @@ fn push_accept_language() {
 
 /// Called once at start-up, before the first connection is made. `INLET_LANG` (for
 /// example `en` or `nb`) pins the language, which screenshots and tests of the real
-/// views use; then the protocol crate learns the `Accept-Language` to send.
+/// views use; then the protocol crate learns the `Accept-Language` to send. A demo build
+/// (the one the screenshot checks photograph, never shipped) is English unless
+/// `INLET_LANG` says otherwise, so the pictures do not depend on the machine's language.
 pub fn init() {
-    match std::env::var("INLET_LANG")
+    let pinned = std::env::var("INLET_LANG")
         .ok()
         .and_then(|tag| Language::from_locale(&tag))
-    {
+        .or(if cfg!(feature = "demo") {
+            Some(Language::English)
+        } else {
+            None
+        });
+    match pinned {
         Some(language) => set_language(Some(language)),
         None => push_accept_language(),
     }

@@ -476,7 +476,12 @@ pub fn date(ms: i64) -> String {
         .chars()
         .take(3)
         .collect();
-    format!("{} {} {}", t.day(), month, t.year())
+    t!(
+        "profile-date",
+        day = t.day(),
+        month = month,
+        year = t.year()
+    )
 }
 
 #[cfg(test)]

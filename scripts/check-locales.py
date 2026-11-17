@@ -5,15 +5,19 @@
 Every language folder next to `en` is checked: texts English has and the language lacks,
 texts the language has and English lacks, and texts whose variables differ from English.
 Each problem is printed as a GitHub Actions warning annotation (`::warning`) and the
-script always exits 0, so a change that adds an English text is not held up while the
+script exits 0, so a change that adds an English text is not held up while the
 translations catch up. The cargo tests of the app fail on texts that English lacks and
 on variables that differ (`the_norwegian_catalogue_has_no_text_english_lacks` and
 `the_norwegian_texts_take_the_arguments_of_the_english_texts`); `INLET_NB_STRICT=1`
 makes `the_norwegian_catalogue_covers_every_english_text` fail too.
 
+With `INLET_NB_STRICT=1` this script exits 1 when anything is missing, left over or
+different; the release build job sets it. Without it the exit status is always 0.
+
 Usage: scripts/check-locales.py [locales-dir]
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -81,6 +85,9 @@ def main() -> int:
             f"{len(missing)} missing, {len(extra)} not in English"
         )
         problems += len(missing)
+    if problems and os.environ.get("INLET_NB_STRICT") == "1":
+        print(f"{problems} problem(s); INLET_NB_STRICT=1, so this fails")
+        return 1
     print(f"{problems} problem(s); not a failure, see the annotations")
     return 0
 

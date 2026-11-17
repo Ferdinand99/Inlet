@@ -6,6 +6,8 @@ profile-error-offline = Not connected to the server.
 profile-username-pronouns = { $username } · { $pronouns }
 profile-about = About Me
 profile-member-since = Member Since
+# A date on a profile: "1 Jan 2026".
+profile-date = { $day } { $month } { $year }
 profile-since-instance = Account: { $date }
 profile-since-guild = This server: { $date }
 profile-roles = Roles
