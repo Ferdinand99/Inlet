@@ -118,6 +118,7 @@ jobs:
             "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64-setup.exe" \
             "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64.zip" \
             "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.AppImage" \
+            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.flatpak" \
             "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.tar.gz"; do
             mapfile -t files < <(compgen -G "$pattern" || true)
             if [ "${#files[@]}" -ne 1 ]; then
@@ -214,7 +215,7 @@ jobs:
 
           - Windows (x86_64): `inlet-<version>-windows-x86_64-setup.exe` installs Inlet for your user account (no administrator rights needed). `inlet-<version>-windows-x86_64.zip` is a portable copy. The files are not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
           - macOS (Apple silicon, macOS 12 or later): `inlet-macos-aarch64.dmg`. Signed with a Developer ID and notarised by Apple. Open the DMG and drag Inlet to Applications.
-          - Linux (x86_64): `inlet-<version>-linux-x86_64.AppImage` (make it executable and run it; it needs FUSE 2, so on Ubuntu 24.04 install `libfuse2t64` or start it with `--appimage-extract-and-run`) or `inlet-<version>-linux-x86_64.tar.gz`.
+          - Linux (x86_64): `inlet-<version>-linux-x86_64.AppImage` (make it executable and run it; it needs FUSE 2, so on Ubuntu 24.04 install `libfuse2t64` or start it with `--appimage-extract-and-run`), `inlet-<version>-linux-x86_64.flatpak` (install it with `flatpak install --user ./inlet-<version>-linux-x86_64.flatpak`; it runs in a sandbox and fetches the GNOME runtime from Flathub) or `inlet-<version>-linux-x86_64.tar.gz`.
 
           Check the downloads against `SHA256SUMS.txt`. Licence notices for third-party code are in the `THIRD-PARTY-NOTICES` file when it is attached.
           NOTES
