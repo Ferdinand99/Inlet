@@ -343,7 +343,7 @@ impl Message {
     }
 }
 
-fn floor_char_boundary(s: &str, mut ix: usize) -> usize {
+pub(crate) fn floor_char_boundary(s: &str, mut ix: usize) -> usize {
     while ix > 0 && !s.is_char_boundary(ix) {
         ix -= 1;
     }
@@ -421,13 +421,30 @@ pub fn day_label(day: chrono::NaiveDate) -> String {
     day.format("%A, %-d %B %Y").to_string()
 }
 
-/// The first `max` characters of `text` on one line, with "…" when cut.
+/// The first `max` characters of `text` on one line, with "…" when cut. Cleaned like
+/// [`clean_name`], except that the joiners of an emoji sequence (a family, a flag, a
+/// skin tone, a profession) stay, so it is not drawn as separate people.
 pub fn snippet(text: &str, max: usize) -> String {
     let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let cleaned = clean_name(&one_line);
+    // Only joiners between two visible characters survive this step; the rest of the
+    // hidden and control characters go in the filter below, as in `clean_name`.
+    let joined = inlet_state::presence::clean_display_text(&one_line);
+    let cleaned: String = joined
+        .chars()
+        .filter(|c| matches!(*c, '\u{200C}' | '\u{200D}') || !is_hidden_or_control(*c))
+        .take(MAX_NAME_CHARS)
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        return "(no name)".into();
+    }
     match cleaned.char_indices().nth(max) {
-        Some((ix, _)) => format!("{}\u{2026}", &cleaned[..ix]),
-        None => cleaned,
+        Some((ix, _)) => {
+            // Never end on a joiner that lost its second half to the cut.
+            let head = cleaned[..ix].trim_end_matches(['\u{200C}', '\u{200D}']);
+            format!("{head}\u{2026}")
+        }
+        None => cleaned.to_string(),
     }
 }
 
@@ -529,6 +546,29 @@ mod tests {
         assert_eq!(clean_name("\u{202E}\u{200F}"), "(no name)");
         assert_eq!(clean_name("Åse 😀"), "Åse 😀");
         assert_eq!(clean_name(&"x".repeat(500)).chars().count(), MAX_NAME_CHARS);
+    }
+
+    #[test]
+    fn snippet_keeps_emoji_sequences_whole() {
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let flag = "\u{1F1F3}\u{1F1F4}";
+        let skin_tone = "\u{1F44D}\u{1F3FD}";
+        let profession = "\u{1F469}\u{200D}\u{1F4BB}";
+        let heart = "\u{2764}\u{FE0F}";
+        let text = format!("{family} {flag} {skin_tone} {profession} {heart} ok");
+        assert_eq!(snippet(&text, 90), text);
+        // Stray joiners and direction marks still go.
+        assert_eq!(snippet("\u{200D}ab \u{200D}c\u{202E}\u{200D}", 90), "ab c");
+        assert_eq!(snippet("\u{200D}\u{200B}", 90), "(no name)");
+        // A cut never leaves a joiner hanging before the ellipsis.
+        let cut = snippet("\u{1F468}\u{200D}\u{1F469}", 2);
+        assert_eq!(cut, "\u{1F468}\u{2026}");
+        // Line breaks are one space; the length limit still applies.
+        assert_eq!(snippet("a\n\tb", 90), "a b");
+        assert_eq!(
+            snippet(&"x".repeat(500), 1000).chars().count(),
+            MAX_NAME_CHARS
+        );
     }
 
     #[test]
