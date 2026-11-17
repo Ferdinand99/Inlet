@@ -619,12 +619,18 @@ fn message_page_merges_with_live_messages() {
     );
     assert!(s.messages(c).unwrap().get(mid(6, 0)).is_none());
 
-    // The window never holds more than the cap; live messages push out the oldest.
+    // The window never holds more than the cap; live messages push out the oldest (a list
+    // that passes the cap is cut to 100, and the cut messages wait in the buffer).
     for i in 0..(MAX_MESSAGES_PER_CHANNEL as u64 + 20) {
         s.apply(&create(mid(100 + i, 0), GENERAL, OTHER, json!({})));
     }
     let w = s.messages(c).unwrap();
-    assert_eq!(w.len(), MAX_MESSAGES_PER_CHANNEL);
+    assert!(
+        w.len() <= MAX_MESSAGES_PER_CHANNEL && w.len() >= 100,
+        "{}",
+        w.len()
+    );
+    assert!(w.buffered().0 > 0);
     assert!(w.has_more_before());
     assert_eq!(
         w.newest_id(),
@@ -1336,6 +1342,9 @@ fn loads_are_never_refused_and_end_by_page_timeout_or_ready() {
 #[test]
 fn a_window_scrolled_back_applies_reactions_at_once() {
     let mut s = state();
+    // The reader is away from the bottom, so live messages do not cut the rows being read.
+    s.set_open_channel(Some(ch(GENERAL)));
+    s.set_view_scrolled(true);
     let page: Vec<_> = (0..50)
         .rev()
         .map(|i| message(mid(100 + i, 0), GENERAL, OTHER))

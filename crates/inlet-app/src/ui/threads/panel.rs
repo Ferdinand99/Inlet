@@ -240,6 +240,11 @@ impl Inlet {
     pub(crate) fn drop_thread_panel(&mut self, cx: &mut Context<Self>) {
         if self.retire_panel() {
             self.subscribe_threads();
+            // The thread's window is cut like any channel that is not on screen.
+            if let Some(account) = self.account.clone() {
+                let changes = account.update(cx, |s, _| s.set_open_thread(None));
+                self.after_changes(changes, false, cx);
+            }
             cx.notify();
         }
     }
@@ -258,8 +263,9 @@ impl Inlet {
         };
         let ch = panel.thread;
         let changes = account.update(cx, |s, _| {
-            let c = s.begin_load(ch);
+            let mut c = s.begin_load(ch);
             s.touch_channel(ch);
+            c.merge(s.set_open_thread(Some(ch)));
             c
         });
         let request = panel.view.begin_newest(ch);
@@ -480,6 +486,9 @@ impl Inlet {
         panel.view.prune(account.read(cx), changes);
         if can_open(account.read(cx), ch).is_none() {
             self.retire_panel();
+            // The thread is no longer shown: its window is cut like any channel not on screen.
+            let changes = account.update(cx, |s, _| s.set_open_thread(None));
+            self.after_changes(changes, false, cx);
             self.chat.notice = Some(t!("threads-unavailable"));
             self.subscribe_threads();
             cx.notify();

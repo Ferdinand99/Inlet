@@ -446,6 +446,7 @@ impl Inlet {
         if self.selected_channel.take().is_some() {
             self.threads_leave_channel(None, cx);
             self.clear_messages();
+            self.leave_open_channel(cx);
         }
         cx.notify();
     }

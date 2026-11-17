@@ -52,6 +52,12 @@ enum Op {
     Read(ChannelId, Option<MessageId>, AckKind),
     Load(ChannelId),
     Tick(i64),
+    /// The view shows this channel in the chat (or none).
+    Open(Option<ChannelId>),
+    /// The reader is away from the bottom of the open channel, or back at it.
+    Scrolled(bool),
+    /// Scrolling takes messages from a window's buffer: older (`true`) or newer.
+    Drain(ChannelId, bool),
 }
 
 fn perms(r: &mut Rng) -> u64 {
@@ -195,7 +201,7 @@ fn op(r: &mut Rng) -> Op {
     let user = r.pick(USERS);
     let msg = mid(r.below(60), r.below(3)).to_string();
     let event = |name: &str, data: Value| Op::Event(d(name, data));
-    match r.below(37) {
+    match r.below(44) {
         0..=4 => event("MESSAGE_CREATE", message_value(r, channel)),
         5 => event("MESSAGE_UPDATE", message_value(r, channel)),
         6 => event("MESSAGE_DELETE", json!({"id": msg, "channel_id": channel})),
@@ -320,6 +326,10 @@ fn op(r: &mut Rng) -> Op {
             )
         }
         30 => Op::Load(ChannelId::parse(channel).unwrap()),
+        37..=38 => Op::Open(Some(ChannelId::parse(channel).unwrap())),
+        39 => Op::Open(None),
+        40 => Op::Scrolled(r.chance(50)),
+        41..=43 => Op::Drain(ChannelId::parse(channel).unwrap(), r.chance(50)),
         31 => event(
             "GUILD_UPDATE",
             json!({"id": guild, "name": "g", "owner_id": r.pick(&["1", ME]), "mfa_level": r.below(2),
@@ -394,6 +404,17 @@ fn run(s: &mut AccountState, op: &Op) {
         Op::Tick(t) => {
             s.tick(*t);
         }
+        Op::Open(c) => {
+            s.set_open_channel(*c);
+        }
+        Op::Scrolled(v) => s.set_view_scrolled(*v),
+        Op::Drain(c, older) => {
+            if *older {
+                s.drain_older(*c, 50);
+            } else {
+                s.drain_newer(*c, 50);
+            }
+        }
     }
 }
 
@@ -465,7 +486,16 @@ fn check_invariants(s: &AccountState, seed: u64, step: usize) {
         let w = s.messages(c).unwrap();
         assert!(w.len() <= MAX_MESSAGES_PER_CHANNEL, "{at}");
         let bytes: usize = w.iter().map(inlet_state::messages::approx_size).sum();
-        assert_eq!(w.approx_bytes(), bytes, "{at}: byte count drifted");
+        assert_eq!(
+            w.approx_bytes(),
+            bytes + w.buffer_bytes(),
+            "{at}: byte count drifted"
+        );
+        assert!(w.buffers_are_consistent(), "{at}: the buffers drifted");
+        assert!(
+            w.approx_bytes() <= inlet_state::limits::MAX_WINDOW_BYTES || w.len() <= 1,
+            "{at}: over the byte budget"
+        );
         let ids: Vec<MessageId> = w.iter().map(|m| MessageId::parse(&m.id).unwrap()).collect();
         assert!(
             ids.windows(2).all(|p| p[0] < p[1]),

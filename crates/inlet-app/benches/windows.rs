@@ -2,7 +2,7 @@
 //! What a message costs in a window, in heap bytes counted by an allocator that wraps the
 //! system's: for a plain message, one with an attachment and one with an embed, next to
 //! the `approx_bytes` the account state budgets with. A full set of windows (30 channels
-//! of 500 messages) is the largest part of the memory the app holds, so this is the
+//! of up to 200 messages and their buffers) is the largest part of the memory the app holds, so this is the
 //! number that says whether the budget is honest.
 //!
 //!     INLET_PASS_ENV=CARGO_PROFILE_CI_OPT_LEVEL CARGO_PROFILE_CI_OPT_LEVEL=3 \
@@ -165,14 +165,15 @@ fn main() {
         // What the pages left behind is the window's.
         let heap = live() - before;
         let win = state.messages(ch).expect("a window");
-        let n = win.len().max(1) as f64;
+        let kept = win.len() + win.buffered().0 + win.buffered().1;
+        let n = kept.max(1) as f64;
         let budget = win.approx_bytes() as f64 / n;
         println!(
             "{name:<14} {:>14.0} {:>14.0} {:>7.2}x   ({} messages kept)",
             heap as f64 / n,
             budget,
             heap as f64 / n / budget,
-            win.len()
+            kept
         );
         drop(state);
     }
@@ -191,10 +192,9 @@ fn main() {
     }
     let heap = live() - before;
     let win = state.messages(ch).expect("a window");
+    let kept = win.len() + win.buffered().0 + win.buffered().1;
     println!(
-        "live, plain   {:>14.0} B/msg over {} messages (30 full windows would hold {:.0} MiB)",
-        heap as f64 / win.len().max(1) as f64,
-        win.len(),
-        heap as f64 / win.len().max(1) as f64 * 500. * 30. / 1048576.
+        "live, plain   {:>14.0} B/msg over {kept} messages (list and buffers)",
+        heap as f64 / kept.max(1) as f64,
     );
 }

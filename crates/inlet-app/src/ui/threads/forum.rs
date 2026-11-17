@@ -114,6 +114,7 @@ impl Inlet {
         // The chat's list empties; a forum has no messages of its own. The keyboard
         // leaves the chat's composer, which is not on screen.
         self.clear_messages();
+        self.leave_open_channel(cx);
         window.focus(&self.focus, cx);
         let (Some(account), Some(forum)) = (self.account.clone(), ChannelId::parse(channel_id))
         else {

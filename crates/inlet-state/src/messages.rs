@@ -25,8 +25,9 @@ use serde_json::{Map, Value};
 use crate::bounded::LruMap;
 use crate::ids::{ChannelId, MessageId};
 use crate::limits::{
-    LOAD_TIMEOUT_MS, MAX_MESSAGES_PER_CHANNEL, MAX_MESSAGE_BYTES, MAX_MESSAGE_WINDOWS,
-    MAX_PENDING_LIVE, MAX_PENDING_REACTIONS, MAX_REACTIONS_PER_MESSAGE, MAX_RECENTLY_DELETED,
+    LOAD_TIMEOUT_MS, MAX_BACKGROUND_MESSAGES, MAX_MESSAGES_PER_CHANNEL, MAX_MESSAGE_BYTES,
+    MAX_MESSAGE_CACHE, MAX_MESSAGE_WINDOWS, MAX_PENDING_LIVE, MAX_PENDING_REACTIONS,
+    MAX_REACTIONS_PER_MESSAGE, MAX_RECENTLY_DELETED, MAX_REOPEN_MESSAGES, MAX_TRUNCATED_VIEW,
     MAX_WINDOW_BYTES,
 };
 use crate::size::{heap_map, heap_value, opt_len};
@@ -118,6 +119,31 @@ pub struct MessageWindow {
     loading_since_ms: i64,
     /// Marked stale by a new READY until its newest page lands.
     stale: bool,
+    /// The channel is not open in the view: the window keeps only
+    /// [`MAX_BACKGROUND_MESSAGES`] messages (see [`MessageWindows::set_open`]).
+    background: bool,
+    /// Messages cut from the older end of the list, nearest first kept: scrolling back
+    /// takes them before asking the server ([`MessageWindow::drain_older`]). Fluxer's client
+    /// keeps the same (its `beforeBuffer`, up to [`MAX_MESSAGE_CACHE`]).
+    before_buf: BTreeMap<MessageId, Message>,
+    /// Messages cut from the newer end after older pages were loaded
+    /// ([`MessageWindow::drain_newer`]).
+    after_buf: BTreeMap<MessageId, Message>,
+    /// Approximate memory of both buffers; counts with `bytes` against the window's budget.
+    buf_bytes: usize,
+    /// The older buffer reaches the start of the channel (Fluxer's `isBoundary`): when it
+    /// is empty, the list is at the start and `has_more_before` is `false` again.
+    before_boundary: bool,
+    /// The newer buffer reaches the newest message: when it is empty, the list is at the
+    /// newest message again (unless live messages waited meanwhile).
+    after_boundary: bool,
+    /// The reader has scrolled away from the bottom of the open channel (set by the app).
+    /// Live messages then cut the newest side of a list over 200, not the oldest
+    /// (Fluxer's `channelPinnedToEnd`).
+    scrolled_back: bool,
+    /// Cut messages are dropped, not buffered: the window is only the thread panel's, whose
+    /// paging does not take from the buffers.
+    no_buffer: bool,
     recently_deleted: VecDeque<MessageId>,
 }
 
@@ -174,9 +200,51 @@ impl MessageWindow {
         self.loading
     }
 
-    /// Approximate memory the messages take, in bytes.
+    /// Approximate memory the messages take, in bytes: the list and the two buffers.
     pub fn approx_bytes(&self) -> usize {
-        self.bytes
+        self.bytes + self.buf_bytes
+    }
+
+    /// Messages waiting in the buffers (older side, newer side).
+    pub fn buffered(&self) -> (usize, usize) {
+        (self.before_buf.len(), self.after_buf.len())
+    }
+
+    /// Approximate memory of the two buffers. For the property tests.
+    #[doc(hidden)]
+    pub fn buffer_bytes(&self) -> usize {
+        self.buf_bytes
+    }
+
+    /// Whether the buffers are what they should be: each next to the list on its side, within
+    /// its cap, and the byte count right. For the property tests.
+    #[doc(hidden)]
+    pub fn buffers_are_consistent(&self) -> bool {
+        let before_ok = match (
+            self.before_buf.keys().next_back(),
+            self.messages.keys().next(),
+        ) {
+            (Some(b), Some(first)) => b < first,
+            _ => true,
+        };
+        let after_ok = match (
+            self.after_buf.keys().next(),
+            self.messages.keys().next_back(),
+        ) {
+            (Some(a), Some(last)) => a > last,
+            _ => true,
+        };
+        let bytes: usize = self
+            .before_buf
+            .values()
+            .chain(self.after_buf.values())
+            .map(approx_size)
+            .sum();
+        before_ok
+            && after_ok
+            && bytes == self.buf_bytes
+            && self.before_buf.len() <= MAX_MESSAGE_CACHE
+            && self.after_buf.len() <= MAX_MESSAGE_CACHE
     }
 
     fn put(&mut self, id: MessageId, m: Message) {
@@ -192,9 +260,203 @@ impl MessageWindow {
         Some(m)
     }
 
-    fn over_budget(&self) -> bool {
-        self.messages.len() > MAX_MESSAGES_PER_CHANNEL
-            || (self.bytes > MAX_WINDOW_BYTES && self.messages.len() > 1)
+    /// The count above which the list is cut, and what it is cut to (Fluxer's client cuts a
+    /// loaded list of more than 200 to 100; a window that is not on screen keeps 100).
+    fn count_limits(&self) -> (usize, usize) {
+        if self.background {
+            (MAX_BACKGROUND_MESSAGES, MAX_BACKGROUND_MESSAGES)
+        } else {
+            (MAX_MESSAGES_PER_CHANNEL, MAX_TRUNCATED_VIEW)
+        }
+    }
+
+    fn over_bytes(&self) -> bool {
+        self.bytes + self.buf_bytes > MAX_WINDOW_BYTES
+            && (self.messages.len() > 1 || self.buf_bytes > 0)
+    }
+
+    fn clear_buffers(&mut self) {
+        self.before_buf.clear();
+        self.after_buf.clear();
+        self.buf_bytes = 0;
+        self.before_boundary = false;
+        self.after_boundary = false;
+    }
+
+    /// A buffered message changed or went: the buffers are a cache, so they are dropped.
+    // Deviation: Fluxer updates or removes the message in the buffer in place; dropping them
+    // costs a request when the reader scrolls back, and keeps this simple and safe.
+    fn forget_buffered(&mut self, id: MessageId) {
+        if self.before_buf.contains_key(&id) || self.after_buf.contains_key(&id) {
+            self.clear_buffers();
+        }
+    }
+
+    fn buffer_older(&mut self, id: MessageId, m: Message) {
+        self.buf_bytes += approx_size(&m);
+        self.before_buf.insert(id, m);
+        // The furthest go first.
+        while self.before_buf.len() > MAX_MESSAGE_CACHE {
+            if let Some((_, old)) = self.before_buf.pop_first() {
+                self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&old));
+                self.before_boundary = false;
+            }
+        }
+    }
+
+    fn buffer_newer(&mut self, id: MessageId, m: Message) {
+        self.buf_bytes += approx_size(&m);
+        self.after_buf.insert(id, m);
+        while self.after_buf.len() > MAX_MESSAGE_CACHE {
+            if let Some((_, old)) = self.after_buf.pop_last() {
+                self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&old));
+                self.after_boundary = false;
+            }
+        }
+    }
+
+    fn forget_before(&mut self) {
+        for (_, m) in std::mem::take(&mut self.before_buf) {
+            self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&m));
+        }
+        self.before_boundary = false;
+    }
+
+    fn forget_after(&mut self) {
+        for (_, m) in std::mem::take(&mut self.after_buf) {
+            self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&m));
+        }
+        self.after_boundary = false;
+    }
+
+    /// Cuts the oldest message off the list into the buffer (a window that is not on screen
+    /// keeps nothing but its newest messages, and no buffer).
+    fn cut_oldest(&mut self) -> bool {
+        let Some(id) = self.oldest_id() else {
+            return false;
+        };
+        let Some(m) = self.take(id) else {
+            return false;
+        };
+        let at_start = !self.has_more_before;
+        self.has_more_before = true;
+        if self.background || self.no_buffer {
+            self.forget_before();
+        } else {
+            if self.before_buf.is_empty() {
+                self.before_boundary = at_start;
+            }
+            self.buffer_older(id, m);
+        }
+        true
+    }
+
+    fn cut_newest(&mut self) -> bool {
+        let Some(id) = self.newest_id() else {
+            return false;
+        };
+        let Some(m) = self.take(id) else {
+            return false;
+        };
+        let was_newest = self.has_newest;
+        self.has_newest = false;
+        if self.background || self.no_buffer {
+            self.forget_after();
+        } else {
+            if self.after_buf.is_empty() {
+                self.after_boundary = was_newest;
+            }
+            self.buffer_newer(id, m);
+        }
+        true
+    }
+
+    /// Frees bytes beyond the budget: the buffers first (the furthest messages), then the
+    /// list from the end `oldest` names.
+    fn shed(&mut self, oldest: bool) {
+        while self.over_bytes() {
+            if let Some((_, m)) = self.before_buf.pop_first() {
+                self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&m));
+                self.before_boundary = false;
+            } else if let Some((_, m)) = self.after_buf.pop_last() {
+                self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&m));
+                self.after_boundary = false;
+            } else {
+                let id = if oldest {
+                    self.oldest_id()
+                } else {
+                    self.newest_id()
+                };
+                let Some(id) = id else { break };
+                self.take(id);
+                if oldest {
+                    self.has_more_before = true;
+                } else {
+                    self.has_newest = false;
+                }
+            }
+        }
+    }
+
+    /// Cuts the list to its `n` newest messages (they go to the buffer). Whether it cut any.
+    fn cut_to(&mut self, n: usize) -> bool {
+        let before = self.messages.len();
+        while self.messages.len() > n {
+            if !self.cut_oldest() {
+                break;
+            }
+        }
+        self.shed(true);
+        self.messages.len() < before
+    }
+
+    /// Takes up to `limit` messages from the older buffer into the list, as scrolling back
+    /// asks for older ones. Returns whether there were any.
+    fn drain_older(&mut self, limit: usize) -> bool {
+        let mut any = false;
+        for _ in 0..limit {
+            let Some((id, m)) = self.before_buf.pop_last() else {
+                break;
+            };
+            self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&m));
+            self.put(id, m);
+            any = true;
+        }
+        if any {
+            if self.before_buf.is_empty() && self.before_boundary {
+                // The buffer reached the start of the channel: nothing older exists.
+                self.has_more_before = false;
+                self.before_boundary = false;
+            }
+            self.trim_newest();
+        }
+        any
+    }
+
+    /// The same from the newer buffer, as scrolling down asks for newer ones.
+    fn drain_newer(&mut self, limit: usize) -> bool {
+        let mut any = false;
+        for _ in 0..limit {
+            let Some((id, m)) = self.after_buf.pop_first() else {
+                break;
+            };
+            self.buf_bytes = self.buf_bytes.saturating_sub(approx_size(&m));
+            self.put(id, m);
+            any = true;
+        }
+        if any {
+            if self.after_buf.is_empty()
+                && self.after_boundary
+                && self.pending.is_empty()
+                && !self.pending_overflow
+            {
+                // The buffer reached the newest message and nothing live waited meanwhile.
+                self.has_newest = true;
+                self.after_boundary = false;
+            }
+            self.trim_oldest();
+        }
+        any
     }
 
     fn was_deleted(&self, id: MessageId) -> bool {
@@ -216,22 +478,45 @@ impl MessageWindow {
         self.recently_deleted.push_back(id);
     }
 
-    /// Drops the oldest messages beyond the caps.
+    /// Cuts the oldest messages when the list passes its limit (down to what Fluxer's
+    /// client cuts it to), then frees bytes beyond the budget.
     fn trim_oldest(&mut self) {
-        while self.over_budget() {
-            let Some(id) = self.oldest_id() else { break };
-            self.take(id);
-            self.has_more_before = true;
+        let (limit, target) = self.count_limits();
+        if self.messages.len() > limit {
+            while self.messages.len() > target {
+                if !self.cut_oldest() {
+                    break;
+                }
+            }
+        }
+        self.shed(true);
+    }
+
+    /// After a live message or edit of a shown channel. Fluxer cuts by where the reader is
+    /// (`channelPinnedToEnd`): at the bottom the list is kept at 100 (the oldest go to the
+    /// buffer); scrolled away, a list over 200 is cut on the newest side instead, so the rows
+    /// the reader is looking at stay.
+    fn trim_live(&mut self) {
+        if self.background {
+            self.trim_oldest();
+        } else if self.scrolled_back {
+            self.trim_newest();
+        } else {
+            self.cut_to(MAX_TRUNCATED_VIEW);
         }
     }
 
-    /// Drops the newest messages beyond the caps (after loading older pages).
+    /// The same for the newest messages (after older pages were loaded).
     fn trim_newest(&mut self) {
-        while self.over_budget() {
-            let Some(id) = self.newest_id() else { break };
-            self.take(id);
-            self.has_newest = false;
+        let (limit, target) = self.count_limits();
+        if self.messages.len() > limit {
+            while self.messages.len() > target {
+                if !self.cut_newest() {
+                    break;
+                }
+            }
         }
+        self.shed(false);
     }
 
     /// Buffers a live create or edit while the window is loading.
@@ -251,6 +536,9 @@ impl MessageWindow {
 
     /// Merges the newest page and the live buffer.
     fn merge_latest(&mut self, page: BTreeMap<MessageId, Message>, reached_start: bool) {
+        // The page reaches the present: the newer buffer is no use. The older buffer stays
+        // when the page overlaps the list (it is still next to the list's oldest message).
+        self.forget_after();
         let pending = std::mem::take(&mut self.pending);
         let reactions = std::mem::take(&mut self.pending_reactions);
         let overflow = std::mem::take(&mut self.pending_overflow);
@@ -269,6 +557,8 @@ impl MessageWindow {
                 if contiguous {
                     merged.extend(old);
                     has_more_before = self.has_more_before;
+                } else {
+                    self.forget_before();
                 }
                 for (id, m) in page {
                     let chosen = match in_range.remove(&id) {
@@ -289,6 +579,7 @@ impl MessageWindow {
                     merged = std::mem::take(&mut self.messages);
                 }
                 has_more_before = false;
+                self.forget_before();
             }
         }
         for (id, mut m) in pending {
@@ -338,6 +629,8 @@ impl MessageWindow {
             return false;
         }
         let at_oldest = self.oldest_id() == Some(before);
+        // The page covers what the older buffer held.
+        self.forget_before();
         for (id, m) in page.range(..before) {
             if !self.messages.contains_key(id) {
                 self.put(*id, m.clone());
@@ -346,7 +639,11 @@ impl MessageWindow {
         if at_oldest {
             self.has_more_before = !reached_start;
         }
-        self.trim_newest();
+        if self.background {
+            self.trim_oldest();
+        } else {
+            self.trim_newest();
+        }
         true
     }
 
@@ -360,6 +657,7 @@ impl MessageWindow {
     /// `false`): live messages are buffered for the next newest page, as for a
     /// window scrolled far back.
     fn replace_around(&mut self, page: BTreeMap<MessageId, Message>, reaches_newest: bool) {
+        self.clear_buffers();
         let fresh = self.has_newest;
         let page_newest = page.keys().next_back().copied();
         let mut old = std::mem::take(&mut self.messages);
@@ -421,7 +719,7 @@ impl MessageWindow {
             carry_reactions(old, &mut m);
         }
         self.put(id, m);
-        self.trim_oldest();
+        self.trim_live();
         true
     }
 
@@ -434,6 +732,7 @@ impl MessageWindow {
         if !self.has_newest {
             self.buffer(id, m.clone());
         }
+        self.forget_buffered(id);
         let Some(old) = self.messages.get(&id) else {
             return false;
         };
@@ -442,13 +741,14 @@ impl MessageWindow {
         }
         carry_reactions(old, &mut m);
         self.put(id, m);
-        self.trim_oldest();
+        self.trim_live();
         true
     }
 
     fn delete(&mut self, id: MessageId) -> bool {
         self.remember_deleted(id);
         self.pending.remove(&id);
+        self.forget_buffered(id);
         self.take(id).is_some()
     }
 
@@ -456,6 +756,9 @@ impl MessageWindow {
     /// buffered and applied after the merge, like creates; a window that is
     /// only scrolled back applies it to the messages it holds.
     fn react(&mut self, id: MessageId, op: ReactionOp) -> bool {
+        // A buffered message that is reacted to: the buffers are a cache, drop them (also
+        // while the window waits for a page, when the reaction itself is only kept).
+        self.forget_buffered(id);
         if self.loading || self.stale {
             // A repeat of an idempotent event (the account's own reaction, a
             // clear) adds nothing.
@@ -479,6 +782,7 @@ impl MessageWindow {
             }
             return false;
         }
+        self.forget_buffered(id);
         let Some(m) = self.messages.get(&id) else {
             return false;
         };
@@ -644,12 +948,20 @@ fn carry_reactions(old: &Message, new: &mut Message) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageWindows {
     windows: LruMap<ChannelId, MessageWindow>,
+    /// The channels the view shows (the chat, the thread panel); `None` until the app says
+    /// so, and then no window is trimmed.
+    open: Option<[Option<ChannelId>; 2]>,
+    /// The reader of the chat's channel is away from the bottom (see
+    /// [`MessageWindows::set_scrolled_back`]); new windows of that channel start so.
+    scrolled: bool,
 }
 
 impl Default for MessageWindows {
     fn default() -> Self {
         MessageWindows {
             windows: LruMap::new(MAX_MESSAGE_WINDOWS),
+            open: None,
+            scrolled: false,
         }
     }
 }
@@ -664,6 +976,86 @@ fn page_map(channel: ChannelId, messages: &[Message]) -> BTreeMap<MessageId, Mes
 }
 
 impl MessageWindows {
+    /// Whether a window made now for `channel` is for a channel that is not open.
+    fn is_background(&self, channel: ChannelId) -> bool {
+        self.open.is_some_and(|open| !open.contains(&Some(channel)))
+    }
+
+    /// Whether a window made now for `channel` is not the chat's (it keeps no buffers).
+    fn is_unbuffered(&self, channel: ChannelId) -> bool {
+        self.open.is_some_and(|open| open[0] != Some(channel))
+    }
+
+    /// The reader of the open channel has scrolled away from the bottom, or is back at it.
+    pub(crate) fn set_scrolled_back(&mut self, scrolled: bool) {
+        self.scrolled = scrolled;
+        let Some(Some(ch)) = self.open.map(|open| open[0]) else {
+            return;
+        };
+        if let Some(w) = self.windows.get_mut(&ch) {
+            w.scrolled_back = scrolled;
+        }
+    }
+
+    /// Says which channel the view shows in `slot` (0 the chat, 1 the thread panel; `None`
+    /// when it shows none), and applies Fluxer's rules for what a window keeps:
+    /// - a channel that is not shown keeps only its newest [`MAX_BACKGROUND_MESSAGES`]
+    ///   messages and no buffer (cut at once, and as live messages arrive);
+    /// - a channel that is shown again is cut to its newest [`MAX_REOPEN_MESSAGES`], the rest
+    ///   going to the older buffer, which scrolling back takes before asking the server;
+    /// - a channel that stays shown keeps a loaded list of up to [`MAX_MESSAGES_PER_CHANNEL`]
+    ///   (see [`MessageWindow::trim_oldest`]).
+    ///
+    /// Returns the channels whose window lost messages.
+    pub(crate) fn set_open(&mut self, slot: usize, channel: Option<ChannelId>) -> Vec<ChannelId> {
+        let was_open = self.open.unwrap_or([None, None]);
+        let mut open = was_open;
+        open[slot] = channel;
+        self.open = Some(open);
+        if slot == 0 && was_open[0] != channel {
+            // Another channel in the chat: the reader starts at the bottom.
+            self.scrolled = false;
+        }
+        let mut trimmed = Vec::new();
+        for (ch, w) in self.windows.iter_mut() {
+            w.background = !open.contains(&Some(*ch));
+            w.no_buffer = open[0] != Some(*ch);
+            let before = w.messages.len();
+            if w.background {
+                // A window waiting for its newest page is cut when the page lands.
+                if !w.loading {
+                    w.trim_oldest();
+                    w.clear_buffers();
+                }
+            } else if !was_open.contains(&Some(*ch)) {
+                // Shown (again): at the bottom, with the newest messages.
+                w.scrolled_back = false;
+                if w.has_newest {
+                    w.cut_to(MAX_REOPEN_MESSAGES);
+                }
+            }
+            if w.messages.len() < before {
+                trimmed.push(*ch);
+            }
+        }
+        trimmed
+    }
+
+    /// Moves up to `limit` messages from the older buffer of `channel` into its window.
+    /// Whether there were any (then no request for an older page is needed).
+    pub(crate) fn drain_older(&mut self, channel: ChannelId, limit: usize) -> bool {
+        self.windows
+            .get_mut(&channel)
+            .is_some_and(|w| !w.loading && w.drain_older(limit))
+    }
+
+    /// The same from the newer buffer.
+    pub(crate) fn drain_newer(&mut self, channel: ChannelId, limit: usize) -> bool {
+        self.windows
+            .get_mut(&channel)
+            .is_some_and(|w| !w.loading && w.drain_newer(limit))
+    }
+
     /// A channel's window.
     pub fn get(&self, channel: ChannelId) -> Option<&MessageWindow> {
         self.windows.get(&channel)
@@ -711,6 +1103,9 @@ impl MessageWindows {
         let w = MessageWindow {
             loading: true,
             loading_since_ms: now_ms,
+            background: self.is_background(channel),
+            no_buffer: self.is_unbuffered(channel),
+            scrolled_back: self.scrolled && !self.is_unbuffered(channel),
             ..Default::default()
         };
         // Full of loading windows: the insert evicts the least recently used.
@@ -791,7 +1186,15 @@ impl MessageWindows {
                     evicted = Some(idle);
                 }
             }
-            evicted = evicted.or(self.windows.insert(channel, MessageWindow::default()));
+            evicted = evicted.or(self.windows.insert(
+                channel,
+                MessageWindow {
+                    background: self.is_background(channel),
+                    no_buffer: self.is_unbuffered(channel),
+                    scrolled_back: self.scrolled && !self.is_unbuffered(channel),
+                    ..Default::default()
+                },
+            ));
         }
         self.windows.touch(&channel);
         let Some(w) = self.windows.get_mut(&channel) else {
@@ -885,6 +1288,8 @@ impl MessageWindows {
             w.has_newest = false;
             w.stale = true;
             w.loading = false;
+            // What the buffers hold may be out of date by the time the window is read again.
+            w.clear_buffers();
         }
     }
 

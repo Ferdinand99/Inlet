@@ -707,6 +707,60 @@ impl AccountState {
         self.windows.touch(ch);
     }
 
+    /// The chat shows `ch` now (`None`: no channel). The window of the channel it showed
+    /// before, and of every other channel that is not on screen, is cut to its newest
+    /// [`crate::limits::MAX_BACKGROUND_MESSAGES`] messages; scrolling back in it later loads
+    /// the older ones again through the history paging. Never cuts the channel shown, nor
+    /// the thread panel's ([`AccountState::set_open_thread`]).
+    ///
+    /// Deviation: Fluxer's client has no cut for channels that are not shown, nor for leaving
+    /// to no channel (it keeps up to 50 channel caches whole). Inlet cuts them to keep the
+    /// memory of 30 windows small.
+    pub fn set_open_channel(&mut self, ch: Option<ChannelId>) -> Changes {
+        self.set_open(0, ch)
+    }
+
+    /// The thread panel shows `ch` now (`None`: no panel). Like [`AccountState::set_open_channel`].
+    pub fn set_open_thread(&mut self, ch: Option<ChannelId>) -> Changes {
+        self.set_open(1, ch)
+    }
+
+    fn set_open(&mut self, slot: usize, ch: Option<ChannelId>) -> Changes {
+        let mut c = Changes::default();
+        for trimmed in self.windows.set_open(slot, ch) {
+            c.message(trimmed);
+        }
+        c
+    }
+
+    /// The reader of the open channel is away from the bottom of the list (`true`) or at it.
+    /// Live messages cut the oldest messages of a list at the bottom, and the newest side of a
+    /// list over 200 when the reader is away, so the rows being read stay.
+    pub fn set_view_scrolled(&mut self, scrolled: bool) {
+        self.windows.set_scrolled_back(scrolled);
+    }
+
+    /// Takes up to `limit` messages of the older buffer of `ch` into its window, as scrolling
+    /// back asks for older ones. `Some` when there were any: no request for an older page
+    /// is needed then.
+    pub fn drain_older(&mut self, ch: ChannelId, limit: usize) -> Option<Changes> {
+        self.windows.drain_older(ch, limit).then(|| {
+            let mut c = Changes::default();
+            c.message(ch);
+            c
+        })
+    }
+
+    /// The same from the newer buffer, as scrolling down to a window that misses its newest
+    /// messages asks for newer ones.
+    pub fn drain_newer(&mut self, ch: ChannelId, limit: usize) -> Option<Changes> {
+        self.windows.drain_newer(ch, limit).then(|| {
+            let mut c = Changes::default();
+            c.message(ch);
+            c
+        })
+    }
+
     /// Drops every message window (for an account moved to the background).
     pub fn drop_message_windows(&mut self) -> Changes {
         let mut c = Changes::default();

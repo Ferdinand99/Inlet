@@ -111,7 +111,10 @@ impl Inlet {
                     Some(first) if guild_id.is_some() => self.select_channel(first.id, window, cx),
                     _ => match last_dm {
                         Some(id) if guild_id.is_none() => self.select_channel(id, window, cx),
-                        _ => self.clear_messages(),
+                        _ => {
+                            self.clear_messages();
+                            self.leave_open_channel(cx);
+                        }
                     },
                 }
             }
@@ -124,6 +127,7 @@ impl Inlet {
         self.selected_channel = None;
         self.channels.clear();
         self.clear_messages();
+        self.leave_open_channel(cx);
         self.backend.send(messages::Cmd::OpenGuild { guild_id });
         cx.notify();
     }

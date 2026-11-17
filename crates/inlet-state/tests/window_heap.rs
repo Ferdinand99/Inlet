@@ -151,7 +151,8 @@ fn fill(kind: Kind) -> (usize, usize, isize) {
     state.begin_load(ch);
     state.apply_messages(ch, MessagesPage::latest(Vec::new(), 50));
     let before = live();
-    // Past the caps: the count cap holds 500 messages, the byte cap far fewer huge ones.
+    // Past the caps: the count cap holds the list at 100 to 200 messages (the rest waits in the buffer),
+    // the byte cap far fewer huge ones.
     for n in 0..(MAX_MESSAGES_PER_CHANNEL as u64 + 100) {
         state.apply(&Dispatch::MessageCreate(Box::new(message(
             1_000_000 + n,
@@ -182,7 +183,7 @@ fn the_byte_budget_of_a_window_is_the_heap_it_takes() {
             "{kind:?}: {n} messages, budget {approx} B, heap {heap} B, heap/budget {ratio:.2}"
         );
         assert!(
-            n == MAX_MESSAGES_PER_CHANNEL || approx > MAX_WINDOW_BYTES / 10 * 9,
+            (100..=MAX_MESSAGES_PER_CHANNEL).contains(&n) || approx > MAX_WINDOW_BYTES / 10 * 9,
             "{kind:?}: neither cap limited the window ({n} messages, {approx} bytes)"
         );
         assert!(
