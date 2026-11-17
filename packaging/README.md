@@ -29,6 +29,74 @@ Both are built with [Velopack](https://velopack.io) from the release-profile bin
 
 The binary answers `--version` (prints `inlet <version>`) and the installer's `--veloapp-*` hook arguments (exits at once) before it opens a window; see `crates/inlet-app/src/main.rs`.
 
+### The web view helper
+
+Flows that need a real web page (a sign-in at an identity provider, a payment, an OAuth consent) show it in a separate helper program, `inlet-web` (`crates/inlet-web`). Inlet starts it when it is needed and it ends with its window. It ships next to `inlet` in every package, and Inlet looks for it there (`crates/inlet-web/src/client.rs`):
+
+| Package | Where the helper is |
+|---|---|
+| Windows Setup and zip | `inlet-web.exe` next to `inlet.exe` |
+| Linux AppImage | `usr/bin/inlet-web` next to `usr/bin/inlet` |
+| Linux tar.gz | `inlet-web` next to `inlet` |
+| macOS `Inlet.app` | `Contents/MacOS/inlet-web` |
+| macOS zip | `inlet-web` next to `inlet` |
+
+The release jobs build both with `cargo build --release --locked -p inlet -p inlet-web`, and the packaging scripts refuse to build without the helper next to the binary. The helper uses the system's web engine and adds little to the download; the sizes of the files are in the job summary of each release build.
+
+What the system must have:
+
+- Windows: the WebView2 runtime. It comes with Windows 10 and 11 (Evergreen). When it is missing the helper reports `runtime_missing`, and Inlet can say so.
+- macOS: nothing (WKWebView is part of the system).
+- Linux: WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`, from the distribution) and GTK 3. The helper links them dynamically and they are not in the AppImage. Without them the helper cannot start and the flow fails with `helper_exited`. The development files are in the builder image and the CI jobs that build the helper.
+
+How the helper behaves (the rules are in `crates/inlet-web/src/helper.rs` and `gate.rs`):
+
+- The window may only navigate to the hosts of the flow's `allow`. Frames inside the page may go to `allow` and to the flow's separate `frames` list, and to nothing else; a frame of another host ends the flow, like a refused navigation. This holds on all three platforms, by different means: wry 0.57 reports frame navigations like window navigations on Linux and macOS (a host that only `frames` lists is let through and, if it turns out to be the window, the flow ends when its load starts), and not at all on Windows (the helper hooks WebView2's frame callback). Subresources (images, scripts, requests) are not filtered. List only first-party hosts, and in `frames` only what a page needs inside it (a captcha, a payment form).
+- Stopped before the request leaves: verified on Linux (WebKitGTK) and macOS (WKWebView) with a local server, for a script's navigation and for a `302` to the intercept URL. **On Windows (WebView2) the request had already reached the server when the helper stopped the navigation** (seen in CI, for the intercept URL, other hosts and redirects): the events and the window closing are right, but the server of an intercepted URL still sees the request, so an authorisation code in it is not secret from that server. Adding a `WebResourceRequested` check for documents did not change it in CI and was removed. Open follow-up before a flow relies on an intercept URL on Windows: make the callback host's redirect URI a page that does not consume the code (or a loopback address), or find a WebView2 hook that runs before the network.
+- The window is above Inlet's main window only where it can be tied to it (Windows, an owner window). On macOS and Linux a window cannot be tied to another process's window, so it is on top of every window there (a recorded deviation).
+- The helper holds no secret of Inlet's and its code never touches Inlet's keyring. It runs as the same user, so it is not a wall against a compromised web engine: web content is kept apart by the engine's process sandbox (Chromium's on Windows, WebContent on macOS).
+- Follow-up for Linux: WebKitGTK's own sandbox (bubblewrap) is off by default and wry does not switch it on. Call `webkit_web_context_set_sandbox_enabled(true)` on the view's context before `load_url`, check under Xvfb that `WebKitWebProcess` runs under `bwrap` (and that `bubblewrap` and `xdg-dbus-proxy` are present), and if WebKit has launched the web process by then, patch wry or ask for an upstream option.
+
+#### Before the port to main
+
+`packaging/macos` and the signing workflows are the same as on main (a check enforces it), so the macOS bundle gets the helper in `build.yml` (the step "Assemble Inlet.app"), after `build-app.sh`. Two changes have to land on main with the port; neither blocks `v0`.
+
+**1. macOS signing.** `macos-sign.yml` signs `Inlet.app` without `--deep`, so a second executable in `Contents/MacOS` is unsigned nested code, and notarisation rejects the app. The helper must be signed first, with the hardened runtime and a timestamp, then the bundle (signing the bundle seals the helper's signature). The step is conditional, so it can land before the port without breaking today's helper-less app:
+
+```yaml
+      # .github/workflows/macos-sign.yml, new step directly before "Sign the app"
+      - name: Sign the web view helper
+        run: |
+          helper=build/Inlet.app/Contents/MacOS/inlet-web
+          if [ -e "$helper" ]; then
+            codesign --force --options runtime --timestamp \
+              --identifier no.opland.inlet.web \
+              --keychain "$KEYCHAIN" --sign "$SIGN_IDENTITY" \
+              "$helper"
+            codesign --verify --strict --verbose=2 "$helper"
+            codesign --display --verbose=4 "$helper" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*runtime'
+          fi
+```
+
+- No `--entitlements`: WKWebView's JIT runs in Apple's WebContent XPC service.
+- `--identifier no.opland.inlet.web` keeps the helper's designated requirement apart from the app's, so the keychain access list of Inlet's items does not cover the helper.
+- Keep "Sign the app" as it is, after this step.
+- After the port, make it strict: in "Unpack the unsigned app" add `test -x build/Inlet.app/Contents/MacOS/inlet-web`, and let `packaging/macos/build-app.sh` take the helper (copy, `chmod 755`, `lipo -archs` must show arm64) so that the copy step in `build.yml` can go.
+- Cosmetic, to check on a Mac: a bare executable in `Contents/MacOS` may show a second Dock icon. `tao::platform::macos::EventLoopExtMacOS::set_activation_policy_at_runtime(ActivationPolicy::Accessory)` in `helper::run` avoids it.
+
+**2. SBOM.** `sbom.yml` covers only `crates/inlet-app/inlet.cdx.json` and `cargo tree -p inlet`, so the shipped helper's dependencies (wry, tao, webview2-com, objc2-web-kit, webkit2gtk, gtk) are missing from the release SBOMs. To keep the three files that `release.yml` expects, merge the helper into each platform's SBOM:
+
+```sh
+cargo tree --locked -e normal --target "$TARGET" -p inlet -p inlet-web --prefix none | ... > shipped.txt
+jq -s '.[0] as $a | .[1] as $b
+  | $a | .components = ($a.components + $b.components | unique_by(."bom-ref"))
+       | .dependencies = ($a.dependencies + $b.dependencies | unique_by(.ref))' \
+  <(sed "s|file://$PWD|file:///workspace|g" crates/inlet-app/inlet.cdx.json) \
+  <(sed "s|file://$PWD|file:///workspace|g" crates/inlet-web/inlet-web.cdx.json) > full.cdx.json
+```
+
+Also add `inlet-web` as a component, or a check such as `jq -e 'any(.components[]; .name=="wry")'`. `sbom.yml` is not one of the files that must equal main, so this can go in this PR's successor or in the port.
+
 ### Updates
 
 The packages are laid out for Velopack auto-update, but nothing in the app checks for updates yet. `build-packages.sh` also writes a `velopack/` folder next to the packages in the build artifact (`inlet-windows-x86_64-packages`, `inlet-linux-x86_64`). It holds the full package (`*-full.nupkg`) and the release feed (`releases.<channel>.json`). Publishing an update feed means keeping those files with each release and passing the previous ones to `vpk` as input; the package layout does not change.

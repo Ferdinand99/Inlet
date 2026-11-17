@@ -21,7 +21,9 @@ export LC_ALL=C
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-cargo about generate --locked --manifest-path crates/inlet-app/Cargo.toml --features demo about.hbs -o "$work/raw"
+# The whole workspace with every feature: the app, and the web view helper that ships next
+# to it (it has its own dependencies: wry, tao and the GTK crates on Linux).
+cargo about generate --locked --workspace --all-features about.hbs -o "$work/raw"
 
 mkdir "$work/blocks"
 awk -v dir="$work/blocks" '

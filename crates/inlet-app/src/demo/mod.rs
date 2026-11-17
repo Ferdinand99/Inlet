@@ -34,6 +34,7 @@ pub mod soak;
 mod social;
 pub mod threads;
 mod unread;
+pub mod web;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

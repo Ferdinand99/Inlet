@@ -50,6 +50,8 @@ if ($install.ExitCode -ne 0) { Fail "Setup exited with code $($install.ExitCode)
 
 if (-not (Test-Path $exe)) { Fail "$exe was not installed" }
 if (-not (Test-Path $update)) { Fail "$update (the updater) was not installed" }
+$helper = Join-Path $current 'inlet-web.exe'
+if (-not (Test-Path $helper)) { Fail "$helper (the web view helper) was not installed" }
 foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES')) {
     if (-not (Test-Path (Join-Path $current $name))) { Fail "$name was not installed next to inlet.exe" }
 }
@@ -68,6 +70,15 @@ if ($run.ExitCode -ne 0) { Fail "inlet.exe --version exited with code $($run.Exi
 $printed = (Get-Content -Raw $out).Trim()
 if ($printed -ne "inlet $Version") { Fail "inlet.exe --version printed '$printed', expected 'inlet $Version'" }
 Write-Host "Installed app prints: $printed"
+
+# The web view helper next to it starts and says what it is.
+$helperOut = Join-Path $logs 'helper-version.txt'
+$helperRun = Start-Process -FilePath $helper -ArgumentList '--version' -Wait -PassThru -NoNewWindow `
+    -RedirectStandardOutput $helperOut
+if ($helperRun.ExitCode -ne 0) { Fail "inlet-web.exe --version exited with code $($helperRun.ExitCode)" }
+$helperPrinted = (Get-Content -Raw $helperOut).Trim()
+if ($helperPrinted -ne "inlet-web $Version") { Fail "inlet-web.exe --version printed '$helperPrinted', expected 'inlet-web $Version'" }
+Write-Host "Installed helper prints: $helperPrinted"
 
 Write-Host 'Uninstalling'
 $remove = Start-Process -FilePath $update -ArgumentList @('--uninstall', '--silent', '--verbose', '--log', (Join-Path $logs 'uninstall.log')) `

@@ -31,6 +31,8 @@ mod text_input;
 mod theme;
 mod token_store;
 mod ui;
+#[doc(hidden)]
+pub mod web;
 
 use gpui::{App, AppContext};
 
@@ -84,6 +86,8 @@ pub fn run() {
             .open_window(options, |window, cx| cx.new(|cx| Inlet::new(window, cx)))
             .expect("open the main window");
         desktop::attach(window, forwarded, &start, cx);
+        #[cfg(feature = "demo")]
+        demo::web::open_if_requested(window, cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 desktop::quit(cx);

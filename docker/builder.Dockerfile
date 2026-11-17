@@ -13,6 +13,7 @@
 #   - cargo-deny and cargo-about (the same versions CI uses)
 #   - Xvfb, a software Vulkan driver (lavapipe), ImageMagick, xdotool and an emoji font
 #     for UI checks
+#   - WebKitGTK and GTK 3 (development files) for the embedded web view helper
 
 # rust:1.99.1-trixie, pinned by digest of the multi-arch index.
 FROM rust:1.99.1-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07
@@ -53,6 +54,13 @@ RUN CARGO_BUILD_JOBS=4 cargo install --locked --root /usr/local/cargo cargo-abou
 
 # Emoji font for screenshots (without it emoji render as empty boxes under Xvfb).
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+
+# The embedded web view helper (inlet-web: wry and tao) links WebKitGTK and GTK 3. Its tests
+# run the real helper under Xvfb, which needs the engine at run time too (the -dev packages
+# pull in the libraries), and xvfb-run needs xauth.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev xauth \
     && rm -rf /var/lib/apt/lists/*
 
 COPY builder-entry.sh /usr/local/bin/inlet-run
