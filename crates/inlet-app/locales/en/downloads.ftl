@@ -10,3 +10,4 @@ media-dl-reveal = Show in folder
 media-dl-cancel = Cancel
 media-dl-remove = Remove from list
 media-save-cancelled-notice = Download cancelled
+media-dl-demo-reset = the connection was reset

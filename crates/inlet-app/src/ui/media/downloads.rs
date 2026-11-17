@@ -166,7 +166,7 @@ impl Downloads {
             PathBuf::from("holiday-photos.zip"),
             progress(3_500_000, 8_400_000),
         );
-        self.finish(failed, Status::Failed("the connection was reset".into()));
+        self.finish(failed, Status::Failed(t!("media-dl-demo-reset")));
         self.finish(done, Status::Done);
         self.open = true;
     }
