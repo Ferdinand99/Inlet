@@ -1585,8 +1585,10 @@ impl Inlet {
                 .unread
                 .then(|| s.read_state(ch).and_then(|r| r.ack_message_id))
                 .flatten();
-            let changes = s.begin_load(ch);
+            let mut changes = s.begin_load(ch);
             s.touch_channel(ch);
+            // The channel left behind keeps only its newest messages from here on.
+            changes.merge(s.set_open_channel(Some(ch)));
             (marker, changes)
         });
         let view = &mut self.chat.view;

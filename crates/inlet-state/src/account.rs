@@ -688,6 +688,28 @@ impl AccountState {
         self.windows.touch(ch);
     }
 
+    /// The chat shows `ch` now (`None`: no channel). The window of the channel it showed
+    /// before, and of every other channel that is not on screen, is cut to its newest
+    /// [`crate::limits::MAX_BACKGROUND_MESSAGES`] messages; scrolling back in it later loads
+    /// the older ones again through the history paging. Never cuts the channel shown, nor
+    /// the thread panel's ([`AccountState::set_open_thread`]).
+    pub fn set_open_channel(&mut self, ch: Option<ChannelId>) -> Changes {
+        self.set_open(0, ch)
+    }
+
+    /// The thread panel shows `ch` now (`None`: no panel). Like [`AccountState::set_open_channel`].
+    pub fn set_open_thread(&mut self, ch: Option<ChannelId>) -> Changes {
+        self.set_open(1, ch)
+    }
+
+    fn set_open(&mut self, slot: usize, ch: Option<ChannelId>) -> Changes {
+        let mut c = Changes::default();
+        for trimmed in self.windows.set_open(slot, ch) {
+            c.message(trimmed);
+        }
+        c
+    }
+
     /// Drops every message window (for an account moved to the background).
     pub fn drop_message_windows(&mut self) -> Changes {
         let mut c = Changes::default();

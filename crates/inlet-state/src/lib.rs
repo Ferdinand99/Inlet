@@ -87,6 +87,9 @@ pub mod limits {
     pub const LOAD_TIMEOUT_MS: i64 = 60_000;
     /// Reaction events buffered while a window waits for its newest page.
     pub const MAX_PENDING_REACTIONS: usize = 500;
+    /// Messages a window keeps while its channel is not on screen (and not the thread
+    /// panel's): Fluxer's client cuts a loaded list of more than 200 down to 100.
+    pub const MAX_BACKGROUND_MESSAGES: usize = 100;
     /// Channels with a message window; the least recently used is evicted.
     pub const MAX_MESSAGE_WINDOWS: usize = 30;
     /// Deleted message IDs remembered per window, so a page fetched before

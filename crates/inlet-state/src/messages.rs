@@ -25,9 +25,9 @@ use serde_json::{Map, Value};
 use crate::bounded::LruMap;
 use crate::ids::{ChannelId, MessageId};
 use crate::limits::{
-    LOAD_TIMEOUT_MS, MAX_MESSAGES_PER_CHANNEL, MAX_MESSAGE_BYTES, MAX_MESSAGE_WINDOWS,
-    MAX_PENDING_LIVE, MAX_PENDING_REACTIONS, MAX_REACTIONS_PER_MESSAGE, MAX_RECENTLY_DELETED,
-    MAX_WINDOW_BYTES,
+    LOAD_TIMEOUT_MS, MAX_BACKGROUND_MESSAGES, MAX_MESSAGES_PER_CHANNEL, MAX_MESSAGE_BYTES,
+    MAX_MESSAGE_WINDOWS, MAX_PENDING_LIVE, MAX_PENDING_REACTIONS, MAX_REACTIONS_PER_MESSAGE,
+    MAX_RECENTLY_DELETED, MAX_WINDOW_BYTES,
 };
 use crate::size::{heap_map, heap_value, opt_len};
 
@@ -118,6 +118,9 @@ pub struct MessageWindow {
     loading_since_ms: i64,
     /// Marked stale by a new READY until its newest page lands.
     stale: bool,
+    /// The channel is not open in the view: the window keeps only
+    /// [`MAX_BACKGROUND_MESSAGES`] messages (see [`MessageWindows::set_open`]).
+    background: bool,
     recently_deleted: VecDeque<MessageId>,
 }
 
@@ -193,8 +196,12 @@ impl MessageWindow {
     }
 
     fn over_budget(&self) -> bool {
-        self.messages.len() > MAX_MESSAGES_PER_CHANNEL
-            || (self.bytes > MAX_WINDOW_BYTES && self.messages.len() > 1)
+        let cap = if self.background {
+            MAX_BACKGROUND_MESSAGES
+        } else {
+            MAX_MESSAGES_PER_CHANNEL
+        };
+        self.messages.len() > cap || (self.bytes > MAX_WINDOW_BYTES && self.messages.len() > 1)
     }
 
     fn was_deleted(&self, id: MessageId) -> bool {
@@ -644,12 +651,16 @@ fn carry_reactions(old: &Message, new: &mut Message) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageWindows {
     windows: LruMap<ChannelId, MessageWindow>,
+    /// The channels the view shows (the chat, the thread panel); `None` until the app says
+    /// so, and then no window is trimmed.
+    open: Option<[Option<ChannelId>; 2]>,
 }
 
 impl Default for MessageWindows {
     fn default() -> Self {
         MessageWindows {
             windows: LruMap::new(MAX_MESSAGE_WINDOWS),
+            open: None,
         }
     }
 }
@@ -664,6 +675,33 @@ fn page_map(channel: ChannelId, messages: &[Message]) -> BTreeMap<MessageId, Mes
 }
 
 impl MessageWindows {
+    /// Whether a window made now for `channel` is for a channel that is not open.
+    fn is_background(&self, channel: ChannelId) -> bool {
+        self.open.is_some_and(|open| !open.contains(&Some(channel)))
+    }
+
+    /// Says which channel the view shows in `slot` (0 the chat, 1 the thread panel; `None`
+    /// when it shows none). A window of a channel that is not shown is cut to its newest
+    /// [`MAX_BACKGROUND_MESSAGES`] messages (the older ones are loaded again when it is
+    /// opened and scrolled back) and keeps to that as live messages arrive; a shown
+    /// channel keeps up to [`MAX_MESSAGES_PER_CHANNEL`]. Returns the channels whose
+    /// window lost messages.
+    pub(crate) fn set_open(&mut self, slot: usize, channel: Option<ChannelId>) -> Vec<ChannelId> {
+        let mut open = self.open.unwrap_or([None, None]);
+        open[slot] = channel;
+        self.open = Some(open);
+        let mut trimmed = Vec::new();
+        for (ch, w) in self.windows.iter_mut() {
+            w.background = !open.contains(&Some(*ch));
+            // A window waiting for its newest page is cut when the page lands.
+            if w.background && !w.loading && w.over_budget() {
+                w.trim_oldest();
+                trimmed.push(*ch);
+            }
+        }
+        trimmed
+    }
+
     /// A channel's window.
     pub fn get(&self, channel: ChannelId) -> Option<&MessageWindow> {
         self.windows.get(&channel)
@@ -711,6 +749,7 @@ impl MessageWindows {
         let w = MessageWindow {
             loading: true,
             loading_since_ms: now_ms,
+            background: self.is_background(channel),
             ..Default::default()
         };
         // Full of loading windows: the insert evicts the least recently used.
@@ -791,7 +830,13 @@ impl MessageWindows {
                     evicted = Some(idle);
                 }
             }
-            evicted = evicted.or(self.windows.insert(channel, MessageWindow::default()));
+            evicted = evicted.or(self.windows.insert(
+                channel,
+                MessageWindow {
+                    background: self.is_background(channel),
+                    ..Default::default()
+                },
+            ));
         }
         self.windows.touch(&channel);
         let Some(w) = self.windows.get_mut(&channel) else {
