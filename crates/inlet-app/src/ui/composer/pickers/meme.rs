@@ -13,6 +13,7 @@ use inlet_protocol::{ImageFormat, Transform};
 use url::Url;
 
 use super::emoji::empty;
+use super::item_menu;
 use super::PICKER_WIDTH;
 use crate::app::Inlet;
 use crate::backend::composer::gif::Cmd;
@@ -35,13 +36,17 @@ pub fn matching<'a>(memes: &'a [p::Meme], query: &str) -> Vec<&'a p::Meme> {
         .filter(|m| {
             q.is_empty()
                 || m.name.to_lowercase().contains(&q)
+                || m.alt_text
+                    .as_deref()
+                    .is_some_and(|a| a.to_lowercase().contains(&q))
+                || m.filename.to_lowercase().contains(&q)
                 || m.tags.iter().any(|t| t.to_lowercase().contains(&q))
         })
         .collect()
 }
 
 /// A still preview of a meme through the media proxy, or `None`.
-fn preview(proxy: &p::Media, meme: &p::Meme, scale: f32) -> Option<MediaRequest> {
+pub(super) fn preview(proxy: &p::Media, meme: &p::Meme, scale: f32) -> Option<MediaRequest> {
     let w = (TILE_W * scale.max(1.)).ceil() as u32;
     let h = (TILE_H * scale.max(1.)).ceil() as u32;
     let t = Transform {
@@ -133,6 +138,9 @@ impl Inlet {
         let anim = self.media.images.animator(Motion::Gif);
         let picture = picture_of(shown, (TILE_W, TILE_H), 6., ObjectFit::Cover, &anim);
         let id = meme.id.clone();
+        let menu_subject = item_menu::Subject::Meme {
+            id: meme.id.clone(),
+        };
         div()
             .id(SharedString::from(format!("picker-meme-{row}-{col}")))
             .w(px(TILE_W))
@@ -155,6 +163,14 @@ impl Inlet {
                 }
                 this.picked(false, cx);
             }))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    // The item's menu: remove it from the saved media.
+                    this.open_item_menu(menu_subject.clone(), item_menu::click_at(e));
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 }

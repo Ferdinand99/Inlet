@@ -324,6 +324,22 @@ async fn dms_profiles_folders_and_memes() {
         ok(json!({"id": "300", "name": "Blobs", "icon": null, "features": ["DISCOVERABLE"]})),
     )
     .await;
+    mock(
+        &server,
+        "POST",
+        "/api/v1/guilds/300/emojis/clone",
+        Some(json!({"source_emoji_id": "88"})),
+        no_content(),
+    )
+    .await;
+    mock(
+        &server,
+        "POST",
+        "/api/v1/guilds/300/stickers/clone",
+        Some(json!({"source_sticker_id": "89"})),
+        no_content(),
+    )
+    .await;
     let c = client(&instance, "tok-social-routes");
 
     assert_eq!(c.open_dm("11").await.unwrap().id, "600");
@@ -405,6 +421,12 @@ async fn dms_profiles_folders_and_memes() {
         c.sticker_source("89").await.unwrap().features,
         ["DISCOVERABLE"]
     );
+    c.clone_emoji("300", "88").await.unwrap();
+    c.clone_sticker("300", "89").await.unwrap();
+    assert!(matches!(
+        c.clone_emoji("../1", "88").await,
+        Err(Error::InvalidInput(_))
+    ));
 
     // Checked before any request.
     assert!(matches!(

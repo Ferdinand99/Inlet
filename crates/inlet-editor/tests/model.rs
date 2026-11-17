@@ -1147,3 +1147,40 @@ fn everything_is_escaped_when_everyone_is_picked_with_users() {
         Mentions::picked(buf.tokens())
     );
 }
+
+#[test]
+fn media_commands_take_the_whole_message_before_the_caret() {
+    use inlet_editor::MediaCommand;
+    assert_eq!(
+        trigger("/gif cute cats"),
+        Some((0..14, Trigger::Media(MediaCommand::Gif, "cute cats".into())))
+    );
+    assert_eq!(
+        trigger("/gif"),
+        Some((0..4, Trigger::Media(MediaCommand::Gif, String::new())))
+    );
+    assert_eq!(
+        trigger("/sticker  wave "),
+        Some((0..15, Trigger::Media(MediaCommand::Sticker, "wave".into())))
+    );
+    assert_eq!(
+        trigger("  /saved dog"),
+        Some((0..12, Trigger::Media(MediaCommand::Saved, "dog".into())))
+    );
+    // A longer word is another command, or none; the command list stays for it.
+    assert_eq!(
+        trigger("/gifts"),
+        Some((0..6, Trigger::Command("gifts".into())))
+    );
+    assert_eq!(trigger("/gi"), Some((0..3, Trigger::Command("gi".into()))));
+    // Only at the start of the message.
+    assert_eq!(trigger("hello /gif cats"), None);
+    // A pill in the text makes it a message, not a search.
+    let mut buf = Buffer::new(2000);
+    buf.insert(0, "/gif ").unwrap();
+    assert!(buf.insert_token(5, Token::Everyone, "@everyone"));
+    assert!(!matches!(
+        trigger_at(&buf, buf.len()),
+        Some((_, Trigger::Media(..)))
+    ));
+}

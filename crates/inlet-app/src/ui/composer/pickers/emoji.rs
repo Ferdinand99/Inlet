@@ -16,6 +16,7 @@ use gpui::{
 use inlet_emoji::{Category, SkinTone};
 use inlet_protocol as p;
 
+use super::item_menu;
 use super::prefs::{self, Key, PickerPrefs, MAX_RECENT};
 use super::{usable, Insert, PickerIcon, Target};
 use crate::app::Inlet;
@@ -474,10 +475,9 @@ impl Inlet {
             }))
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    let key = fav.key();
-                    let on = !this.composer.pickers.prefs.is_favourite(&key);
-                    this.edit_prefs(PrefEdit::FavouriteEmoji { key, on });
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    // The item's menu: favourite, copy, clone, info.
+                    this.open_item_menu(item_menu::emoji_subject(&fav), item_menu::click_at(e));
                     cx.notify();
                 }),
             )

@@ -105,6 +105,24 @@ impl SettingsTab for AdvancedTab {
                 ));
             }
         }
+        // Fluxer's experimental switch for "Clone to…" in the emoji and sticker menus. It is a
+        // setting of this installation, as in Fluxer, and off by default.
+        let clone = crate::desktop::expression_clone_shortcuts(cx);
+        col = col
+            .child(heading(t!("settings-advanced-experimental")))
+            .child(
+                toggle(
+                    "settings-clone-shortcuts",
+                    t!("settings-advanced-clone-shortcuts"),
+                    clone,
+                    true,
+                )
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    crate::desktop::set_expression_clone_shortcuts(!clone, cx);
+                    cx.notify();
+                })),
+            )
+            .child(note(t!("settings-advanced-clone-shortcuts-note")));
         col.into_any_element()
     }
 }

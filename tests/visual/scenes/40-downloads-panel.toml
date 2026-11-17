@@ -1,0 +1,10 @@
+# The downloads panel open under the channel header button: a download on its way (a bar
+# and a percentage), a finished one and a failed one.
+name = "downloads-panel"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "downloads-panel"
+guild = "g1"
+channel = "c-general"

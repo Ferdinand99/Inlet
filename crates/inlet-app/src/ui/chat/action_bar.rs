@@ -52,6 +52,7 @@ pub enum ActionIcon {
     Copy,
     Link,
     Id,
+    Search,
     Bookmark,
     EyeSlash,
     Eye,
@@ -73,6 +74,7 @@ impl ActionIcon {
             ActionIcon::Copy => include_bytes!("../../../assets/icons/copy.svg"),
             ActionIcon::Link => include_bytes!("../../../assets/icons/link.svg"),
             ActionIcon::Id => include_bytes!("../../../assets/icons/identification-card.svg"),
+            ActionIcon::Search => include_bytes!("../../../assets/icons/magnifying-glass.svg"),
             ActionIcon::Bookmark => include_bytes!("../../../assets/icons/bookmark-simple.svg"),
             ActionIcon::EyeSlash => include_bytes!("../../../assets/icons/eye-slash.svg"),
             ActionIcon::Eye => include_bytes!("../../../assets/icons/eye.svg"),
@@ -187,6 +189,8 @@ pub enum Action {
     Save,
     Unsave,
     CopyText,
+    /// Opens a translation of the text in the browser (see `web_actions`).
+    Translate,
     CopyLink,
     CopyId,
     HideEmbeds,
@@ -207,6 +211,7 @@ impl Action {
             Action::CopyText => ActionIcon::Copy,
             Action::CopyLink => ActionIcon::Link,
             Action::CopyId => ActionIcon::Id,
+            Action::Translate => ActionIcon::Search,
             Action::HideEmbeds => ActionIcon::EyeSlash,
             Action::ShowEmbeds => ActionIcon::Eye,
             Action::Delete => ActionIcon::Trash,
@@ -225,6 +230,7 @@ impl Action {
             Action::Save => t!("action-save"),
             Action::Unsave => t!("action-unsave"),
             Action::CopyText => t!("action-copy-text"),
+            Action::Translate => t!("action-translate"),
             Action::CopyLink => t!("action-copy-link"),
             Action::CopyId => t!("action-copy-id"),
             Action::HideEmbeds => t!("action-hide-embeds"),
@@ -288,6 +294,7 @@ pub fn menu_actions(f: &Facts) -> Vec<Action> {
     }
     if f.has_text {
         out.push(Action::CopyText);
+        out.push(Action::Translate);
     }
     out.push(Action::CopyLink);
     if f.developer {
@@ -353,7 +360,7 @@ pub fn group_of(a: Action) -> u8 {
         Action::AddReaction | Action::Edit | Action::Reply | Action::Forward => 0,
         Action::Pin | Action::Unpin | Action::MarkUnread | Action::Save | Action::Unsave => 1,
         Action::HideEmbeds | Action::ShowEmbeds => 2,
-        Action::CopyText | Action::CopyLink | Action::CopyId => 3,
+        Action::CopyText | Action::Translate | Action::CopyLink | Action::CopyId => 3,
         Action::Delete => 4,
     }
 }
@@ -630,6 +637,18 @@ impl Inlet {
                 self.close_overlay(window, cx);
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(message_id));
             }
+            Action::Translate => {
+                self.close_overlay(window, cx);
+                let text = self
+                    .account
+                    .as_ref()
+                    .and_then(|a| Some(a.read(cx).messages(ch)?.get(id)?.content.clone()));
+                let kind = super::web_actions::Search::Translate;
+                // The browser opens the search the person asked for, and nothing else.
+                if let Some(url) = text.and_then(|t| super::web_actions::search_url(kind, &t)) {
+                    self.open_built_link(&url, cx);
+                }
+            }
             Action::CopyLink => {
                 self.close_overlay(window, cx);
                 let guild_id = self
@@ -833,7 +852,12 @@ mod tests {
         let f = facts(&none, 100, false);
         assert_eq!(
             menu_actions(&f),
-            vec![Action::CopyText, Action::CopyLink, Action::CopyId]
+            vec![
+                Action::CopyText,
+                Action::Translate,
+                Action::CopyLink,
+                Action::CopyId
+            ]
         );
         assert!(!f.perms.may_react(true));
         assert!(bar_actions(&f).is_empty());

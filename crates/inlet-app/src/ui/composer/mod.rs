@@ -15,6 +15,7 @@ pub mod drafts;
 pub mod edit_inline;
 pub mod editor;
 pub mod emoticons;
+pub mod media_list;
 pub mod pickers;
 pub mod reply_bar;
 pub mod slowmode;
@@ -311,6 +312,7 @@ impl Inlet {
                 };
                 edit_last(&self.composer.view, &account, channel, window, cx);
             }
+            ComposerEvent::Media(event) => self.on_media_list_event(event, cx),
         }
     }
 
@@ -359,6 +361,7 @@ impl Inlet {
                 user_id,
                 max_message_length,
                 uploads,
+                instance,
             } => {
                 // An answer for an account that has signed out since is dropped.
                 if !self.composer.session_asked || token != self.composer.session_token {
@@ -369,6 +372,8 @@ impl Inlet {
                     .and_then(|dir| drafts::path_for(&dir, &self.instance, &user_id));
                 self.composer.user_id = Some(user_id);
                 self.composer.upload_limits = uploads;
+                self.composer.shared.borrow_mut().upload_note = instance.upload_note;
+                self.overlays.trusted.set_instance(instance.trusted_domains);
                 view.update(cx, |v, cx| {
                     v.set_session(max_message_length, file, window, cx);
                     v.set_upload_limits(uploads);
@@ -398,6 +403,10 @@ impl Inlet {
                 view.update(cx, |v, cx| v.on_members(guild_id, members, cx))
             }
             Ev::Notice(text) => self.chat.notice = Some(text),
+            Ev::TrustedDomainsFailed(reason) => {
+                self.trusted_domains_failed();
+                self.chat.notice = Some(t!("link-trust-failed", error = reason));
+            }
             Ev::UploadStarted {
                 nonce,
                 channel_id,

@@ -672,6 +672,19 @@ pub fn set_close_to_tray(on: bool, cx: &mut App) {
     d.save();
 }
 
+/// Turns the experimental clone shortcuts of the picker menus on or off.
+pub fn set_expression_clone_shortcuts(on: bool, cx: &mut App) {
+    let d = cx.global_mut::<Desktop>();
+    d.prefs.expression_clone_shortcuts = on;
+    d.save();
+}
+
+/// Whether the clone shortcuts are on (off before the desktop side is set up).
+pub fn expression_clone_shortcuts(cx: &App) -> bool {
+    cx.try_global::<Desktop>()
+        .is_some_and(|d| d.prefs.expression_clone_shortcuts)
+}
+
 /// Turns the login item on or off, or changes whether it starts Inlet hidden. The
 /// system call runs in the background; the settings tab redraws when it is done.
 pub fn set_autostart(on: bool, hidden: bool, cx: &mut App) {

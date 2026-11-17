@@ -1,0 +1,14 @@
+composer-cmd-sticker = Send a sticker.
+composer-cmd-gif = Search for and send a GIF.
+composer-media-pick-first = Pick a result from the list first. Nothing was sent.
+composer-ac-gifs = GIFs
+composer-ac-stickers = Stickers
+composer-ac-saved = Saved media
+media-list-none-gifs = No GIFs found.
+media-list-none-stickers = No stickers found.
+media-list-none-saved = No saved media found.
+media-list-loading = Searching…
+media-list-failed = The search did not work: { $error }
+media-list-gifs-off = This instance has no GIF service.
+action-translate = Translate
+media-list-type-gif = Type to search for a GIF.

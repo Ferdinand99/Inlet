@@ -223,6 +223,10 @@ for step in identifier classic password code mfa ip; do
   scene "90-sign-in-$step" "sign-in-$step" c-general
 done
 
+# Media tools: the downloads panel and the `/gif` result list.
+scene 110-downloads-panel downloads-panel c-general
+scene 111-gif-command gif-command c-general
+
 # 11c. The Advanced settings tab, and the search across the settings with some words.
 settings_tab 130-settings-advanced advanced dark
 settings_tab 131-settings-search search:message dark

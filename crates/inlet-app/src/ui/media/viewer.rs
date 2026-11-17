@@ -111,6 +111,38 @@ impl Inlet {
         cx.notify();
     }
 
+    /// Puts the picture at `url` (on the media proxy) on the clipboard as an image: it is
+    /// fetched, decoded with the media limits and written again as PNG; see
+    /// `backend::media::clipboard`.
+    pub(crate) fn copy_image(&mut self, url: Url, cx: &mut Context<Self>) {
+        let Some(setup) = &self.media.setup else {
+            return;
+        };
+        let (fetcher, runtime) = (setup.fetcher.clone(), setup.runtime.clone());
+        self.chat.notice = Some(t!("media-image-copying"));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .spawn(crate::backend::media::clipboard::png_of(fetcher, url))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.chat.notice = Some(match result {
+                    Ok(Ok(png)) => {
+                        cx.write_to_clipboard(ClipboardItem::new_image(&gpui::Image::from_bytes(
+                            gpui::ImageFormat::Png,
+                            png,
+                        )));
+                        t!("media-image-copied")
+                    }
+                    Ok(Err(err)) => t!("media-copy-failed", reason = err.to_string()),
+                    Err(_) => t!("media-copy-failed", reason = t!("media-save-stopped")),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Closes the viewer; the focus goes back when no layer is left.
     pub(crate) fn close_viewer(&mut self, cx: &mut Context<Self>) {
         self.media.viewer = None;
@@ -198,12 +230,20 @@ impl Inlet {
                 )),
             );
         }
-        if let Some((link, _)) = viewer.original.clone() {
+        // The picture itself goes to the clipboard (Fluxer's "Copy image"), from the
+        // original on the media proxy. Without one on the proxy (an embed whose image
+        // is not proxied) there is only the link to copy.
+        if let Some((url, _)) = viewer.save.clone() {
             tools = tools.child(icon_button("viewer-copy".into(), MediaIcon::Copy).on_click(
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    // Deviation: Fluxer copies the image; this copies its link (an
-                    // image on the clipboard is not wired up yet).
+                    this.copy_image(url.clone(), cx);
+                }),
+            ));
+        } else if let Some((link, _)) = viewer.original.clone() {
+            tools = tools.child(icon_button("viewer-copy".into(), MediaIcon::Copy).on_click(
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
                     cx.write_to_clipboard(ClipboardItem::new_string(link.clone()));
                     this.chat.notice = Some(t!("media-link-copied"));
                     cx.notify();

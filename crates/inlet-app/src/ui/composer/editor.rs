@@ -124,6 +124,8 @@ pub enum ComposerEvent {
     EditLast {
         channel_id: String,
     },
+    /// A media command (`/gif`, `/sticker`, `/saved`) searches or has a result picked.
+    Media(super::media_list::MediaEvent),
 }
 
 /// State the app shares with the composer: the drafts survive the view, and sign-out
@@ -131,6 +133,8 @@ pub enum ComposerEvent {
 #[derive(Default)]
 pub struct Shared {
     pub drafts: Drafts,
+    /// The instance's own text for files that are too large, shown after a refusal.
+    pub upload_note: Option<String>,
 }
 
 impl Shared {
@@ -147,7 +151,7 @@ pub struct AutocompleteState {
     pub rows: Vec<Candidate>,
     pub selected: usize,
     /// Where the trigger starts, to keep the selection while the query grows.
-    start: usize,
+    pub(super) start: usize,
 }
 
 pub struct ComposerView {
@@ -163,6 +167,8 @@ pub struct ComposerView {
     /// Members per guild: from the account state and from searches.
     members: HashMap<String, Vec<Person>>,
     pub(super) autocomplete: Option<AutocompleteState>,
+    /// The search of the media command being typed, as the app was told.
+    pub(super) media_query: Option<(inlet_editor::MediaCommand, String)>,
     /// The trigger start the person closed the list at; it stays closed there.
     dismissed_at: Option<usize>,
     pub(super) reply: Option<Reply>,
@@ -243,6 +249,7 @@ impl ComposerView {
             directory: None,
             members: HashMap::new(),
             autocomplete: None,
+            media_query: None,
             dismissed_at: None,
             reply: None,
             edit: None,
@@ -557,6 +564,7 @@ impl ComposerView {
         let trigger = self.editor.read(cx).trigger();
         let Some((range, trigger)) = trigger else {
             self.autocomplete = None;
+            self.leave_media_trigger(cx);
             self.dismissed_at = None;
             return;
         };
@@ -565,6 +573,11 @@ impl ComposerView {
             return;
         }
         self.dismissed_at = None;
+        if let Trigger::Media(kind, query) = &trigger {
+            self.update_media_trigger(*kind, query.clone(), range.start, cx);
+            return;
+        }
+        self.leave_media_trigger(cx);
         if self.autocomplete.is_none() {
             // A list opens: take the account state as it is now.
             self.refresh_directory(cx);
@@ -647,7 +660,15 @@ impl ComposerView {
         let Some(row) = open.rows.into_iter().nth(ix) else {
             return;
         };
-        self.editor.update(cx, |e, cx| match row.pick {
+        let pick = match row.pick {
+            Pick::Media { index, text } => {
+                self.pick_media(open.section, index, text, window, cx);
+                return;
+            }
+            other => other,
+        };
+        self.editor.update(cx, |e, cx| match pick {
+            Pick::Media { .. } => {}
             Pick::Token(token, label) => {
                 if e.complete_trigger(token, &label, window, cx) {
                     let _ = e.insert_text(" ", window, cx);
@@ -814,9 +835,9 @@ impl ComposerView {
                 self.sent(window, cx);
                 return;
             }
-            Parsed::Saved => {
-                // Deviation: `/saved` needs the saved media picker, which is not built yet.
-                self.error = Some(t!("composer-saved-not-yet"));
+            Parsed::Media(_) => {
+                // As Fluxer: the command alone is never sent; a result has to be picked.
+                self.error = Some(t!("composer-media-pick-first"));
                 return;
             }
             Parsed::Wrapped(text) => text,
@@ -892,7 +913,7 @@ impl ComposerView {
     }
 
     /// Empties the composer after a send or a command.
-    fn sent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn sent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.autocomplete = None;
         self.reply = None;
         self.editor.update(cx, |e, cx| e.clear(window, cx));

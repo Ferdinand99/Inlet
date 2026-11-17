@@ -199,6 +199,18 @@ fn previewable(content_type: &str) -> bool {
     )
 }
 
+/// A refusal in words. After a size refusal the instance's own note follows, as in
+/// Fluxer's "file too large" alert; a refusal for the number of files has none.
+pub fn refusal_with_note(refused: &Refused, note: Option<&str>) -> String {
+    let reason = refused.reason();
+    match (refused, note) {
+        (Refused::FileSize { .. } | Refused::Total { .. }, Some(note)) => {
+            format!("{reason} {note}")
+        }
+        _ => reason,
+    }
+}
+
 /// An image pasted from the clipboard, as a file to attach: its bytes in memory, named
 /// `image` with the extension of its format. BMP and TIFF are turned into PNG in
 /// memory. `Err` says why an image cannot be attached (SVG and the like, or a picture
@@ -560,6 +572,12 @@ impl ComposerView {
         self.attachments.limits = limits;
     }
 
+    /// A refusal in words. After a size refusal the instance's own note follows, as in
+    /// Fluxer's "file too large" alert.
+    pub(super) fn refusal_text(&self, refused: &Refused) -> String {
+        refusal_with_note(refused, self.shared.borrow().upload_note.as_deref())
+    }
+
     /// Whether files may be attached in the open channel: always in direct messages,
     /// in a guild with `ATTACH_FILES` (not known yet counts as no).
     pub(super) fn may_attach(&self) -> bool {
@@ -743,7 +761,7 @@ impl ComposerView {
                     }
                 }
             }
-            Err(refused) => self.error = Some(refused.reason()),
+            Err(refused) => self.error = Some(self.refusal_text(&refused)),
         }
         cx.notify();
     }
@@ -894,7 +912,7 @@ impl ComposerView {
                 }
                 self.error = Some(t!("composer-attach-metadata-blocked", name = name));
             }
-            Err(refused) => self.error = Some(refused.reason()),
+            Err(refused) => self.error = Some(self.refusal_text(&refused)),
         }
         cx.notify();
     }
@@ -1492,6 +1510,23 @@ pub(crate) mod tests {
         a.add("3", vec![memory("d.png", 1)]).unwrap();
         assert_eq!(a.clear().len(), 1);
         assert!(a.staged("3").is_empty());
+    }
+
+    #[test]
+    fn the_instance_note_follows_a_size_refusal_only() {
+        let note = Some("Ask an admin for more room.");
+        let big = Refused::FileSize {
+            name: "a.bin".into(),
+            max: 10 * 1024 * 1024,
+        };
+        let text = refusal_with_note(&big, note);
+        assert!(text.starts_with(&big.reason()));
+        assert!(text.ends_with("Ask an admin for more room."));
+        let total = Refused::Total { max: 10 };
+        assert!(refusal_with_note(&total, note).ends_with("more room."));
+        let count = Refused::Count { max: 10 };
+        assert_eq!(refusal_with_note(&count, note), count.reason());
+        assert_eq!(refusal_with_note(&big, None), big.reason());
     }
 
     #[test]

@@ -23,3 +23,4 @@ media-error-unreadable = This image can't be displayed
 media-retry = Retry
 media-open-in-browser = Open in browser
 media-gif-badge = GIF
+media-save-cancelled = the download was cancelled

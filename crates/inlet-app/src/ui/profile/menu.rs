@@ -111,6 +111,45 @@ impl Inlet {
                     cx.notify();
                 }),
             ));
+            let spam = self.chat.view.spam.clone();
+            let flagged = self
+                .account
+                .as_ref()
+                .and_then(|a| a.read(cx).user(user).and_then(|u| u.flags.clone()))
+                .and_then(|f| f.as_u64())
+                .is_some_and(|f| f & crate::ui::social::spam::SPAMMER_FLAG != 0);
+            let marked = spam.marked_spammer(user);
+            menu = menu.child(separator()).child(
+                item(
+                    "user-menu-spam-mark",
+                    if marked {
+                        t!("user-menu-spam-unmark")
+                    } else {
+                        t!("user-menu-spam-mark")
+                    },
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.profile.menu = None;
+                    this.mark_spam(user, (!marked).then_some(true), cx);
+                })),
+            );
+            if flagged {
+                let ignored = spam.marked_not_spammer(user);
+                menu = menu.child(
+                    item(
+                        "user-menu-spam-ignore",
+                        if ignored {
+                            t!("user-menu-spam-unignore")
+                        } else {
+                            t!("user-menu-spam-ignore")
+                        },
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.profile.menu = None;
+                        this.mark_spam(user, (!ignored).then_some(false), cx);
+                    })),
+                );
+            }
         }
         let card = div()
             .id(SharedString::from(format!("user-menu-{user}")))

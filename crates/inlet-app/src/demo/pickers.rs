@@ -139,7 +139,12 @@ pub fn answer(events: &Ui, cmd: Cmd) {
         Cmd::LoadPreferences => Ev::Preferences(Box::new(preferences())),
         Cmd::EditPreferences { base, .. } => Ev::Edited(Box::new((*base).clone())),
         Cmd::LoadMemes => Ev::Memes(Vec::new()),
-        Cmd::SharedGif { .. } | Cmd::SendSticker { .. } | Cmd::SendMeme { .. } => return,
+        Cmd::SharedGif { .. }
+        | Cmd::SendSticker { .. }
+        | Cmd::SendMeme { .. }
+        | Cmd::CloneExpression { .. }
+        | Cmd::SaveGifAsMeme { .. }
+        | Cmd::DeleteMeme { .. } => return,
     };
     let _ = events.unbounded_send(ComposerEv::Pickers(ev));
 }

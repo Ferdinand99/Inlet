@@ -22,6 +22,7 @@ pub mod inbox;
 pub mod instance;
 mod markdown;
 pub mod media;
+mod media_tools;
 mod members;
 mod messages;
 pub mod nav;

@@ -15,6 +15,7 @@ pub mod group_dm;
 pub mod notes;
 pub mod pending;
 pub mod presence;
+pub mod spam;
 
 use std::collections::HashSet;
 

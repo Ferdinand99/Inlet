@@ -58,6 +58,11 @@
 //!   the guild (see `search.rs`).
 //! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
 //!   `accounts` (their channels with mentions and unread messages).
+//! - `downloads-panel`: for `#general`, the downloads panel open under the header
+//!   button, with a download on its way (a bar and a percentage), a finished one and a
+//!   failed one (see `media_tools.rs`).
+//! - `gif-command`: for `#general`, `/gif cat` typed in the composer and the list of
+//!   results above it (see `media_tools.rs`).
 //! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
 //!   chat.
 //! - `sign-in-identifier`, `sign-in-classic`, `sign-in-password`, `sign-in-code`,
@@ -139,6 +144,8 @@ pub enum Scene {
     GuildMenu,
     InviteAccept,
     KeybindHelp,
+    DownloadsPanel,
+    GifCommand,
     /// The sign-in screen on one of its steps (see `signin.rs`).
     SignIn(super::signin::Step),
 }
@@ -194,6 +201,8 @@ impl Scene {
             "guild-menu" => Scene::GuildMenu,
             "invite-accept" => Scene::InviteAccept,
             "keybind-help" => Scene::KeybindHelp,
+            "downloads-panel" => Scene::DownloadsPanel,
+            "gif-command" => Scene::GifCommand,
             other => return super::signin::Step::from_name(other).map(Scene::SignIn),
         })
     }
@@ -635,6 +644,8 @@ mod tests {
             "profile-popout",
             "search-results",
             "quick-switcher",
+            "downloads-panel",
+            "gif-command",
             "banners",
             "banners-maintenance",
             "banners-connection",

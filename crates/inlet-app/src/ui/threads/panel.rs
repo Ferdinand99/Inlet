@@ -79,6 +79,7 @@ impl Panel {
         let mut view = MessageView::new();
         view.compact = chat.compact;
         view.share_outbox(chat);
+        view.spam = chat.spam.clone();
         view.continue_requests(last_request);
         Panel {
             thread,
@@ -758,6 +759,8 @@ impl Inlet {
                     edit_last(&view, &account, thread, window, cx);
                 }
             }
+            // The thread panel's composer has no media lists (no picker buttons).
+            ComposerEvent::Media(_) => {}
         }
     }
 

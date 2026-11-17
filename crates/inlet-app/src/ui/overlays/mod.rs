@@ -15,6 +15,7 @@ pub mod nav_dialog;
 mod notification_settings;
 pub mod status_picker;
 mod tooltip;
+pub mod trusted;
 
 use gpui::{AnyElement, Context, FocusHandle, IntoElement};
 
@@ -26,6 +27,8 @@ use crate::desktop::Layer;
 pub struct OverlayState {
     /// A masked link waiting for confirmation.
     pub pending_link: Option<String>,
+    /// The domains whose links open without the question.
+    pub trusted: trusted::TrustedDomains,
     /// A deep link or invite link waiting for confirmation (see `desktop`).
     pub link_prompt: Option<Prompt>,
     /// The channel a confirmed link opens once its guild's channel list is in.
@@ -57,6 +60,12 @@ impl Inlet {
         out.extend(self.render_image_viewer(cx));
         // The emoji, GIF, sticker and meme picker: over the viewer, under the settings.
         out.extend(self.render_picker(cx));
+        // The menu of a picker item, over the picker.
+        out.extend(self.render_item_menu(cx));
+        // The results of `/gif`, `/sticker` and `/saved`, in the same place.
+        out.extend(self.render_media_list(cx));
+        // The downloads panel under the header button.
+        out.extend(self.render_downloads_panel(cx));
         if self.settings.view.is_some() {
             out.push(self.render_settings_overlay(cx));
         }

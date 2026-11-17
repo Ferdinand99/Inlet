@@ -633,3 +633,70 @@ fn only_fluxers_emoji_keys_are_accepted() {
         assert!(!is_emoji_key(bad), "{bad}");
     }
 }
+
+#[tokio::test]
+async fn repeated_clone_save_and_trust_clicks_make_one_request_each() {
+    use crate::ui::composer::pickers::ClickGuard;
+    use crate::ui::overlays::trusted::TrustedDomains;
+
+    let (server, client) = fixture("tok-clicks").await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/guilds/300/emojis/clone"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/users/@me/memes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "70", "name": "cat", "url": "https://media.example/attachments/1/70/cat.gif"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/users/@me/settings"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&server)
+        .await;
+    let gif: p::Gif = serde_json::from_value(json!({
+        "id": "g1", "slug": "cat", "provider": "klipy", "title": "Cat",
+        "url": "https://klipy.com/gifs/cat"
+    }))
+    .unwrap();
+
+    // The worst case: thirty clicks each, as fast as the menu can be reopened.
+    let mut guard = ClickGuard::default();
+    let now = Instant::now();
+    let mut trusted = TrustedDomains::default();
+    for _ in 0..30 {
+        if guard.begin("clone:false:88:300", now) {
+            client.clone_emoji("300", "88").await.unwrap();
+        }
+        if guard.begin("save-gif:g1", now) {
+            client.save_gif_as_meme(&gif).await.unwrap();
+        }
+        // "Always trust" shows the host as trusted at once, so the next click has nothing
+        // to save.
+        if let Some(next) = trusted.with_added("example.org") {
+            trusted.show_pending(next.clone());
+            client.set_trusted_domains(&next).await.unwrap();
+        }
+    }
+    assert_eq!(
+        requests(&server, "POST", "/api/v1/guilds/300/emojis/clone")
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(
+        requests(&server, "POST", "/api/v1/users/@me/memes")
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(
+        requests(&server, "PATCH", "/api/v1/users/@me/settings")
+            .await
+            .len(),
+        1
+    );
+}

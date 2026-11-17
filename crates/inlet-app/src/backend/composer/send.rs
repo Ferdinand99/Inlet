@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use super::directory::RetryPlan;
 use super::upload::Limits;
 use super::Ev;
+use super::InstanceTexts;
 use super::State;
 use crate::backend::messages;
 use crate::backend::messages::outbox::{is_own_copy, Sent, CLOCK_SLACK_MS};
@@ -378,6 +379,7 @@ impl Backend {
                 user_id: crate::demo::composer::demo_user_id(),
                 max_message_length: 2000,
                 uploads: Limits::default(),
+                instance: InstanceTexts::default(),
             }),
             Some(Active::Real(r)) => {
                 if let Some((user_id, max)) = r.composer.session(r.gen) {
@@ -386,6 +388,7 @@ impl Backend {
                         user_id,
                         max_message_length: max,
                         uploads: Limits::of(r.session.client().upload_limits()),
+                        instance: InstanceTexts::of(r.session.instance().discovery()),
                     });
                     return;
                 }
@@ -413,6 +416,7 @@ impl Backend {
                                 user_id: me.id.clone(),
                                 max_message_length: max,
                                 uploads,
+                                instance: InstanceTexts::of(session.instance().discovery()),
                             });
                         }
                         Err(err) => {

@@ -7,7 +7,8 @@
 //!   [`crate::Media::emoji`] and [`crate::Media::sticker`].
 //! - An emoji or sticker seen in a message from a guild the account is not
 //!   in: [`crate::Client::emoji_metadata`] and [`crate::Client::emoji_source`]
-//!   (and the sticker versions) say which guild owns it.
+//!   (and the sticker versions) say which guild owns it. [`crate::Client::clone_emoji`]
+//!   and [`crate::Client::clone_sticker`] copy one into a guild of the account.
 //! - Memes: media files saved to the account (Fluxer keeps its own copy),
 //!   in READY `favorite_memes` ([`crate::Ready::favorite_memes`]) and the
 //!   FAVORITE_MEME_* events. Send one with [`crate::Client::send_meme`].
@@ -270,6 +271,30 @@ impl Client {
         )
         .await?
         .json()
+    }
+
+    /// `POST /guilds/{guild}/emojis/clone`: copies a custom emoji into `guild_id` (the
+    /// account needs the right to manage expressions there, and the source guild has to
+    /// allow cloning). The new emoji arrives as GUILD_EMOJIS_UPDATE.
+    pub async fn clone_emoji(&self, guild_id: &str, source_emoji_id: &str) -> Result<()> {
+        self.raw(
+            Method::POST,
+            &format!("/guilds/{}/emojis/clone", snowflake(guild_id)?),
+            Some(&json!({ "source_emoji_id": snowflake(source_emoji_id)? })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// `POST /guilds/{guild}/stickers/clone`: the same for a sticker.
+    pub async fn clone_sticker(&self, guild_id: &str, source_sticker_id: &str) -> Result<()> {
+        self.raw(
+            Method::POST,
+            &format!("/guilds/{}/stickers/clone", snowflake(guild_id)?),
+            Some(&json!({ "source_sticker_id": snowflake(source_sticker_id)? })),
+        )
+        .await?;
+        Ok(())
     }
 
     /// `GET /users/@me/memes`: saved memes, newest first.

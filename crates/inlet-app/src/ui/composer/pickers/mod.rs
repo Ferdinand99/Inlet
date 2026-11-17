@@ -14,21 +14,24 @@
 //! - **Picking.** In the composer an emoji goes in at the caret (a Unicode emoji as text,
 //!   a custom emoji as a pill), a GIF as its link, the way Fluxer sends it; a sticker or a
 //!   meme is sent at once as a message of its own. Shift keeps the picker open. In a
-//!   reaction picker the emoji reacts. A right click makes an emoji or a GIF a
-//!   favourite, or no longer one.
+//!   reaction picker the emoji reacts. A right click opens the item's menu (`item_menu`):
+//!   favourite, copy, clone, info.
+//! - **`/gif`, `/sticker`, `/saved`.** The same pickers' data answers these commands in the
+//!   composer (`commands`).
 //! - **Locked emoji.** Custom emoji (and stickers) of another community are shown but
 //!   cannot be used unless the account may: Fluxer's rule needs the right to use
 //!   external emoji in the channel and the instance's `feature_global_expressions`.
 
-// Deviation: Fluxer's picker has a context menu per item (favourite, copy, info), a
-// category sidebar and a skin tone popover; Inlet makes an item a favourite with a right
-// click, jumps between sections with a bar under the grid, and steps through the skin
-// tones with one button. A GIF always goes into the composer as its link (Fluxer's
+// Deviation: Fluxer's picker has a category sidebar and a skin tone popover; Inlet jumps
+// between sections with a bar under the grid, and steps through the skin tones with one
+// button. A GIF always goes into the composer as its link (Fluxer's
 // optional "send GIFs at once" setting is not read yet), and a meme is always sent at
 // once by its ID (Fluxer puts its link into the composer unless that setting is on).
 
+mod commands;
 mod emoji;
 mod gif;
+mod item_menu;
 mod meme;
 pub mod prefs;
 mod sticker;
@@ -57,6 +60,8 @@ use crate::theme;
 
 #[cfg(test)]
 pub(crate) use self::gif::SearchDebounce;
+#[cfg(test)]
+pub(crate) use self::item_menu::ClickGuard;
 use self::prefs::PickerPrefs;
 
 actions!(
@@ -228,6 +233,12 @@ pub struct PickersState {
     memes_asked: bool,
     /// Why the last load of the memes failed (asked again when the tab opens).
     memes_error: Option<String>,
+    /// The result lists of `/gif`, `/sticker` and `/saved` in the composer.
+    commands: commands::MediaList,
+    /// The menu of a picker item (right click), when one is open.
+    menu: Option<item_menu::ItemMenu>,
+    /// Keeps a click from sending the same clone or save twice.
+    guard: item_menu::ClickGuard,
     /// The emoji and sticker grids, built again only when what they show changes.
     emoji_rows: Cached<emoji::GridKey, (Vec<emoji::Row>, Vec<usize>)>,
     sticker_rows: Cached<sticker::GridKey, (Vec<sticker::Row>, bool)>,
@@ -244,6 +255,7 @@ impl PickersState {
 
     pub fn close(&mut self) {
         self.open = None;
+        self.menu = None;
         self.gifs.cancel_search();
     }
 
@@ -489,7 +501,7 @@ impl Inlet {
     }
 
     /// Drops the pickers' state when another account is shown (or none).
-    fn pickers_follow_account(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pickers_follow_account(&mut self, cx: &mut Context<Self>) {
         if self.composer.pickers.account != self.switcher.active {
             let account = self.switcher.active.clone();
             self.composer.pickers.reset(account);
@@ -704,8 +716,16 @@ impl Inlet {
                     }
                 }
                 self.set_picker_buttons(cx);
+                self.media_rows_changed(cx);
             }
-            Ev::Gifs { nonce, result } => pickers.gifs.answered_gifs(nonce, result),
+            Ev::Gifs { nonce, result } => {
+                if pickers.commands.waits_for(nonce) {
+                    pickers.commands.gifs_answered(nonce, result);
+                } else {
+                    pickers.gifs.answered_gifs(nonce, result);
+                }
+                self.media_rows_changed(cx);
+            }
             Ev::Categories { nonce, result } => pickers.gifs.answered_categories(nonce, result),
             Ev::Preferences(stored) => pickers.prefs.set_stored(*stored),
             Ev::PreferencesLoadFailed(reason) => {
@@ -722,9 +742,36 @@ impl Inlet {
                 pickers.prefs.edited(None);
                 self.chat.notice = Some(t!("picker-prefs-failed", error = reason));
             }
-            Ev::Memes(memes) => pickers.memes = Some(memes),
+            Ev::Memes(memes) => {
+                pickers.memes = Some(memes);
+                self.media_rows_changed(cx);
+            }
             Ev::SendFailed(reason) => {
                 self.chat.notice = Some(t!("picker-send-failed", error = reason));
+            }
+            Ev::Cloned {
+                sticker,
+                name,
+                target_name,
+            } => {
+                self.chat.notice = Some(if sticker {
+                    t!("item-cloned-sticker", name = name, target = target_name)
+                } else {
+                    t!("item-cloned-emoji", name = name, target = target_name)
+                });
+            }
+            Ev::CloneFailed(reason) => {
+                self.chat.notice = Some(t!("item-clone-failed", error = reason));
+            }
+            Ev::MemeDone { removed } => {
+                self.chat.notice = Some(if removed {
+                    t!("item-meme-removed")
+                } else {
+                    t!("item-meme-saved")
+                });
+            }
+            Ev::MemeFailed(reason) => {
+                self.chat.notice = Some(t!("item-meme-failed", error = reason));
             }
         }
         cx.notify();
@@ -842,6 +889,10 @@ impl Inlet {
                 inset: false,
             }])
             .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                // A click in the item menu is not a click outside the picker.
+                if this.composer.pickers.menu.is_some() {
+                    return;
+                }
                 this.composer.pickers.close();
                 this.composer.pickers.closed_by_click = Some((tab, target, Instant::now()));
                 cx.notify();

@@ -1,0 +1,13 @@
+media-dl-title = Downloads
+media-dl-clear = Clear list
+media-dl-starting = Starting
+media-dl-progress = { $percent }% of { $total }
+media-dl-done = Completed
+media-dl-cancelled = Cancelled. The partial file was deleted.
+media-dl-failed = Failed: { $reason }
+media-dl-moved = The file was moved or deleted.
+media-dl-reveal = Show in folder
+media-dl-cancel = Cancel
+media-dl-remove = Remove from list
+media-save-cancelled-notice = Download cancelled
+media-dl-demo-reset = the connection was reset

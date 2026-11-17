@@ -13,7 +13,8 @@
 //! ([`Cmd::Refresh`], one `GET` of the message through the rate limiter).
 //!
 //! Saving a file streams it from the media proxy to the path the person picked in the
-//! save dialog. The file is never opened, run or revealed afterwards.
+//! save dialog. The file is never opened or run. The downloads panel (`ui/media/downloads`)
+//! can show it in the file manager, but only when asked to.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,8 +32,10 @@ use url::Url;
 
 use super::{Active, Backend};
 
+pub mod clipboard;
 #[cfg(any(test, feature = "demo"))]
 pub mod png;
+pub mod text;
 use crate::model::{self, Attachment, AttachmentKind, Embed, EmbedKind, EmbedMedia, UserAvatar};
 
 /// Attachments of one message that are converted (Fluxer allows 10).
@@ -386,6 +389,8 @@ pub enum SaveError {
     Fetch(FetchError),
     TooLarge,
     Write(std::io::Error),
+    /// The person cancelled the download; nothing is left on disk.
+    Cancelled,
 }
 
 impl std::fmt::Display for SaveError {
@@ -394,8 +399,21 @@ impl std::fmt::Display for SaveError {
             SaveError::Fetch(e) => write!(f, "{e}"),
             SaveError::TooLarge => f.write_str(&t!("media-save-too-large")),
             SaveError::Write(e) => write!(f, "{e}"),
+            SaveError::Cancelled => f.write_str(&t!("media-save-cancelled")),
         }
     }
+}
+
+/// How far a save has come, read by the downloads panel while the save runs, and the
+/// flag that stops it.
+#[derive(Debug, Default)]
+pub struct SaveProgress {
+    /// Bytes written so far.
+    pub received: AtomicU64,
+    /// Bytes announced by the server, 0 when it did not say.
+    pub total: AtomicU64,
+    /// Set to stop the save; its temporary file is deleted.
+    pub cancel: std::sync::atomic::AtomicBool,
 }
 
 /// Most bytes a save may write: the announced size with some slack, or 512 MiB when
@@ -411,32 +429,89 @@ pub fn save_limit(announced: u64) -> u64 {
 
 /// Streams `url` into `path` (written to a temporary file next to it first, then
 /// renamed). Returns the bytes written. The file is only written: never opened, run
-/// or shown in a file manager.
+/// or shown in a file manager (the downloads panel does that, on a click).
+#[cfg(test)]
 pub async fn save_to(
     fetcher: Arc<dyn Fetcher>,
     url: Url,
     path: PathBuf,
     max_bytes: u64,
 ) -> Result<u64, SaveError> {
+    save_tracked(
+        fetcher,
+        url,
+        path,
+        max_bytes,
+        Arc::new(SaveProgress::default()),
+    )
+    .await
+}
+
+/// [`save_to`] that reports its progress and can be cancelled through `progress`.
+pub async fn save_tracked(
+    fetcher: Arc<dyn Fetcher>,
+    url: Url,
+    path: PathBuf,
+    max_bytes: u64,
+    progress: Arc<SaveProgress>,
+) -> Result<u64, SaveError> {
     use tokio::io::AsyncWriteExt;
 
-    let resp = fetcher.fetch(&url).await.map_err(SaveError::Fetch)?;
+    // A cancel that comes while the server has not answered yet does not wait for the
+    // fetcher's own timeout: the flag is looked at every quarter second.
+    let resp = {
+        let fetching = fetcher.fetch(&url);
+        tokio::pin!(fetching);
+        loop {
+            match tokio::time::timeout(Duration::from_millis(250), &mut fetching).await {
+                Ok(answer) => break answer.map_err(SaveError::Fetch)?,
+                Err(_) if progress.cancel.load(Ordering::Relaxed) => {
+                    return Err(SaveError::Cancelled);
+                }
+                Err(_) => {}
+            }
+        }
+    };
     if resp.content_length.is_some_and(|n| n > max_bytes) {
         return Err(SaveError::TooLarge);
     }
+    progress
+        .total
+        .store(resp.content_length.unwrap_or(0), Ordering::Relaxed);
     let (part, mut file) = create_part(&path, part_seeds())
         .await
         .map_err(SaveError::Write)?;
     let mut body = resp.body;
     let mut written: u64 = 0;
     let result: Result<(), SaveError> = async {
-        while let Some(chunk) = body.next().await {
+        loop {
+            // A stalled read must not hold a cancel back: look at the flag every quarter second.
+            let next = match tokio::time::timeout(Duration::from_millis(250), body.next()).await {
+                Ok(next) => next,
+                Err(_) => {
+                    if progress.cancel.load(Ordering::Relaxed) {
+                        return Err(SaveError::Cancelled);
+                    }
+                    continue;
+                }
+            };
+            let Some(chunk) = next else {
+                break;
+            };
+            if progress.cancel.load(Ordering::Relaxed) {
+                return Err(SaveError::Cancelled);
+            }
             let chunk = chunk.map_err(SaveError::Fetch)?;
             written = written.saturating_add(chunk.len() as u64);
             if written > max_bytes {
                 return Err(SaveError::TooLarge);
             }
             file.write_all(&chunk).await.map_err(SaveError::Write)?;
+            progress.received.store(written, Ordering::Relaxed);
+        }
+        // A cancel that came with the last chunk still counts: nothing is kept.
+        if progress.cancel.load(Ordering::Relaxed) {
+            return Err(SaveError::Cancelled);
         }
         file.flush().await.map_err(SaveError::Write)?;
         file.sync_all().await.map_err(SaveError::Write)?;
@@ -1154,6 +1229,118 @@ mod tests {
             Err(MediaError::BadDimensions { .. })
         ));
         assert_eq!(made.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancelled_save_leaves_nothing_and_progress_is_reported() {
+        let dir = std::env::temp_dir().join(format!("inlet-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fetcher = Arc::new(Recording {
+            seen: Mutex::default(),
+            body: Bytes::from_static(b"twelve bytes"),
+        });
+        let url = Url::parse("https://media.example.org/media/attachments/1/2/a.bin").unwrap();
+        // Progress: the written bytes are counted.
+        let ok = Arc::new(SaveProgress::default());
+        let target = dir.join("ok.bin");
+        save_tracked(
+            fetcher.clone(),
+            url.clone(),
+            target.clone(),
+            save_limit(0),
+            ok.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok.received.load(Ordering::Relaxed), 12);
+        assert_eq!(std::fs::read(&target).unwrap(), b"twelve bytes");
+        // Cancelled: an error, and neither the file nor its temporary one is left.
+        let stop = Arc::new(SaveProgress::default());
+        stop.cancel.store(true, Ordering::Relaxed);
+        let gone = dir.join("gone.bin");
+        let result = save_tracked(fetcher, url, gone.clone(), save_limit(0), stop).await;
+        assert!(matches!(result, Err(SaveError::Cancelled)));
+        assert!(!gone.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A body that never sends anything.
+    struct Stalled;
+
+    impl Fetcher for Stalled {
+        fn fetch<'a>(&'a self, _: &'a Url) -> BoxFuture<'a, Result<FetchResponse, FetchError>> {
+            Box::pin(async {
+                let body: inlet_media::ByteStream = Box::pin(futures::stream::pending());
+                Ok(FetchResponse::new(None, body))
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancel_reaches_a_download_that_has_stalled() {
+        let dir = std::env::temp_dir().join(format!("inlet-stall-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = Url::parse("https://media.example.org/media/attachments/1/2/a.bin").unwrap();
+        let progress = Arc::new(SaveProgress::default());
+        let flag = progress.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            flag.cancel.store(true, Ordering::Relaxed);
+        });
+        let target = dir.join("stalled.bin");
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            save_tracked(
+                Arc::new(Stalled),
+                url,
+                target.clone(),
+                save_limit(0),
+                progress,
+            ),
+        )
+        .await
+        .expect("the cancel must end the save");
+        assert!(matches!(result, Err(SaveError::Cancelled)));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A server that never answers the request.
+    struct NeverAnswers;
+
+    impl Fetcher for NeverAnswers {
+        fn fetch<'a>(&'a self, _: &'a Url) -> BoxFuture<'a, Result<FetchResponse, FetchError>> {
+            Box::pin(futures::future::pending())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancel_reaches_a_download_that_has_not_been_answered() {
+        let url = Url::parse("https://media.example.org/media/attachments/1/2/a.bin").unwrap();
+        let progress = Arc::new(SaveProgress::default());
+        let flag = progress.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            flag.cancel.store(true, Ordering::Relaxed);
+        });
+        let target = std::env::temp_dir().join(format!("inlet-noanswer-{}", std::process::id()));
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            save_tracked(
+                Arc::new(NeverAnswers),
+                url,
+                target.clone(),
+                save_limit(0),
+                progress,
+            ),
+        )
+        .await
+        .expect("the cancel must end the save");
+        assert!(matches!(result, Err(SaveError::Cancelled)));
+        assert!(!target.exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]

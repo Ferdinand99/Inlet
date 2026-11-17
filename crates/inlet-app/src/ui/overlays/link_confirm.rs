@@ -11,7 +11,11 @@ use crate::ui::markdown;
 use crate::ui::widgets::button;
 
 impl Inlet {
-    pub(crate) fn open_link(&mut self, url: &str, masked: bool, cx: &mut Context<Self>) {
+    /// Opens a link from a message. As in Fluxer, a link whose host is not trusted (see
+    /// `trusted`) gets the question first, plain or masked alike; the instance's own media
+    /// host and the trusted lists open at once. `_masked` is kept for the callers: the
+    /// question no longer depends on it.
+    pub(crate) fn open_link(&mut self, url: &str, _masked: bool, cx: &mut Context<Self>) {
         if let Some(channel_id) = url.strip_prefix(markdown::CHANNEL_LINK) {
             self.chat.pending_channel_jump = Some(channel_id.to_string());
             cx.notify();
@@ -24,12 +28,33 @@ impl Inlet {
         }
         if markdown::openable(url).is_none() {
             self.chat.error = Some(t!("link-only-http"));
-        } else if masked {
+        } else if !self.link_is_trusted(url) {
             self.overlays.pending_link = Some(url.to_string());
         } else {
             cx.open_url(url);
         }
         cx.notify();
+    }
+
+    /// Whether a link opens without the question: a trusted host, or a file on the
+    /// instance's media proxy.
+    pub(crate) fn link_is_trusted(&self, url: &str) -> bool {
+        let on_media = self
+            .media
+            .setup
+            .as_ref()
+            .and_then(|s| url::Url::parse(s.proxy.base()).ok())
+            .zip(markdown::openable(url))
+            .is_some_and(|(base, u)| crate::backend::media::on_media_base(&base, &u));
+        !self.overlays.trusted.asks_first(url, on_media)
+    }
+
+    /// Opens an address Inlet built itself (a search the person asked for): straight to
+    /// the browser, as Fluxer does, after the http(s) check.
+    pub(crate) fn open_built_link(&mut self, url: &str, cx: &mut Context<Self>) {
+        if markdown::openable(url).is_some() {
+            cx.open_url(url);
+        }
     }
 
     pub(super) fn render_link_confirm(&self, url: &str, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -41,6 +66,29 @@ impl Inlet {
             .map(|u| u.as_str().to_string())
             .unwrap_or_else(|| url.to_string());
         let lines = wrap_url(&shown, 64, 6);
+        // "Always trust" for a plain host that is not trusted yet, and never for a link that
+        // can fool the reader.
+        let trust_host = parsed
+            .as_ref()
+            .filter(|_| !markdown::is_deceptive(url))
+            .and_then(|u| u.host_str().map(str::to_owned))
+            .filter(|h| self.overlays.trusted.with_added(h).is_some());
+        let trust = trust_host.map(|host| {
+            let target = parsed.clone();
+            button(
+                "link-trust",
+                t!("link-trust-open", host = host.as_str()),
+                false,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.overlays.pending_link = None;
+                this.trust_domain(&host, cx);
+                if let Some(u) = &target {
+                    cx.open_url(u.as_str());
+                }
+                cx.notify();
+            }))
+        });
         modal(
             "link-confirm",
             520.,
@@ -82,6 +130,7 @@ impl Inlet {
                             },
                         )),
                     )
+                    .children(trust)
                     .child(
                         button("link-cancel", t!("common-cancel"), false).on_click(cx.listener(
                             |this, _, _, cx| {
