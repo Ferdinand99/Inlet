@@ -29,7 +29,6 @@ composer-msg-failed = Kunne ikke sende direktemeldingen: { $error }
 composer-command-failed = Kommandoen mislyktes: { $error }
 composer-bad-answer = serveren ga et svar Inlet ikke kunne lese
 composer-not-connected = ikke koblet til serveren
-composer-saved-not-yet = Lagrede medier kan ikke velges her ennå.
 
 ## Svarlinjen
 
