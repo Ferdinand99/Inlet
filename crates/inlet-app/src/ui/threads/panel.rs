@@ -172,6 +172,12 @@ impl Inlet {
             cx.notify();
             return;
         };
+        // A thread is judged by its parent channel: an age-restricted or content-warned
+        // channel asks first (see `overlays::gate`).
+        if let Some(gate) = self.gate_for(&thread.to_string(), cx) {
+            self.show_gate(gate, cx);
+            return;
+        }
         self.threads.browser = None;
         if self
             .threads

@@ -99,6 +99,35 @@ impl PickerPrefs {
         Some(Cmd::EditPreferences { base, edit })
     }
 
+    /// Whether the content warning of a channel, category or server was accepted
+    /// (`guild_nsfw_agreements`).
+    pub fn agreed(&self, scope: gif::NsfwScope, id: &str) -> bool {
+        let Some(a) = &self.shown.guild_nsfw_agreements else {
+            return false;
+        };
+        let list = match scope {
+            gif::NsfwScope::Channel => &a.agreed_channel_ids,
+            gif::NsfwScope::Category => &a.agreed_category_ids,
+            gif::NsfwScope::Guild => &a.agreed_guild_ids,
+        };
+        list.iter().any(|i| i == id)
+    }
+
+    /// The favourites: channels from every server, the person's own categories, which
+    /// are folded, and whether muted channels are left out.
+    pub fn favourites_state(&self) -> Option<&inlet_protocol::proto::preferences::FavoritesState> {
+        self.shown.favorites.as_ref()
+    }
+
+    /// Whether the rail shows the favourites star (`show_favorites`, on unless set off).
+    pub fn show_favourites(&self) -> bool {
+        self.shown
+            .accessibility
+            .as_ref()
+            .and_then(|a| a.show_favorites)
+            .unwrap_or(true)
+    }
+
     /// The favourite emoji keys, in the order they were added.
     pub fn favourites(&self) -> &[String] {
         self.shown

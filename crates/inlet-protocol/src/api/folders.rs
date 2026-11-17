@@ -121,21 +121,29 @@ pub fn guild_order(folders: &[GuildFolder]) -> Vec<&str> {
         .collect()
 }
 
+/// The `guild_folders` of a settings request: at most [`MAX_FOLDERS`] entries, every
+/// field checked, in the form the server takes.
+pub(crate) fn guild_folders_json(folders: &[GuildFolder]) -> Result<Value> {
+    if folders.len() > MAX_FOLDERS {
+        return Err(Error::InvalidInput(format!(
+            "at most {MAX_FOLDERS} guild folders"
+        )));
+    }
+    Ok(Value::Array(
+        folders
+            .iter()
+            .map(GuildFolder::to_json)
+            .collect::<Result<Vec<_>>>()?,
+    ))
+}
+
 impl Client {
     /// `PATCH /users/@me/settings` with `guild_folders`: replaces the
     /// sidebar order and folders (at most 100 entries; every field is checked
     /// before the request). Returns the new settings; USER_SETTINGS_UPDATE
     /// follows on the gateway.
     pub async fn set_guild_folders(&self, folders: &[GuildFolder]) -> Result<UserSettings> {
-        if folders.len() > MAX_FOLDERS {
-            return Err(Error::InvalidInput(format!(
-                "at most {MAX_FOLDERS} guild folders"
-            )));
-        }
-        let list = folders
-            .iter()
-            .map(GuildFolder::to_json)
-            .collect::<Result<Vec<_>>>()?;
+        let list = guild_folders_json(folders)?;
         self.raw(
             Method::PATCH,
             "/users/@me/settings",

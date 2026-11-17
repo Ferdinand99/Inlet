@@ -65,6 +65,14 @@
 //!   results above it (see `media_tools.rs`).
 //! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
 //!   chat.
+//! - `sign-in-identifier`, `sign-in-classic`, `sign-in-password`, `sign-in-code`,
+//!   `sign-in-mfa`, `sign-in-ip`: the sign-in screen on that step, to add an account (see
+//!   `signin.rs`).
+//!
+//! - `rail-folders`, `guild-banner`, `guild-menu`, `invite-accept`: for `#general`, more
+//!   servers in folders (one open), the banner with people in a voice channel, a link
+//!   channel and the "Members" row, the server menu open, or an invite shown before it
+//!   is joined (see `nav.rs`).
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -127,9 +135,15 @@ pub enum Scene {
     ProfilePopout,
     SearchResults,
     QuickSwitcher,
+    RailFolders,
+    GuildBanner,
+    GuildMenu,
+    InviteAccept,
     KeybindHelp,
     DownloadsPanel,
     GifCommand,
+    /// The sign-in screen on one of its steps (see `signin.rs`).
+    SignIn(super::signin::Step),
 }
 
 impl Scene {
@@ -174,10 +188,14 @@ impl Scene {
             "profile-popout" => Scene::ProfilePopout,
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
+            "rail-folders" => Scene::RailFolders,
+            "guild-banner" => Scene::GuildBanner,
+            "guild-menu" => Scene::GuildMenu,
+            "invite-accept" => Scene::InviteAccept,
             "keybind-help" => Scene::KeybindHelp,
             "downloads-panel" => Scene::DownloadsPanel,
             "gif-command" => Scene::GifCommand,
-            _ => return None,
+            other => return super::signin::Step::from_name(other).map(Scene::SignIn),
         })
     }
 }
@@ -281,6 +299,7 @@ fn channel_type(kind: ChannelKind) -> i64 {
         ChannelKind::Announcement => 5,
         ChannelKind::Forum => 15,
         ChannelKind::Media => 16,
+        ChannelKind::Link => 998,
     }
 }
 
@@ -310,6 +329,7 @@ fn channel_json(
     if guild.is_some() {
         v["name"] = json!(c.name);
         v["topic"] = json!(c.topic);
+        super::nav::decorate_channel(&c.id, &mut v);
     } else {
         let recipients: Vec<Value> = c.name.split(", ").map(user).collect();
         v["recipients"] = Value::Array(recipients);
@@ -317,6 +337,8 @@ fn channel_json(
     v
 }
 
+// One argument per thing a scene decides; they are built in one place (`data`).
+#[allow(clippy::too_many_arguments)]
 fn ready(
     guilds: &[Guild],
     channels: &HashMap<Option<String>, Vec<Channel>>,
@@ -325,6 +347,7 @@ fn ready(
     guild_settings: Vec<Value>,
     unread_demo: bool,
     user_settings: Value,
+    nav_scene: bool,
 ) -> p::Ready {
     let guilds: Vec<Value> = guilds
         .iter()
@@ -338,6 +361,17 @@ fn ready(
                 })
                 .unwrap_or_default();
             let (icon, banner) = media::guild_art(&g.name);
+            let (voice_states, voice_members) = if nav_scene {
+                super::nav::voice(&g.id)
+            } else {
+                (json!([]), Vec::new())
+            };
+            let mut members = vec![json!({
+                "user": user(ME),
+                "roles": [ROLE_MODERATORS],
+                "joined_at": "2026-01-01T00:00:00+00:00"
+            })];
+            members.extend(voice_members);
             // The first guild's custom emoji and stickers, for the pickers.
             let (emojis, stickers) = if guilds.first().is_some_and(|f| f.id == g.id) {
                 super::pickers::guild_expressions()
@@ -354,11 +388,8 @@ fn ready(
                     {"id": ROLE_MODERATORS, "name": "Moderators", "color": 0xE6_7E_22, "position": 2, "hoist": true},
                     {"id": ROLE_CONTRIBUTORS, "name": "Contributors", "color": 0x1A_BC_9C, "position": 1, "hoist": true}
                 ],
-                "members": [{
-                    "user": user(ME),
-                    "roles": [ROLE_MODERATORS],
-                    "joined_at": "2026-01-01T00:00:00+00:00"
-                }],
+                "members": members,
+                "voice_states": voice_states,
                 "member_count": 5,
                 "emojis": emojis,
                 "stickers": stickers
@@ -393,6 +424,10 @@ pub fn data(scene: Scene) -> Data {
     let mut channels = HashMap::new();
     guilds::channels(&mut channels);
     social::dm_channels(&mut channels);
+    let nav_scene = super::nav::is_nav_scene(scene);
+    if nav_scene {
+        super::nav::add_channels(&mut channels);
+    }
     let mut by_name = HashMap::new();
     messages::messages(&mut by_name);
     media::messages(&mut by_name);
@@ -431,7 +466,11 @@ pub fn data(scene: Scene) -> Data {
     }
 
     // Demo IDs become snowflakes everywhere.
-    let guilds: Vec<Guild> = guilds::guilds()
+    let mut all_guilds = guilds::guilds();
+    if nav_scene {
+        all_guilds.extend(super::nav::extra_guilds());
+    }
+    let guilds: Vec<Guild> = all_guilds
         .into_iter()
         .map(|g| Guild {
             id: snowflake(&g.id),
@@ -517,11 +556,15 @@ pub fn data(scene: Scene) -> Data {
             | Scene::AccountsAdd
             | Scene::InboxUnreads
             | Scene::QuickSwitcher
+            | Scene::RailFolders
     );
     if unread_demo {
         // Unread messages, mentions and mutes in the sidebar and the rail.
         read_states.extend(unread::read_states());
         guild_settings = unread::guild_settings();
+    }
+    if let Some(settings) = super::nav::guild_settings(scene) {
+        guild_settings = settings;
     }
     let mut ready = ready(
         &guilds,
@@ -530,7 +573,8 @@ pub fn data(scene: Scene) -> Data {
         read_states,
         guild_settings,
         unread_demo,
-        social::user_settings(scene),
+        super::nav::user_settings(scene).unwrap_or_else(|| social::user_settings(scene)),
+        nav_scene,
     );
     if threads {
         super::threads::decorate(&mut ready, &messages);
@@ -592,6 +636,12 @@ mod tests {
             "quick-switcher",
             "downloads-panel",
             "gif-command",
+            "sign-in-identifier",
+            "sign-in-classic",
+            "sign-in-password",
+            "sign-in-code",
+            "sign-in-mfa",
+            "sign-in-ip",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);
@@ -662,5 +712,42 @@ mod tests {
         assert!(atts.iter().any(|a| a.is_video()));
         assert!(atts.iter().any(|a| a.is_audio()));
         assert!(atts.iter().any(|a| a.expires_at().is_some()));
+    }
+
+    #[test]
+    fn the_navigation_scenes_have_folders_voice_and_a_link_channel() {
+        for name in [
+            "rail-folders",
+            "guild-banner",
+            "guild-menu",
+            "invite-accept",
+        ] {
+            let scene = Scene::from_name(name).expect(name);
+            let data = data(scene);
+            assert_eq!(data.guilds.len(), 7, "{name}");
+            let state = inlet_state::AccountState::from_ready_at(&data.ready, 1);
+            // The folders: loose, an open folder, loose, a closed folder.
+            let folders = state.settings().guild_folders();
+            assert_eq!(folders.len(), 4, "{name}");
+            assert_eq!(folders[1].guild_ids.len(), 3, "{name}");
+            // Three people in Lounge, one streaming in Music.
+            let lounge = inlet_state::ChannelId::parse(&snowflake("c-lounge")).unwrap();
+            let music = inlet_state::ChannelId::parse(&snowflake("c-music")).unwrap();
+            assert_eq!(state.voice().count(lounge), 3, "{name}");
+            assert_eq!(state.voice().count(music), 1, "{name}");
+            assert!(state.voice().participants(music)[0].streaming);
+            // The link channel has its address and the other channel is age-restricted.
+            let link = inlet_state::ChannelId::parse(&snowflake("c-link")).unwrap();
+            let c = state.channel(link).expect("the link channel");
+            assert_eq!(c.kind, 998, "{name}");
+            assert!(c.extra.get("url").is_some_and(|u| u.is_string()), "{name}");
+            let mature = inlet_state::ChannelId::parse(&snowflake("c-mature")).unwrap();
+            assert!(state.channel(mature).is_some_and(|c| c.nsfw), "{name}");
+        }
+        // The other scenes keep their three servers and no folders.
+        let data = data(Scene::Default);
+        let state = inlet_state::AccountState::from_ready_at(&data.ready, 1);
+        assert_eq!(data.guilds.len(), 3);
+        assert!(state.settings().guild_folders().is_empty());
     }
 }
