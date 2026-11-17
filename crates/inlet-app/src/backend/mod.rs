@@ -24,7 +24,7 @@
 
 pub mod accounts;
 pub mod composer;
-mod gateway;
+pub(crate) mod gateway;
 pub mod instance;
 pub mod media;
 pub mod messages;
