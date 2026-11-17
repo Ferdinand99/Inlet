@@ -278,6 +278,10 @@ pub struct Changes {
     pub settings: bool,
     /// Relationships (friends, requests, blocks) or the pinned DMs.
     pub relationships: bool,
+    /// The guild order and folders in the account settings.
+    pub folders: bool,
+    /// Someone joined, moved in or left a voice channel, or changed their voice state.
+    pub voice: bool,
 }
 
 impl Changes {
@@ -297,6 +301,8 @@ impl Changes {
         self.users |= other.users;
         self.settings |= other.settings;
         self.relationships |= other.relationships;
+        self.folders |= other.folders;
+        self.voice |= other.voice;
         self.channels.merge(other.channels);
         self.messages.merge(other.messages);
         self.member_guilds.merge(other.member_guilds);

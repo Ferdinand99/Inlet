@@ -63,6 +63,10 @@ pub enum Change {
     SuppressEveryone(bool),
     /// Guilds only.
     SuppressRoles(bool),
+    /// Guilds only: leave muted channels out of the channel list.
+    HideMuted(bool),
+    /// Categories only: fold the category (or open it again).
+    Collapse(bool),
 }
 
 /// What the person asked for in one channel or category.
@@ -70,6 +74,7 @@ pub enum Change {
 pub struct ChannelIntent {
     pub mute: Option<Mute>,
     pub level: Option<i64>,
+    pub collapsed: Option<bool>,
 }
 
 /// What the person asked for in one guild: settings fields of the guild itself (as a
@@ -91,6 +96,9 @@ impl Intent {
             }
             if c.level.is_some() {
                 e.level = c.level;
+            }
+            if c.collapsed.is_some() {
+                e.collapsed = c.collapsed;
             }
         }
     }
@@ -140,6 +148,21 @@ pub fn build_intent(
         (None, Change::SuppressRoles(on)) if guild.is_some() => {
             intent.fields.insert("suppress_roles".into(), json!(on));
         }
+        (None, Change::HideMuted(on)) if guild.is_some() => {
+            intent
+                .fields
+                .insert("hide_muted_channels".into(), json!(on));
+        }
+        (Some(ch), Change::Collapse(on)) => {
+            intent.channels.insert(
+                ch,
+                ChannelIntent {
+                    mute: None,
+                    level: None,
+                    collapsed: Some(on),
+                },
+            );
+        }
         (Some(ch), Change::Mute { for_ms }) => {
             let m = mute(for_ms)?;
             intent.channels.insert(
@@ -147,6 +170,7 @@ pub fn build_intent(
                 ChannelIntent {
                     mute: Some(m),
                     level: None,
+                    collapsed: None,
                 },
             );
         }
@@ -156,6 +180,7 @@ pub fn build_intent(
                 ChannelIntent {
                     mute: Some(Mute::default()),
                     level: None,
+                    collapsed: None,
                 },
             );
         }
@@ -165,6 +190,7 @@ pub fn build_intent(
                 ChannelIntent {
                     mute: None,
                     level: Some(l),
+                    collapsed: None,
                 },
             );
         }
@@ -185,6 +211,9 @@ fn overrides_json(base: &GuildNotificationSettings, intents: &[&Intent]) -> Valu
             }
             if let Some(l) = c.level {
                 o.message_notifications = l;
+            }
+            if let Some(on) = c.collapsed {
+                o.collapsed = on;
             }
             if o == ChannelOverride::default() {
                 all.remove(ch);
@@ -220,6 +249,10 @@ pub fn compose(
     );
     obj.insert("suppress_everyone".into(), json!(base.suppress_everyone));
     obj.insert("suppress_roles".into(), json!(base.suppress_roles));
+    obj.insert(
+        "hide_muted_channels".into(),
+        json!(base.hide_muted_channels),
+    );
     for intent in intents {
         obj.extend(intent.fields.clone());
     }
@@ -590,6 +623,40 @@ mod tests {
         ));
         assert!(no(g, Some(ChannelId(6)), Change::SuppressRoles(true)));
         assert!(no(None, None, Change::SuppressRoles(true)));
+    }
+
+    /// A folded category is a setting of the account (`channel_overrides[].collapsed`),
+    /// so it shows at once, is written with the whole override map, survives the
+    /// server's echo and comes back with the next READY.
+    #[test]
+    fn collapsed_categories_persist() {
+        let base = settings(json!({"guild_id": "1", "channel_overrides": {
+            "5": {"collapsed": false, "message_notifications": 2, "muted": false}}}));
+        let g = Some(GuildId(1));
+        let fold = intent(g, Some(ChannelId(5)), Change::Collapse(true));
+        assert!(fold.fields.is_empty());
+        // The body carries the whole map, the folded flag set and the level kept.
+        let sent = body(&base, &fold);
+        assert_eq!(sent["channel_overrides"]["5"]["collapsed"], json!(true));
+        assert_eq!(
+            sent["channel_overrides"]["5"]["message_notifications"],
+            json!(2)
+        );
+        // What the person sees is the confirmed settings with the change on top.
+        let shown = compose(&base, g, &[&fold]);
+        assert_eq!(shown["channel_overrides"]["5"]["collapsed"], json!(true));
+        // Opening it again on a category that has nothing else set leaves no override.
+        let plain = settings(json!({"guild_id": "1", "channel_overrides": {
+            "7": {"collapsed": true, "message_notifications": 3, "muted": false}}}));
+        let open = intent(g, Some(ChannelId(7)), Change::Collapse(false));
+        let sent = body(&plain, &open);
+        assert!(sent["channel_overrides"].get("7").is_none());
+        // Only a category of a server can be folded, and hiding muted channels is a
+        // server setting.
+        assert!(build_intent(g, None, Change::Collapse(true), 0).is_none());
+        let hide = intent(g, None, Change::HideMuted(true));
+        assert_eq!(hide.fields["hide_muted_channels"], json!(true));
+        assert!(build_intent(None, None, Change::HideMuted(true), 0).is_none());
     }
 
     #[test]

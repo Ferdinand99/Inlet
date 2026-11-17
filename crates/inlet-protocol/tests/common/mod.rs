@@ -30,18 +30,36 @@ pub fn discovery_json(base: &str, gateway: &str) -> Value {
 
 /// Starts a mock server with discovery mounted and returns it with a discovered instance.
 pub async fn instance() -> (MockServer, Instance) {
+    instance_with_features(None).await
+}
+
+/// Like [`instance`], with the `features` of the discovery document replaced.
+pub async fn instance_with_features(features: Option<Value>) -> (MockServer, Instance) {
+    instance_with(features, None).await
+}
+
+/// Like [`instance_with_features`], with the client's `Accept-Language` tag.
+pub async fn instance_with(
+    features: Option<Value>,
+    locale: Option<&str>,
+) -> (MockServer, Instance) {
     let server = MockServer::start().await;
+    let mut doc = discovery_json(&server.uri(), "ws://127.0.0.1:1/gateway");
+    if let Some(features) = features {
+        doc["features"] = features;
+    }
     Mock::given(method("GET"))
         .and(path("/.well-known/fluxer"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("ETag", "\"v1\"")
-                .set_body_json(discovery_json(&server.uri(), "ws://127.0.0.1:1/gateway")),
+                .set_body_json(doc),
         )
         .mount(&server)
         .await;
     let info = ClientInfo {
         installation_id: "00000000-0000-4000-a000-000000000000".into(),
+        locale: locale.map(str::to_owned),
         ..ClientInfo::default()
     };
     let instance = Instance::discover_with(&server.uri(), info)

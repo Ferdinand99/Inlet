@@ -338,7 +338,9 @@ impl Inlet {
         let error = r.error.clone();
         let indexing = r.indexing;
         let (more, loading, empty) = (r.more, r.loading(), r.items.is_empty());
-        let items = r.items.clone();
+        let mut items = r.items.clone();
+        // Results from a channel behind a content warning stay out of the list.
+        items.retain(|i| !self.channel_gated(&i.message.channel_id, cx));
         let mut body = Vec::new();
         if let Some(error) = error {
             body.push(self.search_retry(error, cx));

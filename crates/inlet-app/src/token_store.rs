@@ -332,7 +332,11 @@ fn installation_id_file() -> Option<std::path::PathBuf> {
 /// The client description sent to the instance, with an installation ID that stays the
 /// same between starts (it identifies this install in the account's session list).
 pub fn client_info() -> inlet_protocol::ClientInfo {
-    let mut info = inlet_protocol::ClientInfo::default();
+    // The language of the app's texts, so the instance writes its emails in it.
+    let mut info = inlet_protocol::ClientInfo {
+        locale: Some("en".into()),
+        ..Default::default()
+    };
     let Some(path) = installation_id_file() else {
         return info;
     };
