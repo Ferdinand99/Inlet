@@ -165,7 +165,7 @@ pub(crate) fn cap_role(r: &mut Role) {
 pub(crate) fn cap_channel(c: &mut Channel) {
     truncate_opt(&mut c.name, NAME);
     truncate_opt(&mut c.topic, TEXT);
-    c.recipients.truncate(32);
+    c.recipients.truncate(crate::limits::MAX_GROUP_RECIPIENTS);
     for u in &mut c.recipients {
         cap_user(u);
     }

@@ -38,12 +38,8 @@ pub fn typing_line(state: &AccountState, channel: ChannelId) -> Option<TypingLin
     let names: Vec<String> = users
         .iter()
         .map(|u| {
-            let nick = guild
-                .and_then(|g| state.member(g, *u))
-                .and_then(|m| m.display_name())
-                .map(str::to_owned);
-            let name = nick
-                .or_else(|| state.user(*u).map(|u| u.display_name().to_owned()))
+            let name = state
+                .name_for(*u, guild, Some(channel), None)
                 .map(|n| clean_name(&n))
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| t!("typing-someone"));

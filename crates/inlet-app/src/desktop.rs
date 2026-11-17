@@ -1054,7 +1054,9 @@ impl Inlet {
             Some(layer @ (Layer::QuickSwitcher | Layer::Search)) => self.close_search_layer(layer),
             Some(Layer::SocialConfirm) => self.social.confirm = None,
             Some(Layer::DmMenu) => self.social.dm_menu = None,
-            Some(Layer::GroupDm) => self.social.group_dm = None,
+            Some(Layer::GroupDm) => {
+                self.drop_group_dm();
+            }
             Some(Layer::AddFriend) => self.social.add_friend = None,
             Some(Layer::Nav) => self.nav.dialog = None,
             Some(Layer::UserMenu) => self.profile.menu = None,

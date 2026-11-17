@@ -1,4 +1,5 @@
-//! Invites: look one up and join through it.
+//! Invites: look one up and join through it, make them for a channel (a guild
+//! channel or a group DM), list a group DM's invites and revoke one.
 //!
 //! An invite code goes into a URL path, so it is checked before any request
 //! ([`invite_code`]): 1-256 characters, only ASCII letters, digits, `-` and
@@ -29,6 +30,14 @@ pub const SHORT_INVITE_HOST: &str = "fluxer.gg";
 
 /// Longest invite code Fluxer accepts in a path.
 pub const MAX_INVITE_CODE_LEN: usize = 256;
+/// Longest lifetime of an invite Fluxer makes, in seconds (a week).
+pub const MAX_INVITE_AGE_SECONDS: u64 = 604_800;
+/// Most uses an invite can be given.
+pub const MAX_INVITE_USES: u64 = 100;
+/// Most invites kept from one list.
+pub const MAX_LISTED_INVITES: usize = 1_000;
+/// Lifetime of the invite for a friend to join a group, in seconds (a day).
+pub const FRIEND_INVITE_AGE_SECONDS: u64 = 86_400;
 
 /// Values of [`Invite::kind`].
 pub mod invite_type {
@@ -204,12 +213,123 @@ pub struct Invite {
     /// Joining gives temporary membership.
     #[serde(default, deserialize_with = "lenient_bool")]
     pub temporary: bool,
+    /// When it was made (ISO 8601); only in lists and answers to creating.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// How often it was used; only in lists and answers to creating.
+    #[serde(default, deserialize_with = "opt_u64")]
+    pub uses: Option<u64>,
+    /// How often it can be used, 0 for no limit; only in lists and answers to creating.
+    #[serde(default, deserialize_with = "opt_u64")]
+    pub max_uses: Option<u64>,
+    /// Its lifetime in seconds, 0 for none; only in lists and answers to creating.
+    #[serde(default, deserialize_with = "opt_u64")]
+    pub max_age: Option<u64>,
     /// Every other field.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
+/// What a new invite should allow ([`Client::create_invite`]). The default is
+/// what Fluxer makes without a request body: unlimited uses, never expiring.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InviteParams {
+    /// Lifetime in seconds, up to [`MAX_INVITE_AGE_SECONDS`]; `None` or 0 is for ever.
+    pub max_age: Option<u64>,
+    /// Uses, up to [`MAX_INVITE_USES`]; `None` or 0 is unlimited.
+    pub max_uses: Option<u64>,
+    /// Members that join through it are removed when they disconnect.
+    pub temporary: bool,
+}
+
+impl InviteParams {
+    fn to_json(self) -> Result<Value> {
+        let mut body = Map::new();
+        if let Some(age) = self.max_age {
+            if age > MAX_INVITE_AGE_SECONDS {
+                return Err(Error::InvalidInput(format!(
+                    "invite lifetime: at most {MAX_INVITE_AGE_SECONDS} seconds"
+                )));
+            }
+            body.insert("max_age".into(), age.into());
+        }
+        if let Some(uses) = self.max_uses {
+            if uses > MAX_INVITE_USES {
+                return Err(Error::InvalidInput(format!(
+                    "invite uses: at most {MAX_INVITE_USES}"
+                )));
+            }
+            body.insert("max_uses".into(), uses.into());
+        }
+        if self.temporary {
+            body.insert("temporary".into(), true.into());
+        }
+        Ok(Value::Object(body))
+    }
+}
+
+/// The link of an invite on this instance: `{endpoints.invite}/{code}`. `None`
+/// when the instance names no invite base, or one that is not `https` (or
+/// loopback), or when `code` is not an invite code.
+pub fn invite_url(instance: &Instance, code: &str) -> Option<String> {
+    let code = invite_code(code).ok()?;
+    let base = instance
+        .discovery()
+        .endpoints
+        .extra
+        .get("invite")
+        .and_then(Value::as_str)?;
+    let url = require_scheme(base, "https", "http", "invite base").ok()?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    Some(format!("{}/{code}", url.as_str().trim_end_matches('/')))
+}
+
 impl Client {
+    /// `POST /channels/{channel}/invites`: an invite to a guild channel (needs
+    /// the permission to create invites there) or to a group DM (any member).
+    /// Fluxer hands back an existing invite with the same settings from the
+    /// same person instead of making another one.
+    pub async fn create_invite(&self, channel_id: &str, params: InviteParams) -> Result<Invite> {
+        let body = params.to_json()?;
+        self.raw(
+            Method::POST,
+            &format!("/channels/{}/invites", crate::rest::snowflake(channel_id)?),
+            Some(&body),
+        )
+        .await?
+        .json()
+    }
+
+    /// `GET /channels/{channel}/invites`: the invites of a channel, newest
+    /// first (a group DM's only for its owner; a guild channel's needs
+    /// Manage Channels). At most [`MAX_LISTED_INVITES`].
+    pub async fn channel_invites(&self, channel_id: &str) -> Result<Vec<Invite>> {
+        self.get_list_capped(
+            &format!("/channels/{}/invites", crate::rest::snowflake(channel_id)?),
+            "invite",
+            MAX_LISTED_INVITES,
+        )
+        .await
+    }
+
+    /// `DELETE /invites/{code}`: revokes an invite (a group DM's only for its
+    /// owner; a guild invite for whoever made it or has Manage Server).
+    pub async fn delete_invite(&self, code: &str) -> Result<()> {
+        self.raw(
+            Method::DELETE,
+            &format!("/invites/{}", invite_code(code)?),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
     /// `GET /invites/{code}`: what the invite leads to, without using it.
     pub async fn invite(&self, code: &str) -> Result<Invite> {
         self.raw(

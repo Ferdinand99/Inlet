@@ -45,6 +45,13 @@
 //! - `group-dm-captcha`: the new group DM window with two friends picked and the
 //!   message for a CAPTCHA Inlet could not pass.
 //! - `dm-blocked`: the group DM open, with a blocked account's messages folded.
+//! - `group-settings`: the group DM's "Edit group" window, the account being its owner.
+//! - `group-invites`: the group DM's invites window with three invites.
+//! - `group-add`: the window to add friends to the group, with an invite link made.
+//! - `group-unaddable`: the new group window asking whether to go on without the people
+//!   who cannot be added.
+//! - `friend-nickname`: the window for the private nickname of Ada.
+//! - `invite-community`: the list of communities to invite Ada to.
 //! - `picker-emoji`, `picker-gif`: for `#general`, the composer's picker open on the
 //!   emoji tab (favourites, frequently used, the guild's custom emoji) or the GIF tab
 //!   (the featured search terms; see `pickers.rs`).
@@ -123,6 +130,12 @@ pub enum Scene {
     FriendsPending,
     GroupDmCaptcha,
     DmBlocked,
+    GroupSettings,
+    GroupInvites,
+    GroupAdd,
+    GroupUnaddable,
+    FriendNickname,
+    InviteCommunity,
     PickerEmoji,
     PickerGif,
     MediaErrors,
@@ -174,6 +187,12 @@ impl Scene {
             "friends-pending" => Scene::FriendsPending,
             "group-dm-captcha" => Scene::GroupDmCaptcha,
             "dm-blocked" => Scene::DmBlocked,
+            "group-settings" => Scene::GroupSettings,
+            "group-invites" => Scene::GroupInvites,
+            "group-add" => Scene::GroupAdd,
+            "group-unaddable" => Scene::GroupUnaddable,
+            "friend-nickname" => Scene::FriendNickname,
+            "invite-community" => Scene::InviteCommunity,
             "picker-emoji" => Scene::PickerEmoji,
             "picker-gif" => Scene::PickerGif,
             "media-errors" => Scene::MediaErrors,
@@ -324,6 +343,10 @@ fn channel_json(
     } else {
         let recipients: Vec<Value> = c.name.split(", ").map(user).collect();
         v["recipients"] = Value::Array(recipients);
+        if c.kind == ChannelKind::GroupDm {
+            // The demo account made the group.
+            v["owner_id"] = json!(user_id(ME));
+        }
     }
     v
 }

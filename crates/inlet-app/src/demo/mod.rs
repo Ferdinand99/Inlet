@@ -30,7 +30,7 @@ pub mod scenes;
 pub mod search;
 pub mod signin;
 pub mod soak;
-mod social;
+pub mod social;
 pub mod threads;
 mod unread;
 

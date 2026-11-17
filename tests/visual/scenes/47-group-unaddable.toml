@@ -1,0 +1,8 @@
+# Creating a group where one person cannot be added: the question whether to go on
+# without them, with the reason.
+name = "group-unaddable"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "group-unaddable"

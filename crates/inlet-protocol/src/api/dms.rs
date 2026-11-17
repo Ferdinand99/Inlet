@@ -3,12 +3,13 @@
 //!
 //! Creating a group DM and adding someone to one are CAPTCHA-gated on
 //! instances that turn the check on. The crate solves the ALTCHA
-//! proof-of-work itself ([`crate::altcha::solve`]): on a blocking thread, one
-//! solve at a time per process (shared with sign-in), at most
-//! [`GROUP_DM_CAPTCHA_TIMEOUT`] each and at most two solves per call (so at
-//! most three requests). When it cannot pass the check, the call returns
-//! [`GroupDmOutcome::Captcha`] and the UI tells the person to do it in the
-//! browser.
+//! proof-of-work itself ([`crate::altcha::solve`]), as the official client
+//! does: on a blocking thread, one solve at a time per process (shared with
+//! sign-in), at most [`GROUP_DM_CAPTCHA_TIMEOUT`] each and at most two solves
+//! per call (so at most three requests). When it still cannot pass the check
+//! (the work is too hard or too slow, or the instance refuses the answer), the
+//! call returns [`GroupDmOutcome::Captcha`], the same failure the official
+//! client reports. Nothing is ever handed to the browser.
 //!
 //! Fluxer allows 10 group DM creations and 10 participant additions per hour
 //! per account, and every attempt counts (a normal call uses two: without a
@@ -20,6 +21,7 @@
 //! The pinned DM list is in READY ([`crate::Ready::pinned_dms`]) and
 //! USER_PINNED_DMS_UPDATE ([`crate::Dispatch::UserPinnedDmsUpdate`]).
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use reqwest::Method;
@@ -35,8 +37,11 @@ use crate::Client;
 /// Most other participants in a new group DM (Fluxer's default limit is 50
 /// including the creator).
 pub const MAX_GROUP_DM_RECIPIENTS: usize = 49;
-/// Time one CAPTCHA solve may take, waiting for the solver included.
-pub const GROUP_DM_CAPTCHA_TIMEOUT: Duration = Duration::from_secs(30);
+/// Time one CAPTCHA solve may take, waiting for the solver included (the
+/// official client waits a minute too).
+pub const GROUP_DM_CAPTCHA_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest nickname in a group DM, in characters.
+pub const MAX_GROUP_NICKNAME_CHARS: usize = 32;
 /// Solves per call: the first challenge, and one more after `INVALID_CAPTCHA`.
 const MAX_SOLVES: usize = 2;
 
@@ -81,6 +86,12 @@ pub struct GroupDmEdit {
     pub icon: Option<Option<ImageData>>,
     /// New owner (owner only).
     pub owner_id: Option<Snowflake>,
+    /// Nicknames in the group by user ID. `Some(None)`, an empty string or
+    /// text of only spaces clears one (as the official client does); at most
+    /// [`MAX_GROUP_NICKNAME_CHARS`] characters.
+    pub nicks: BTreeMap<Snowflake, Option<String>>,
+    /// Mature content on or off (owner only).
+    pub nsfw: Option<bool>,
 }
 
 impl GroupDmEdit {
@@ -101,12 +112,56 @@ impl GroupDmEdit {
         if let Some(owner) = &self.owner_id {
             body.insert("owner_id".into(), json!(snowflake(owner)?));
         }
+        if !self.nicks.is_empty() {
+            let mut nicks = Map::new();
+            for (user, nick) in &self.nicks {
+                let nick = nick.as_deref().map(str::trim).filter(|n| !n.is_empty());
+                if let Some(n) = nick {
+                    if n.chars().count() > MAX_GROUP_NICKNAME_CHARS
+                        || n.chars().any(char::is_control)
+                    {
+                        return Err(Error::InvalidInput(format!(
+                            "group nickname: 1-{MAX_GROUP_NICKNAME_CHARS} characters without control characters"
+                        )));
+                    }
+                }
+                nicks.insert(snowflake(user)?.to_owned(), json!(nick));
+            }
+            body.insert("nicks".into(), Value::Object(nicks));
+        }
+        if let Some(nsfw) = self.nsfw {
+            body.insert("nsfw".into(), json!(nsfw));
+        }
         if body.is_empty() {
             return Err(Error::InvalidInput(
                 "group DM edit: nothing to change".into(),
             ));
         }
         Ok(Value::Object(body))
+    }
+}
+
+impl Channel {
+    /// The owner of a group DM (`owner_id`), when the channel has one.
+    pub fn group_owner_id(&self) -> Option<&str> {
+        self.extra
+            .get("owner_id")
+            .and_then(Value::as_str)
+            .filter(|id| crate::media::is_snowflake(id))
+    }
+
+    /// The nickname someone has in this group DM (`nicks`), when they have one.
+    pub fn group_nick(&self, user_id: &str) -> Option<&str> {
+        self.extra
+            .get("nicks")?
+            .get(user_id)?
+            .as_str()
+            .filter(|n| !n.is_empty())
+    }
+
+    /// Whether the group DM allows mature content (the owner's switch).
+    pub fn group_mature(&self) -> bool {
+        self.nsfw
     }
 }
 
@@ -157,6 +212,9 @@ impl Client {
                     solves += 1;
                     match solve_bounded(challenge).await {
                         Ok(t) => token = Some(t),
+                        // Stopped on purpose (the window closed): nothing was sent with
+                        // an answer, and it is no CAPTCHA failure to report.
+                        Err(Error::Cancelled) => return Err(Error::Cancelled),
                         Err(e) => {
                             tracing::warn!("group DM CAPTCHA not solved: {e}");
                             return Ok(GroupDmOutcome::Captcha);
@@ -197,12 +255,10 @@ impl Client {
     }
 
     /// `POST /users/@me/channels` with `recipients`: creates a group DM with
-    /// 1-49 other accounts (friends whose settings allow it). CAPTCHA-gated;
-    /// see the module docs.
+    /// 0-49 other accounts (friends whose settings allow it; the official
+    /// client creates an empty group too and fills it through an invite link).
+    /// CAPTCHA-gated; see the module docs.
     pub async fn create_group_dm(&self, recipients: &[String]) -> Result<GroupDmOutcome<Channel>> {
-        if recipients.is_empty() {
-            return Err(Error::InvalidInput("group DM: no recipients".into()));
-        }
         crate::api::id_list(recipients, MAX_GROUP_DM_RECIPIENTS, "group DM recipients")?;
         let mut unique: Vec<&String> = Vec::with_capacity(recipients.len());
         for r in recipients {
@@ -282,8 +338,9 @@ impl Client {
         Ok(())
     }
 
-    /// `PATCH /channels/{channel}`: renames a group DM, changes its icon or
-    /// hands it to another participant. Refuses anything but a group DM with
+    /// `PATCH /channels/{channel}`: renames a group DM, changes its icon,
+    /// nicknames or mature-content switch, or hands it to another participant.
+    /// Refuses anything but a group DM with
     /// [`Error::InvalidInput`], without a request (the route edits any channel).
     pub async fn edit_group_dm(&self, channel: &Channel, edit: &GroupDmEdit) -> Result<Channel> {
         if channel.kind != channel_type::GROUP_DM {
@@ -375,5 +432,78 @@ mod tests {
             ..Default::default()
         };
         assert!(bad_owner.to_json().is_err());
+    }
+
+    #[test]
+    fn group_nicknames_are_trimmed_cleared_and_bounded() {
+        let edit = GroupDmEdit {
+            nicks: BTreeMap::from([
+                ("11".to_owned(), Some("  Cap  ".to_owned())),
+                ("12".to_owned(), Some("   ".to_owned())),
+                ("13".to_owned(), None),
+            ]),
+            ..Default::default()
+        };
+        assert_eq!(
+            edit.to_json().unwrap(),
+            json!({"nicks": {"11": "Cap", "12": null, "13": null}}),
+            "spaces trim, blank or none clears"
+        );
+        let longest = GroupDmEdit {
+            nicks: BTreeMap::from([("11".to_owned(), Some("x".repeat(32)))]),
+            ..Default::default()
+        };
+        assert!(longest.to_json().is_ok());
+        for bad in [
+            "x".repeat(33),
+            "a\u{0}b".to_owned(),
+            "line\nbreak".to_owned(),
+        ] {
+            let edit = GroupDmEdit {
+                nicks: BTreeMap::from([("11".to_owned(), Some(bad))]),
+                ..Default::default()
+            };
+            assert!(edit.to_json().is_err());
+        }
+        let not_an_id = GroupDmEdit {
+            nicks: BTreeMap::from([("../x".to_owned(), Some("a".to_owned()))]),
+            ..Default::default()
+        };
+        assert!(not_an_id.to_json().is_err(), "the key is an ID");
+    }
+
+    #[test]
+    fn the_mature_switch_and_ownership_go_in_one_edit() {
+        let edit = GroupDmEdit {
+            nsfw: Some(true),
+            owner_id: Some("42".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            edit.to_json().unwrap(),
+            json!({"owner_id": "42", "nsfw": true})
+        );
+        let off = GroupDmEdit {
+            nsfw: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(off.to_json().unwrap(), json!({"nsfw": false}));
+    }
+
+    #[test]
+    fn a_group_reads_its_owner_and_nicknames() {
+        let channel: Channel = serde_json::from_value(json!({
+            "id": "5", "type": 3, "owner_id": "7", "nsfw": true,
+            "nicks": {"8": "Cap", "9": "", "x": 3}
+        }))
+        .unwrap();
+        assert_eq!(channel.group_owner_id(), Some("7"));
+        assert_eq!(channel.group_nick("8"), Some("Cap"));
+        assert_eq!(channel.group_nick("9"), None, "an empty nickname is none");
+        assert_eq!(channel.group_nick("x"), None);
+        assert!(channel.group_mature());
+        let bare: Channel = serde_json::from_value(json!({"id": "5", "type": 3})).unwrap();
+        assert_eq!(bare.group_owner_id(), None);
+        assert_eq!(bare.group_nick("8"), None);
     }
 }

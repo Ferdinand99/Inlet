@@ -253,14 +253,20 @@ impl MentionNames {
         for blocks in lists {
             each_inline(blocks, &mut |inline| {
                 for live in &inline.live {
-                    out.add(&live.kind, state, guild);
+                    out.add(&live.kind, state, guild, channel);
                 }
             });
         }
         out
     }
 
-    fn add(&mut self, kind: &LiveKind, state: &AccountState, guild: Option<GuildId>) {
+    fn add(
+        &mut self,
+        kind: &LiveKind,
+        state: &AccountState,
+        guild: Option<GuildId>,
+        channel: Option<ChannelId>,
+    ) {
         match kind {
             LiveKind::User { id, .. } => {
                 if self.users.contains_key(id) {
@@ -269,12 +275,9 @@ impl MentionNames {
                 let Some(user) = UserId::parse(id) else {
                     return;
                 };
-                let member = guild
-                    .and_then(|g| state.member(g, user))
-                    .and_then(|m| m.display_name());
-                let name = member.or_else(|| state.user(user).map(|u| u.display_name()));
-                if let Some(name) = name {
-                    self.users.insert(id.clone(), model::clean_name(name));
+                // The friend nickname and the nickname in the guild or group count.
+                if let Some(name) = state.name_for(user, guild, channel, None) {
+                    self.users.insert(id.clone(), model::clean_name(&name));
                 }
             }
             LiveKind::Role { id } => {

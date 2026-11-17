@@ -1,0 +1,8 @@
+# The group's invites window, as the owner sees it: who made each invite, its code, its
+# uses and the time left, with Copy and Revoke on every row.
+name = "group-invites"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "group-invites"

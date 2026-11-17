@@ -110,6 +110,10 @@ pub mod limits {
     /// Permission overwrites per channel (Fluxer's limit); more makes the
     /// channel hidden. They are stored compactly, about 32 bytes each.
     pub const MAX_OVERWRITES: usize = 10_000;
+    /// Recipients kept per group DM. Fluxer's groups take 49 others by default and an
+    /// instance may raise that; the group tools (nicknames, hand over, remove, who
+    /// can still be added) work on this list, so it must hold a whole group.
+    pub const MAX_GROUP_RECIPIENTS: usize = 100;
     /// Custom emoji or stickers per guild.
     pub const MAX_EXPRESSIONS_PER_GUILD: usize = 2_000;
     /// Cached members per guild (the account's own member is kept apart).

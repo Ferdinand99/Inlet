@@ -114,6 +114,36 @@ pub fn dm_messages(messages: &mut HashMap<String, Vec<p::Message>>) {
     );
 }
 
+/// The invite link of the `group-add` scene.
+pub const INVITE_LINK: &str = "https://fluxer.example/invite/aB3dEf7h";
+
+/// The private nickname of Ada in the `friend-nickname` scene.
+pub const NICKNAME: &str = "Ada L.";
+
+/// The group's invites of the `group-invites` scene, as the server would list them at
+/// `now_ms`: one with uses and a day left, one with a limit, one that never ends.
+pub fn group_invites(now_ms: i64) -> Vec<crate::backend::social::relationships::GroupInvite> {
+    let day = 86_400_000;
+    let invite = |code: &str, by: &str, uses, max_uses, left: Option<i64>, made: i64| {
+        crate::backend::social::relationships::GroupInvite {
+            code: code.into(),
+            url: format!("https://fluxer.example/invite/{code}"),
+            inviter: Some((user_id(by), by.to_owned())),
+            uses,
+            max_uses,
+            expires_ms: left.map(|l| now_ms + l),
+            created_ms: Some(now_ms - made),
+        }
+    };
+    vec![
+        // Half a minute over, so the time left reads 12h 0m and 3d 0h however long the
+        // window takes to come up.
+        invite("aB3dEf7h", "ada", 2, 0, Some(day / 2 + 30_000), day / 2),
+        invite("Zx91LmQ2", "linus", 0, 5, Some(3 * day + 30_000), day),
+        invite("Kp07WnRt", "ada", 11, 0, None, 9 * day),
+    ]
+}
+
 /// The presences in READY: Ada online, Linus idle, Grace on do not disturb.
 pub fn presences() -> Value {
     json!([

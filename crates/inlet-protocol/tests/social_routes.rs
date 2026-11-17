@@ -338,6 +338,7 @@ async fn dms_profiles_folders_and_memes() {
         name: Some(Some("Trip".into())),
         icon: Some(Some(ImageData::new("image/png", vec![1, 2, 3]).unwrap())),
         owner_id: Some("11".into()),
+        ..Default::default()
     };
     assert_eq!(
         c.edit_group_dm(&group, &edit)

@@ -72,6 +72,8 @@ impl State {
     pub fn stop(&mut self) {
         self.members.stop();
         self.profile.stop();
+        // A group create or add that still solves a CAPTCHA is not wanted any more.
+        relationships::cancel_all_solves();
     }
 }
 

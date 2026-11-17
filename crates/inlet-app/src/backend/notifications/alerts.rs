@@ -455,12 +455,11 @@ impl Engine {
 
 /// The author's name as the place shows it: the guild nickname, else the display name.
 fn author_name(state: &AccountState, guild: Option<GuildId>, m: &Message) -> String {
-    let nick = guild
-        .zip(UserId::parse(&m.author.id))
-        .and_then(|(g, u)| state.member(g, u))
-        .and_then(|member| member.display_name())
-        .map(str::to_string);
-    clean_name(nick.as_deref().unwrap_or_else(|| m.author.display_name()))
+    let named = UserId::parse(&m.author.id).and_then(|u| {
+        let channel = ChannelId::parse(&m.channel_id);
+        state.name_for(u, guild, channel, Some(m.author.display_name()))
+    });
+    clean_name(named.as_deref().unwrap_or_else(|| m.author.display_name()))
 }
 
 /// "Author", "Author (Group)" or "Author (#channel, Guild)", with the account's name
@@ -600,14 +599,14 @@ fn token_name(
             .iter()
             .find(|u| UserId::parse(&u.id) == Some(user))
             .map(|u| u.display_name().to_string());
-        let nick = guild
-            .and_then(|g| state.member(g, user))
-            .and_then(|member| member.display_name())
-            .map(str::to_string);
-        let known = state.user(user).map(|u| u.display_name().to_string());
-        let name = nick
-            .or(from_message)
-            .or(known)
+        // The friend nickname and the nickname in the guild or group count.
+        let name = state
+            .name_for(
+                user,
+                guild,
+                ChannelId::parse(&m.channel_id),
+                from_message.as_deref(),
+            )
             .map(|n| clean_name(&n))
             .unwrap_or_else(|| t!("alerts-unknown-user"));
         return Some(format!("@{name}"));
