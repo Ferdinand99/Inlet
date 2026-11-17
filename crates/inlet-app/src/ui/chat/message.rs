@@ -217,6 +217,8 @@ impl Inlet {
             .reply
             .as_ref()
             .map(|r| reply_preview::render(&format!("reply-{}", m.id), r, compact, cx));
+        // A nickname replaces the name the message came with.
+        let author = row.name.as_deref().unwrap_or(&m.author);
         let name = div()
             .flex_none()
             .font_weight(FontWeight::MEDIUM)
@@ -226,7 +228,7 @@ impl Inlet {
                     .map(|c| gpui::rgb(c).into())
                     .unwrap_or(theme::text_strong()),
             )
-            .child(m.author.clone());
+            .child(author.to_owned());
         let tag = row.tag.map(render_tag);
         let body = self.message_body(row, cx);
         let main = if compact {
@@ -234,7 +236,7 @@ impl Inlet {
             let avatar = (theme::compact_avatars() && !row.grouped).then(|| {
                 self.user_avatar(
                     m.author_avatar.as_deref(),
-                    &m.author,
+                    author,
                     COMPACT_AVATAR,
                     false,
                     cx,
@@ -276,7 +278,7 @@ impl Inlet {
                     .gap(px(6.))
                     .child(name)
                     .children(tag)
-                    .when(m.author_username != m.author, |d| {
+                    .when(m.author_username != author, |d| {
                         d.child(
                             div()
                                 .text_size(px(12.))
@@ -309,7 +311,7 @@ impl Inlet {
                 let playing = self.media.hovered_message.as_deref() == Some(m.id.as_str());
                 self.user_avatar(
                     m.author_avatar.as_deref(),
-                    &m.author,
+                    author,
                     AVATAR_COLUMN,
                     playing,
                     cx,

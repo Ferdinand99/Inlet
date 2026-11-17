@@ -41,6 +41,7 @@ fn state(owner: &str) -> AccountState {
         ],
         "private_channels": [
             {"id": "100", "type": 3, "name": "Crew", "owner_id": owner,
+             "nicks": {"3": "Countess"},
              "recipients": [{"id": "2", "username": "bo"}, {"id": "3", "username": "ada"},
                             {"id": "4", "username": "robo", "bot": true}]},
             {"id": "101", "type": 3, "name": "Pair", "owner_id": owner,
@@ -754,4 +755,51 @@ fn people_added_before_a_refusal_leave_the_list_and_the_line_says_so(cx: &mut Te
         );
         assert!(this.social.busy.is_empty());
     });
+}
+
+#[test]
+fn friend_and_group_nicknames_show_in_message_headers_typing_and_mentions() {
+    use crate::ui::chat::messages::{MessageView, Row};
+    use inlet_state::MessagesPage;
+    let mut s = state("1");
+    let msg = |id: u64, channel: &str, author: &str, name: &str| -> inlet_protocol::Message {
+        serde_json::from_value(json!({
+            "id": (id << 22).to_string(), "channel_id": channel, "type": 0,
+            "content": format!("m{id}"), "timestamp": "2026-01-01T10:00:00+00:00",
+            "author": {"id": author, "username": name}
+        }))
+        .unwrap()
+    };
+    for ch in [ChannelId(100), ChannelId(200)] {
+        let _ = s.begin_load(ch);
+        let page = vec![
+            msg(2, &ch.to_string(), "3", "ada"),
+            msg(1, &ch.to_string(), "2", "bo"),
+        ];
+        let _ = s.apply_messages(ch, MessagesPage::latest(page, 50));
+    }
+    let names = |s: &AccountState, ch: ChannelId| -> Vec<Option<String>> {
+        MessageView::default()
+            .build_rows(s, ch)
+            .iter()
+            .filter_map(|r| match r {
+                Row::Message(m) => Some(m.name.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    // In the group: Bo has a friend nickname, Ada's nickname is the group's.
+    assert_eq!(
+        names(&s, GROUP),
+        [Some("Bobby".to_owned()), Some("Countess".to_owned())]
+    );
+    // In a DM the friend nickname counts, and Ada's group nickname does not.
+    assert_eq!(names(&s, ChannelId(200)), [Some("Bobby".to_owned()), None]);
+    // The same names in the typing line.
+    let _ = s.apply(&inlet_protocol::Dispatch::parse(
+        "TYPING_START",
+        json!({"channel_id": "100", "user_id": "3", "timestamp": 1}),
+    ));
+    let typing = crate::ui::chat::typing::typing_line(&s, GROUP).expect("someone types");
+    assert!(typing.text.contains("Countess"), "{}", typing.text);
 }

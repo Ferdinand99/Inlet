@@ -138,3 +138,63 @@ fn relationships_come_from_ready_and_personal_notes_open_like_a_dm() {
     assert!(s.channel_permissions(notes).can_send());
     assert!(s.dm_list().is_empty());
 }
+
+fn user_json(id: u64) -> serde_json::Value {
+    json!({"id": id.to_string(), "username": format!("u{id}")})
+}
+
+#[test]
+fn a_whole_group_of_fifty_stays_in_the_state() {
+    // The account and 49 others: every one of them stays, so the owner can hand the
+    // group over to the last one, remove them, or see that the group is full.
+    let others: Vec<_> = (1000..1049).map(user_json).collect();
+    let s = state_with(
+        json!([{"id": "7000", "type": 3, "name": "Everyone", "owner_id": "1", "recipients": others}]),
+        json!({}),
+    );
+    let group = s.channel(ChannelId(7000)).expect("the group");
+    assert_eq!(group.recipients.len(), 49);
+    assert_eq!(group.recipients.last().map(|u| u.id.as_str()), Some("1048"));
+}
+
+#[test]
+fn a_person_is_named_by_friend_then_group_or_guild_nickname() {
+    use inlet_state::UserId;
+    let s = state_with(
+        json!([{"id": "7000", "type": 3, "name": null, "nicks": {"1001": "Skipper"},
+                "recipients": [user_json(1001), user_json(1002), user_json(1003)]}]),
+        json!({"relationships": [{"id": "1002", "type": 1, "nickname": "Dee"},
+                                 {"id": "1001", "type": 1, "nickname": "Friend nick"}]}),
+    );
+    let g = Some(ChannelId(7000));
+    // The display name when nothing else is set.
+    assert_eq!(
+        s.name_for(UserId(1003), None, g, None).as_deref(),
+        Some("u1003")
+    );
+    // A friend nickname replaces it, in every place.
+    assert_eq!(
+        s.name_for(UserId(1002), None, g, None).as_deref(),
+        Some("Dee")
+    );
+    assert_eq!(
+        s.name_for(UserId(1002), None, None, None).as_deref(),
+        Some("Dee")
+    );
+    // The nickname in the group wins over the friend's, but only in that group.
+    assert_eq!(
+        s.name_for(UserId(1001), None, g, None).as_deref(),
+        Some("Skipper")
+    );
+    assert_eq!(
+        s.name_for(UserId(1001), None, None, None).as_deref(),
+        Some("Friend nick")
+    );
+    // The name the caller has (a message's author) is the base.
+    assert_eq!(
+        s.name_for(UserId(9999), None, g, Some("Stranger"))
+            .as_deref(),
+        Some("Stranger")
+    );
+    assert_eq!(s.name_for(UserId(9999), None, g, None), None);
+}

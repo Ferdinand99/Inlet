@@ -13,10 +13,14 @@
 //! - Closing a DM and editing a group DM take the channel as the account state knows
 //!   it, so the protocol's check that it is a DM or group DM sees the server's type.
 //! - Group DMs: Fluxer allows 10 creations and 10 additions per hour per account, every
-//!   attempt counts, and one call can use up to three (the CAPTCHA). Inlet makes at most
-//!   [`GROUP_CALLS_PER_HOUR`] create calls and as many added people per hour per account
-//!   (at most 9 requests of each), and none at all while the server's `retry_after`
-//!   runs. A CAPTCHA it cannot pass or a rate limit ends the call: the UI shows a
+//!   attempt counts, and one call takes two (without a token, then with the answer of the
+//!   CAPTCHA). Inlet makes at most [`GROUP_CALLS_PER_HOUR`] create calls and as many
+//!   added people per hour per account (five of each is ten attempts; a rare third
+//!   request ends in the server's own 429, which closes the gate), and none at all while
+//!   the server's `retry_after` runs. People not reached because an add stopped early
+//!   are given back. A create or add that is still solving the CAPTCHA stops when the
+//!   window closes, the account changes or the session ends ([`Cmd::CancelGroupCall`],
+//!   [`cancel_all_solves`]). A CAPTCHA it cannot pass or a rate limit ends the call: the UI shows a
 //!   lasting message, and nothing is tried again on its own. Inlet solves the CAPTCHA
 //!   itself, as the official client does, and never hands it to the browser; a call
 //!   that takes more than [`SLOW_HINT`] says so ([`Ev::Working`]).
@@ -41,8 +45,9 @@ pub const WRITES_PER_WINDOW: usize = 10;
 pub const WRITE_WINDOW: Duration = Duration::from_secs(10);
 /// Friend requests by name per minute and account (Fluxer's bucket).
 pub const FRIEND_REQUESTS_PER_MINUTE: usize = 10;
-/// Group DM create calls (and, apart, add calls) per hour and account.
-pub const GROUP_CALLS_PER_HOUR: usize = 3;
+/// Group DM create calls (and, apart, added people) per hour and account: Fluxer's 10
+/// attempts an hour, two for every call that solves a CAPTCHA.
+pub const GROUP_CALLS_PER_HOUR: usize = 5;
 /// The window of [`GROUP_CALLS_PER_HOUR`].
 pub const GROUP_WINDOW: Duration = Duration::from_secs(3600);
 /// Longest server wait taken for group DM calls (the protocol reports at most 6 h).
@@ -130,6 +135,13 @@ pub enum Cmd {
         channel_id: String,
         pin: bool,
     },
+    /// Stops a group create or add that still solves the CAPTCHA (the call named `key`):
+    /// the window was closed.
+    CancelGroupCall {
+        key: String,
+    },
+    /// Asks how many more people can be added to groups this hour ([`Ev::AddSlots`]).
+    AddSlots,
     /// Sets or clears (`None`) the private nickname for a friend.
     SetFriendNickname {
         user_id: String,
@@ -178,6 +190,8 @@ impl Cmd {
             Cmd::CloseDm { channel } => format!("dm:{}", channel.id),
             Cmd::PinDm { channel_id, .. } => format!("dm:{channel_id}"),
             Cmd::SetFriendNickname { user_id, .. } => format!("nick:{user_id}"),
+            Cmd::CancelGroupCall { key } => format!("cancel:{key}"),
+            Cmd::AddSlots => "add-slots".into(),
             Cmd::CreateGroupInvite { channel_id } => format!("invite-link:{channel_id}"),
             Cmd::ListGroupInvites { channel_id } => format!("invites:{channel_id}"),
             // Its own key: a revoke is not dropped because a list is being read.
@@ -256,6 +270,9 @@ pub enum Ev {
     },
     /// The answer to a group DM create or add (`key` as in [`Cmd::key`]).
     GroupDm { key: String, result: GroupDm },
+    /// How many more people can be added to groups this hour, and when the next slot
+    /// comes back when there is none.
+    AddSlots { free: usize, wait: Option<Duration> },
     /// The call named `key` has run for [`SLOW_HINT`] and is not done: "still working".
     Working { key: String },
     /// A new invite to a group DM, as a link.
@@ -287,6 +304,8 @@ pub enum Refusal {
     TooFast,
     /// The group DM budget is used up, or the server asked to wait: free in `wait`.
     GroupLimit { wait: Duration },
+    /// More people at once than the hour ever takes.
+    TooMany { max: usize },
 }
 
 /// One account's budget for these calls.
@@ -376,6 +395,11 @@ impl Gate {
                     Budget::GroupAdd(n) => (&mut self.adds, n),
                     _ => (&mut self.creates, 1),
                 };
+                if n > GROUP_CALLS_PER_HOUR {
+                    return Err(Refusal::TooMany {
+                        max: GROUP_CALLS_PER_HOUR,
+                    });
+                }
                 take_slots(sent, n, GROUP_CALLS_PER_HOUR, GROUP_WINDOW, now)
                     .map_err(|wait| Refusal::GroupLimit { wait })?;
             }
@@ -392,12 +416,59 @@ impl Gate {
         self.busy.contains(key)
     }
 
+    /// How many more people can be added now, and when the next slot is free when none is.
+    fn add_slots_left(&mut self, now: Instant) -> (usize, Option<Duration>) {
+        if let Some(until) = self.group_wait_until.filter(|u| *u > now) {
+            return (0, Some(until.saturating_duration_since(now)));
+        }
+        while self
+            .adds
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= GROUP_WINDOW)
+        {
+            self.adds.pop_front();
+        }
+        let free = GROUP_CALLS_PER_HOUR.saturating_sub(self.adds.len());
+        let wait = (free == 0)
+            .then(|| {
+                self.adds
+                    .front()
+                    .map(|t| (*t + GROUP_WINDOW).saturating_duration_since(now))
+            })
+            .flatten();
+        (free, wait)
+    }
+
+    /// Gives back `n` add slots an add did not use (it stopped before those people).
+    fn give_back_adds(&mut self, n: usize) {
+        for _ in 0..n {
+            self.adds.pop_back();
+        }
+    }
+
     /// The server said to wait `wait` before the next group DM call.
     fn group_rate_limited(&mut self, now: Instant, wait: Duration) {
         let Some(until) = now.checked_add(wait.min(MAX_GROUP_WAIT)) else {
             return;
         };
         self.group_wait_until = Some(self.group_wait_until.map_or(until, |u| u.max(until)));
+    }
+}
+
+/// The CAPTCHA solves that run for group creates and adds, by account and call key.
+static SOLVES: LazyLock<Mutex<HashMap<(AccountKey, String), p::altcha::SolveCancel>>> =
+    LazyLock::new(Default::default);
+
+fn solves() -> std::sync::MutexGuard<'static, HashMap<(AccountKey, String), p::altcha::SolveCancel>>
+{
+    SOLVES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Stops every CAPTCHA solve a group create or add runs: the account on screen changes
+/// or its session ends. The calls answer quietly.
+pub(in crate::backend) fn cancel_all_solves() {
+    for cancel in solves().values() {
+        cancel.cancel();
     }
 }
 
@@ -415,6 +486,7 @@ pub fn refusal_text(r: &Refusal) -> String {
         Refusal::Busy => t!("social-busy"),
         Refusal::TooFast => t!("social-too-fast"),
         Refusal::GroupLimit { wait } => t!("social-group-dm-limit", wait = wait_text(*wait)),
+        Refusal::TooMany { max } => t!("social-group-add-too-many", max = *max),
     }
 }
 
@@ -433,6 +505,10 @@ pub fn wait_text(wait: Duration) -> String {
 /// A failed call: the session ends on an auth failure (`None`), anything else is the
 /// sentence to show.
 fn failure(internal: &TokioSender<Internal>, gen: u64, err: p::Error) -> Option<String> {
+    // A CAPTCHA solve that was stopped on purpose is not a failure to show.
+    if matches!(err, p::Error::Cancelled) {
+        return None;
+    }
     let failure = Failure::from(err);
     if failure.kind == FailureKind::SessionEnded {
         let _ = internal.send(Internal::Ended {
@@ -645,6 +721,21 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
             return;
         }
     };
+    // These two take no slot and no key: stopping a solve, and asking what is left.
+    match &cmd {
+        Cmd::CancelGroupCall { key: target } => {
+            if let Some(cancel) = solves().get(&(account.clone(), target.clone())) {
+                cancel.cancel();
+            }
+            return;
+        }
+        Cmd::AddSlots => {
+            let (free, wait) = with_gate(&account, |g| g.add_slots_left(Instant::now()));
+            let _ = events.unbounded_send(super::Ev::Relationships(Ev::AddSlots { free, wait }));
+            return;
+        }
+        _ => {}
+    }
     if let Err(refusal) = with_gate(&account, |g| g.admit(&key, cmd.budget(), Instant::now())) {
         let ev = match refusal {
             // A second click while the first runs: the first one answers.
@@ -673,6 +764,7 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
     });
     // Made before the task, so the target is freed and the UI answered even when the
     // task panics, is aborted, or is dropped before it first runs.
+    let solving = hint.is_some();
     let mut call = Call {
         account,
         key,
@@ -680,8 +772,17 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
         hint,
         answered: false,
     };
+    // A group create or add can solve a CAPTCHA for a long time: leaving stops it.
+    let cancel = solving.then(p::altcha::SolveCancel::new);
+    if let Some(cancel) = &cancel {
+        solves().insert((call.account.clone(), call.key.clone()), cancel.clone());
+    }
     backend.spawn_guarded("social action", None, async move {
-        let ev = run(&client, &internal, gen, &call.account, &call.key, cmd).await;
+        let work = run(&client, &internal, gen, &call.account, &call.key, cmd);
+        let ev = match cancel {
+            Some(cancel) => p::altcha::with_solve_cancel(cancel, work).await,
+            None => work.await,
+        };
         call.answer(ev);
     });
 }
@@ -711,6 +812,7 @@ impl Call {
         if let Some(hint) = self.hint.take() {
             hint.abort();
         }
+        solves().remove(&(self.account.clone(), self.key.clone()));
         with_gate(&self.account, |g| g.finish(&self.key));
         let _ = self.events.unbounded_send(super::Ev::Relationships(ev));
     }
@@ -788,7 +890,8 @@ async fn run(
             // One call each; the first that does not go through ends the rest (a
             // CAPTCHA or a limit would stop the others too), and says who was added.
             let mut added = Vec::new();
-            for user_id in &user_ids {
+            for (done_before, user_id) in user_ids.iter().enumerate() {
+                let attempted = done_before + 1;
                 let ended =
                     match group_result(client.add_group_dm_recipient(&channel_id, user_id).await) {
                         Ok((GroupDm::Done, _)) => {
@@ -798,6 +901,8 @@ async fn run(
                         Ok((result, _)) => group_answer(account, key, result),
                         Err(err) => group_failed(internal, gen, key, err),
                     };
+                // The people never reached did not use their slots.
+                with_gate(account, |g| g.give_back_adds(user_ids.len() - attempted));
                 return with_added(ended, added);
             }
             group_answer(account, key, GroupDm::Done)
@@ -846,6 +951,8 @@ async fn run(
             },
             key,
         ),
+        // Answered in `handle`, before a call starts.
+        Cmd::CancelGroupCall { .. } | Cmd::AddSlots => Ev::Done { key },
         Cmd::SetFriendNickname { user_id, nickname } => {
             let nickname = match nickname.as_deref().map(clean_nickname).transpose() {
                 Ok(n) => n.flatten(),
@@ -879,8 +986,10 @@ async fn run(
             Ok(list) => Ev::Invites {
                 key,
                 channel_id,
+                // An entry whose code could not go in a link is not shown.
                 result: Ok(list
                     .iter()
+                    .filter(|i| p::api::invites::invite_code(&i.code).is_ok())
                     .map(|i| group_invite(client.instance(), i))
                     .collect()),
             },

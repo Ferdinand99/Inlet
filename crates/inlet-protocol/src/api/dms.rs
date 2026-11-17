@@ -212,6 +212,9 @@ impl Client {
                     solves += 1;
                     match solve_bounded(challenge).await {
                         Ok(t) => token = Some(t),
+                        // Stopped on purpose (the window closed): nothing was sent with
+                        // an answer, and it is no CAPTCHA failure to report.
+                        Err(Error::Cancelled) => return Err(Error::Cancelled),
                         Err(e) => {
                             tracing::warn!("group DM CAPTCHA not solved: {e}");
                             return Ok(GroupDmOutcome::Captcha);

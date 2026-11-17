@@ -280,7 +280,11 @@ pub fn invite_url(instance: &Instance, code: &str) -> Option<String> {
         .get("invite")
         .and_then(Value::as_str)?;
     let url = require_scheme(base, "https", "http", "invite base").ok()?;
-    if !url.username().is_empty() || url.password().is_some() || url.query().is_some() {
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
         return None;
     }
     Some(format!("{}/{code}", url.as_str().trim_end_matches('/')))

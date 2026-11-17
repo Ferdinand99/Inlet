@@ -136,6 +136,9 @@ pub struct MessageRow {
     pub jumped: bool,
     /// Spoilers are shown.
     pub revealed: bool,
+    /// The name to show instead of the one the message came with: the friend nickname,
+    /// or the nickname in the guild or group (Fluxer's `getNickname`).
+    pub name: Option<String>,
     /// The author's highest coloured role, `0xRRGGBB`.
     pub name_color: Option<u32>,
     pub tag: Option<Tag>,
@@ -553,6 +556,22 @@ pub fn mentions_me(state: &AccountState, ch: ChannelId, m: &p::Message) -> bool 
 }
 
 /// The colour of the author's highest role that has one.
+/// The author's name when a nickname changes it: the friend nickname, then the nickname
+/// in the guild or, outside a guild, in the group. `None` when the message's own name
+/// stands.
+fn author_name(
+    state: &AccountState,
+    guild: Option<GuildId>,
+    ch: ChannelId,
+    m: &p::Message,
+    shown: &Message,
+) -> Option<String> {
+    let author = UserId::parse(&m.author.id)?;
+    let name = state.name_for(author, guild, Some(ch), Some(m.author.display_name()))?;
+    let name = model::clean_name(&name);
+    (!name.is_empty() && name != shown.author).then_some(name)
+}
+
 fn name_color(state: &AccountState, guild: Option<GuildId>, m: &p::Message) -> Option<u32> {
     let g = guild?;
     let gs = state.guild(g)?;
@@ -987,6 +1006,7 @@ impl MessageView {
                     mention: mentions_me(state, ch, m),
                     jumped: self.is_highlighted(id, now),
                     revealed: spoilers_shown || self.revealed.contains(&id),
+                    name: author_name(state, guild, ch, m, &c.shown),
                     name_color: name_color(state, guild, m),
                     tag: tag(channel, m, &c.shown),
                     reply: reply_of(m, &c.shown),

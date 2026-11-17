@@ -12,6 +12,10 @@
 //! (the window says "still working" while it does). When it cannot be passed, or the
 //! hourly limit is reached, the window says so and stays as it is: nothing is sent again
 //! on its own, and a long wait shows as minutes or hours.
+// Deviation: Fluxer opens its crop window (a round 1:1 crop of 256 to 1024 pixels) and
+// shows the result when a group icon is picked. Inlet sends the picked picture as it is
+// (static, at most 10 MiB, checked by the server) and shows only its file name. The crop
+// window comes as one shared component, as the profile avatar needs it too.
 
 use std::path::PathBuf;
 
@@ -28,7 +32,9 @@ use super::group_invites::InviteList;
 use super::nickname::MAX_NICKNAME_CHARS;
 use super::{person_name, person_user, Confirm, Done, SocialIcon, SocialPart, Then};
 use crate::app::Inlet;
-use crate::backend::social::relationships::{Cmd, GroupChange, Icon, MAX_ICON_BYTES};
+use crate::backend::social::relationships::{
+    self as rel, Cmd, GroupChange, Icon, GROUP_CALLS_PER_HOUR, GROUP_WINDOW, MAX_ICON_BYTES,
+};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
 use crate::ui::overlays::modal::modal;
@@ -344,9 +350,9 @@ pub fn unaddable_reason(reason: &str) -> String {
 /// Most people a group takes in all (the account included).
 const GROUP_SIZE: usize = MAX_GROUP_DM_RECIPIENTS + 1;
 
-/// How many more people a group with `others` other people takes. The state keeps at
-/// most 32 recipients of a group, so a bigger one looks emptier than it is: the server
-/// has the last word and answers a full group with an error the window shows.
+/// How many more people a group with `others` other people takes (Fluxer's default of
+/// 50 in all; the server has the last word and answers a full group with an error the
+/// window shows).
 pub fn room_in_group(others: usize) -> usize {
     GROUP_SIZE.saturating_sub(others + 1)
 }
@@ -561,6 +567,9 @@ impl Inlet {
         if let Mode::Invites { channel } = mode {
             self.load_group_invites(channel, cx);
         }
+        if matches!(mode, Mode::Add { .. }) {
+            self.ask_add_slots();
+        }
         cx.notify();
     }
 
@@ -657,7 +666,7 @@ impl Inlet {
 
     /// Closes the window, and opens the one it came from.
     pub(crate) fn group_dm_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let back = self.social.group_dm.take().and_then(|w| w.back);
+        let back = self.drop_group_dm();
         if let Some(mode) = back {
             self.open_group_dm(mode, window, cx);
         }
@@ -684,15 +693,41 @@ impl Inlet {
     pub(super) fn pick_room(&self, cx: &gpui::App) -> usize {
         match self.social.group_dm.as_ref().map(|w| w.mode) {
             Some(Mode::Add { channel }) => {
-                let have = self
-                    .account
-                    .as_ref()
-                    .and_then(|a| a.read(cx).channel(channel))
-                    .map_or(0, |c| c.recipients.len());
-                room_in_group(have)
+                // What the group has room for, and what the hour still allows adding
+                // (Fluxer's 10 attempts, two for every person).
+                let slots = self
+                    .social
+                    .add_slots
+                    .map_or(GROUP_CALLS_PER_HOUR, |(free, _)| free);
+                self.group_room(channel, cx).min(slots)
             }
             _ => MAX_GROUP_DM_RECIPIENTS,
         }
+    }
+
+    /// How many more people the group has room for.
+    fn group_room(&self, channel: ChannelId, cx: &gpui::App) -> usize {
+        let have = self
+            .account
+            .as_ref()
+            .and_then(|a| a.read(cx).channel(channel))
+            .map_or(0, |c| c.recipients.len());
+        room_in_group(have)
+    }
+
+    /// Asks the backend how many people can still be added this hour.
+    pub(super) fn ask_add_slots(&mut self) {
+        self.backend.send(Cmd::AddSlots);
+    }
+
+    /// Closes the window without opening another one, and stops a create or add that
+    /// still solves the CAPTCHA. Returns the window to come back to.
+    pub(crate) fn drop_group_dm(&mut self) -> Option<Mode> {
+        let w = self.social.group_dm.take()?;
+        if self.social.busy.contains(&w.key()) {
+            self.backend.send(Cmd::CancelGroupCall { key: w.key() });
+        }
+        w.back
     }
 
     /// Create (or open the DM, with one friend picked), or add the picked friends.
@@ -934,7 +969,18 @@ impl Inlet {
                 .text_color(theme::text_muted())
                 .child(match mode {
                     Mode::Create => t!("social-new-dm-body", count = left),
-                    _ if room == 0 => t!("social-group-full"),
+                    Mode::Add { channel } if self.group_room(channel, cx) == 0 => {
+                        t!("social-group-full")
+                    }
+                    _ if room == 0 => t!(
+                        "social-group-add-limit",
+                        wait = rel::wait_text(
+                            self.social
+                                .add_slots
+                                .and_then(|(_, wait)| wait)
+                                .unwrap_or(GROUP_WINDOW)
+                        )
+                    ),
                     _ => t!("social-group-add-body", count = left),
                 })
                 .into_any_element(),

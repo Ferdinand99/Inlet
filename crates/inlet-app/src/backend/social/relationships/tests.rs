@@ -241,33 +241,63 @@ fn friend_requests_stay_within_ten_a_minute() {
 fn adding_several_people_takes_that_many_of_the_hourly_slots_or_none() {
     let t0 = Instant::now();
     let mut g = Gate::default();
-    // Two people use two of three; a second call for two is refused whole.
-    assert!(g.admit("group:7", Budget::GroupAdd(2), t0).is_ok());
+    // Four friends in one go, on a fresh gate: that is what the picker offers.
+    assert!(g.admit("group:7", Budget::GroupAdd(4), t0).is_ok());
     g.finish("group:7");
+    // Two more do not fit in the hour any more: refused whole, with the wait.
     match g.admit("group:7", Budget::GroupAdd(2), t0 + Duration::from_secs(60)) {
         Err(Refusal::GroupLimit { wait }) => {
             assert!(wait > Duration::from_secs(3000), "{wait:?}");
         }
         other => panic!("{other:?}"),
     }
-    // The refusal took nothing: one more person still fits.
+    // The refusal took nothing: one more person still fits, and then none.
+    assert_eq!(g.add_slots_left(t0 + Duration::from_secs(61)).0, 1);
     assert!(g
         .admit("group:7", Budget::GroupAdd(1), t0 + Duration::from_secs(61))
         .is_ok());
     g.finish("group:7");
-    // More people than the hour holds never fit, and the wait is at most an hour.
-    match g.admit(
-        "group:8",
-        Budget::GroupAdd(GROUP_CALLS_PER_HOUR + 1),
-        t0 + GROUP_WINDOW * 2,
-    ) {
-        Err(Refusal::GroupLimit { wait }) => assert!(wait <= GROUP_WINDOW),
-        other => panic!("{other:?}"),
-    }
+    let (free, wait) = g.add_slots_left(t0 + Duration::from_secs(62));
+    assert_eq!(free, 0);
+    assert!(wait.is_some_and(|w| w > Duration::from_secs(3000)));
+    // More people at once than the hour ever holds: its own refusal, no wait.
+    assert_eq!(
+        g.admit(
+            "group:8",
+            Budget::GroupAdd(GROUP_CALLS_PER_HOUR + 1),
+            t0 + GROUP_WINDOW * 2
+        ),
+        Err(Refusal::TooMany {
+            max: GROUP_CALLS_PER_HOUR
+        })
+    );
+    assert_eq!(
+        refusal_text(&Refusal::TooMany { max: 5 }),
+        t!("social-group-add-too-many", max = 5)
+    );
     // After the hour the slots are back.
     assert!(g
-        .admit("group:7", Budget::GroupAdd(3), t0 + GROUP_WINDOW * 3)
+        .admit(
+            "group:7",
+            Budget::GroupAdd(GROUP_CALLS_PER_HOUR),
+            t0 + GROUP_WINDOW * 3
+        )
         .is_ok());
+    assert_eq!(g.add_slots_left(t0 + GROUP_WINDOW * 3).0, 0);
+}
+
+#[test]
+fn slots_for_people_an_add_never_reached_are_given_back() {
+    let t0 = Instant::now();
+    let mut g = Gate::default();
+    assert!(g.admit("group:7", Budget::GroupAdd(5), t0).is_ok());
+    g.finish("group:7");
+    assert_eq!(g.add_slots_left(t0).0, 0);
+    g.give_back_adds(3);
+    assert_eq!(g.add_slots_left(t0).0, 3);
+    // A server wait closes them whatever is free.
+    g.group_rate_limited(t0, Duration::from_secs(120));
+    assert_eq!(g.add_slots_left(t0), (0, Some(Duration::from_secs(120))));
 }
 
 #[test]
@@ -672,7 +702,20 @@ async fn adding_people_stops_at_the_first_one_that_does_not_go_through() {
         channel_id: "500".into(),
         user_ids: vec!["11".into(), "12".into(), "13".into()],
     };
-    let ev = run(&client, &internal, 1, &key("10"), &cmd.key(), cmd.clone()).await;
+    // The call took three slots when it started.
+    let account = key("10");
+    assert!(with_gate(&account, |g| g.admit(
+        &cmd.key(),
+        cmd.budget(),
+        Instant::now()
+    ))
+    .is_ok());
+    let ev = run(&client, &internal, 1, &account, &cmd.key(), cmd.clone()).await;
+    // Two were asked (the second was refused): the third person's slot is given back.
+    assert_eq!(
+        with_gate(&account, |g| g.add_slots_left(Instant::now())).0,
+        GROUP_CALLS_PER_HOUR - 2
+    );
     // The first person went in before the second one was refused: the answer says so.
     assert_eq!(
         ev,
@@ -781,4 +824,148 @@ async fn the_still_working_timer_ends_with_its_call() {
         said.push(ev);
     }
     assert_eq!(said.len(), 1, "only the call's own answer, no hint");
+}
+
+#[tokio::test]
+async fn closing_the_window_stops_a_group_call_that_still_solves_the_captcha() {
+    let (server, instance) = mock_instance("ws://127.0.0.1:9", &[]).await;
+    // A challenge nothing can solve: the work runs until it is stopped.
+    let mut challenge = p::altcha::make_test_challenge(1, 1);
+    challenge["parameters"]["keyPrefix"] = json!("0123456789abcdef0123456789abcdef");
+    Mock::given(method("POST"))
+        .and(path("/api/v1/users/@me/channels"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "code": "CAPTCHA_REQUIRED", "message": "Captcha required",
+            "captcha_provider": "altcha", "altcha_challenge": challenge
+        })))
+        .mount(&server)
+        .await;
+    let client = p::Client::new(instance, p::Token::new("tok-cancel-call"));
+    let (internal, _irx) = tokio::sync::mpsc::unbounded_channel();
+    let account = key("13");
+    let cmd = Cmd::CreateGroupDm {
+        recipients: vec!["11".into()],
+    };
+    // What `handle` does for a create: a handle in the registry, the call under it.
+    let cancel = p::altcha::SolveCancel::new();
+    solves().insert((account.clone(), cmd.key()), cancel.clone());
+    let call = {
+        let (client, internal, account, cmd) = (
+            client.clone(),
+            internal.clone(),
+            account.clone(),
+            cmd.clone(),
+        );
+        tokio::spawn(async move {
+            let key = cmd.key();
+            let work = run(&client, &internal, 1, &account, &key, cmd.clone());
+            p::altcha::with_solve_cancel(cancel, work).await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The window closes: the backend is told by key (as `Cmd::CancelGroupCall` does).
+    solves()
+        .get(&(account.clone(), cmd.key()))
+        .expect("the solve is registered")
+        .cancel();
+    let ev = tokio::time::timeout(Duration::from_secs(10), call)
+        .await
+        .expect("the solve stopped")
+        .unwrap();
+    assert_eq!(
+        ev,
+        Ev::Done {
+            key: "group-dm".into()
+        },
+        "no failure to show"
+    );
+    assert_eq!(
+        requests(&server)
+            .await
+            .into_iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count(),
+        1,
+        "only the request without an answer went out"
+    );
+    solves().remove(&(account, cmd.key()));
+}
+
+#[test]
+fn leaving_the_screen_stops_every_running_solve_and_a_finished_call_forgets_its() {
+    let account = key("14");
+    let cancel = p::altcha::SolveCancel::new();
+    solves().insert((account.clone(), "group-dm".into()), cancel.clone());
+    cancel_all_solves();
+    assert!(cancel.is_cancelled());
+    // A call that ends takes its handle out of the registry.
+    let (tx, _rx) = futures::channel::mpsc::unbounded();
+    let mut call = Call {
+        account: account.clone(),
+        key: "group-dm".into(),
+        events: crate::backend::Ui::new(tx),
+        hint: None,
+        answered: false,
+    };
+    call.answer(Ev::Done {
+        key: "group-dm".into(),
+    });
+    assert!(!solves().contains_key(&(account, "group-dm".to_owned())));
+}
+
+#[tokio::test]
+async fn an_invite_to_a_community_is_one_write_slot_and_at_most_three_requests() {
+    let (server, instance) = mock_instance("ws://127.0.0.1:9", &[]).await;
+    for (p, body) in [
+        (
+            "/api/v1/channels/30/invites",
+            json!({"code": "cccc3333", "type": 0, "temporary": false}),
+        ),
+        (
+            "/api/v1/users/@me/channels",
+            json!({"id": "600", "type": 1, "recipients": [{"id": "11", "username": "bo"}]}),
+        ),
+        (
+            "/api/v1/channels/600/messages",
+            json!({"id": "700", "channel_id": "600", "type": 0, "content": "x",
+                   "author": {"id": "1", "username": "me"},
+                   "timestamp": "2026-11-16T08:00:00.000Z"}),
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+    }
+    let client = p::Client::new(instance, p::Token::new("tok-probe"));
+    let (internal, _irx) = tokio::sync::mpsc::unbounded_channel();
+    let cmd = Cmd::InviteToCommunity {
+        user_id: "11".into(),
+        guild_id: "3".into(),
+        channel_id: "30".into(),
+        vanity: None,
+    };
+    run(&client, &internal, 1, &key("15"), &cmd.key(), cmd.clone()).await;
+    // Discovery is not a call of this account.
+    let calls = requests(&server)
+        .await
+        .into_iter()
+        .filter(|r| r.url.path().starts_with("/api/"))
+        .count();
+    assert_eq!(calls, 3, "create the invite, open the DM, send the message");
+    // The gate lets 10 such calls start in 10 s whatever the clicks: at most 30 requests.
+    let t0 = Instant::now();
+    let mut g = Gate::default();
+    let started = (0..200u64)
+        .filter(|i| {
+            let k = format!("community:{i}:3");
+            let ok = g
+                .admit(&k, cmd.budget(), t0 + Duration::from_millis(40 * i))
+                .is_ok();
+            g.finish(&k);
+            ok
+        })
+        .count();
+    assert_eq!(started * calls, WRITES_PER_WINDOW * 3);
 }

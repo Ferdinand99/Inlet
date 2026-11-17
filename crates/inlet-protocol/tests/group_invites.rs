@@ -276,3 +276,58 @@ async fn an_instance_without_an_invite_base_has_no_invite_links() {
         .unwrap();
     assert_eq!(invite_url(&instance, "aB3dEf7h"), None);
 }
+
+#[tokio::test]
+async fn an_invite_base_with_a_query_or_a_fragment_gives_no_link() {
+    for bad in ["/invite?x=1", "/invite#a", "/invite?x=1#a"] {
+        let server = MockServer::start().await;
+        let mut discovery = common::discovery_json(&server.uri(), "ws://127.0.0.1:1/gateway");
+        discovery["endpoints"]["invite"] = json!(format!("{}{bad}", server.uri()));
+        Mock::given(method("GET"))
+            .and(path("/.well-known/fluxer"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(discovery))
+            .mount(&server)
+            .await;
+        let instance =
+            Instance::discover_with(&server.uri(), inlet_protocol::ClientInfo::default())
+                .await
+                .unwrap();
+        assert_eq!(invite_url(&instance, "aB3dEf7h"), None, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn closing_the_window_stops_a_group_create_that_still_solves_the_captcha() {
+    use inlet_protocol::altcha::{make_test_challenge, with_solve_cancel, SolveCancel};
+    let (server, instance) = common::instance().await;
+    // A challenge nothing can solve: the work runs until it is stopped.
+    let mut challenge = make_test_challenge(1, 1);
+    challenge["parameters"]["keyPrefix"] = json!("0123456789abcdef0123456789abcdef");
+    Mock::given(method("POST"))
+        .and(path("/api/v1/users/@me/channels"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "code": "CAPTCHA_REQUIRED", "message": "Captcha required",
+            "captcha_provider": "altcha", "altcha_challenge": challenge
+        })))
+        .mount(&server)
+        .await;
+    let c = client(&instance, "tok-cancel");
+    let cancel = SolveCancel::new();
+    let stop = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        stop.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = with_solve_cancel(cancel, c.create_group_dm(&["11".into()])).await;
+    assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(
+        count(
+            &server.received_requests().await.unwrap(),
+            "/api/v1/users/@me/channels"
+        ),
+        1,
+        "only the request without a token went out"
+    );
+}

@@ -988,6 +988,44 @@ impl AccountState {
         self.users.get(id)
     }
 
+    /// The name shown for `user`, in Fluxer's order (`getUntruncatedNickname`): the
+    /// display name (`base`, or the cached user's), then the account's private
+    /// nickname for a friend, then the nickname in the guild (`guild`) or, outside a
+    /// guild, in the group DM `channel`. `None` when no name is known at all. The text is
+    /// raw: callers clean it before they show it.
+    pub fn name_for(
+        &self,
+        user: UserId,
+        guild: Option<GuildId>,
+        channel: Option<ChannelId>,
+        base: Option<&str>,
+    ) -> Option<String> {
+        let mut name = base
+            .map(str::to_owned)
+            .or_else(|| self.user(user).map(|u| u.display_name().to_owned()));
+        let friend = self
+            .relationships
+            .get(user)
+            .and_then(|p| p.nickname.as_deref())
+            .filter(|n| !n.is_empty());
+        if let Some(n) = friend {
+            name = Some(n.to_owned());
+        }
+        let local = match guild {
+            Some(g) => self
+                .member(g, user)
+                .and_then(|m| m.nick.as_deref())
+                .filter(|n| !n.is_empty()),
+            None => channel
+                .and_then(|c| self.channel(c))
+                .and_then(|c| c.group_nick(&user.to_string())),
+        };
+        if let Some(n) = local {
+            name = Some(n.to_owned());
+        }
+        name
+    }
+
     /// A cached member of a guild.
     pub fn member(&self, g: GuildId, u: UserId) -> Option<&GuildMember> {
         self.guilds.get(&g)?.members.get(u, self.me_id)

@@ -68,6 +68,8 @@ social-group-no-friends = No friends to add.
 social-group-add-title = Add friends to { $name }
 social-group-add-body = Pick the friends to add. You can add { $count } more.
 social-group-full = This group is full. Remove someone before adding more people.
+social-group-add-limit = You have added the most people allowed for now. Try again in { $wait }.
+social-group-add-too-many = You can add at most { $max } people an hour.
 social-group-added-some = { $count } { $count ->
     [one] person was added.
    *[other] people were added.

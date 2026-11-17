@@ -58,6 +58,9 @@ pub struct State {
     pub confirm: Option<Confirm>,
     /// What happens when a call that was asked for answers with success, by call key.
     pub done: HashMap<String, Done>,
+    /// How many more people can be added to groups this hour, and when the next slot is
+    /// free when none is; asked for when the add window opens and after every add.
+    pub add_slots: Option<(usize, Option<std::time::Duration>)>,
     /// DMs this client is closing: their deletion is not reported as a lost channel.
     pub closing: HashSet<String>,
     /// The DM last open in the DM list, which the DM list opens again (Fluxer's home
@@ -161,6 +164,7 @@ impl State {
     /// last failure were the old account's.
     pub fn close_windows(&mut self) {
         self.closing.clear();
+        self.add_slots = None;
         self.done.clear();
         self.last_dm = None;
         self.dm_rows = None;
@@ -806,6 +810,7 @@ impl Inlet {
                 self.social.busy.remove(&key);
                 self.group_dm_answer(&key, result, window, cx);
             }
+            rel::Ev::AddSlots { free, wait } => self.social.add_slots = Some((free, wait)),
             rel::Ev::Working { key } => {
                 if let Some(w) = self.social.group_dm.as_mut().filter(|w| w.owns(&key)) {
                     w.hint = Some(t!("social-still-working"));
@@ -946,6 +951,15 @@ impl Inlet {
             other => (Vec::new(), other),
         };
         let mine = self.social.group_dm.as_ref().is_some_and(|w| w.owns(key));
+        if mine
+            && matches!(
+                self.social.group_dm.as_ref().map(|w| w.mode),
+                Some(group_dm::Mode::Add { .. })
+            )
+        {
+            // What the hour still allows changed with this add.
+            self.ask_add_slots();
+        }
         if mine {
             if let Some(w) = self.social.group_dm.as_mut() {
                 w.hint = None;
