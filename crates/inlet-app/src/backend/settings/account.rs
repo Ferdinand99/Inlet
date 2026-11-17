@@ -21,6 +21,12 @@ pub enum Cmd {
         bots: bool,
         guild_ids: Vec<String>,
     },
+    /// The guild order and folders: the whole list, which replaces the account's. It is
+    /// written with the other account settings (one request, newest wish per field), and
+    /// answered like them ([`Ev::AccountSaved`], [`Ev::SaveFailed`]) with `through` 0.
+    SaveGuildFolders {
+        folders: Vec<inlet_protocol::models::GuildFolder>,
+    },
     /// The account's own profile (account-wide), for the My profile tab.
     LoadProfile,
     /// Saves a profile edit, then reads the profile again.
@@ -65,6 +71,18 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
                 backend.emit(Ev::ProfileSaved(Box::new(profile::demo_saved(*save))));
             }
             Cmd::Save { .. } | Cmd::SaveGuildDms { .. } => {}
+            Cmd::SaveGuildFolders { folders } => {
+                // No server: the list is the settings (a whole snapshot, so the account
+                // state takes it).
+                if let Ok(settings) = serde_json::from_value::<p::UserSettings>(
+                    serde_json::json!({"theme": "dark", "guild_folders": folders}),
+                ) {
+                    backend.emit(Ev::AccountSaved {
+                        through: 0,
+                        settings: Box::new(settings),
+                    });
+                }
+            }
         }
         return;
     }
@@ -84,6 +102,10 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
             }
             Cmd::SaveGuildDms { seq, .. } => backend.emit(Ev::SaveFailed {
                 through: seq,
+                preferences: false,
+            }),
+            Cmd::SaveGuildFolders { .. } => backend.emit(Ev::SaveFailed {
+                through: 0,
                 preferences: false,
             }),
             Cmd::LoadProfile => backend.emit(Ev::ProfileFailed(t!("settings-not-connected"))),
@@ -141,6 +163,10 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
         } => {
             let tx = r.settings.sender(&client, &events, &internal, gen);
             let _ = tx.send(Wish::guild_dms(seq, bots, guild_ids));
+        }
+        Cmd::SaveGuildFolders { folders } => {
+            let tx = r.settings.sender(&client, &events, &internal, gen);
+            let _ = tx.send(Wish::guild_folders(0, folders));
         }
         Cmd::LoadProfile => {
             backend.spawn_guarded("load profile", None, async move {

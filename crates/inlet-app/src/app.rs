@@ -64,6 +64,8 @@ pub struct Inlet {
     // View state, one per domain. The empty ones are slots for later tasks.
     pub sign_in: ui::accounts::SignInState,
     pub sidebar: ui::sidebar::SidebarState,
+    pub rail: ui::rail::RailState,
+    pub nav: ui::overlays::nav_dialog::NavState,
     pub chat: ui::chat::ChatState,
     pub composer: ui::composer::ComposerState,
     pub overlays: ui::overlays::OverlayState,
@@ -172,6 +174,8 @@ impl Inlet {
             account: None,
             sign_in,
             sidebar: Default::default(),
+            rail: Default::default(),
+            nav: Default::default(),
             chat: ui::chat::ChatState::new(),
             composer,
             overlays: Default::default(),
@@ -293,6 +297,9 @@ impl Inlet {
         self.overlays.link_prompt = None;
         self.overlays.link_channel = None;
         self.sudo_reset();
+        self.rail.pending = None;
+        self.nav.dialog = None;
+        self.nav.join_target = None;
         self.guilds.clear();
         self.channels.clear();
         self.selected_guild = None;

@@ -195,10 +195,17 @@ impl Inlet {
                 cx.notify();
                 return;
             }
+            SettingsEv::Guild(event) => {
+                self.on_guild_event(event, cx);
+                return;
+            }
         };
         match event {
             Ev::AccountSaved { through, settings } => {
                 store::answer_settings(cx, &settings, through);
+                // A server order that is on its way: the answer is one more update of
+                // the account's settings, taken the way the gateway's are.
+                self.rail_answer(settings, window, cx);
             }
             Ev::PrefsSaved { through, prefs } => {
                 let display = Display::of_preferences(prefs.get());
@@ -207,7 +214,13 @@ impl Inlet {
             Ev::SaveFailed {
                 through,
                 preferences,
-            } => store::failed(cx, through, preferences),
+            } => {
+                store::failed(cx, through, preferences);
+                // What the server holds shows again where the server order was shown.
+                if !preferences {
+                    self.rail_save_failed(cx);
+                }
+            }
             Ev::Profile(own) => self.on_own_profile(*own, false, window, cx),
             Ev::ProfileSaved(own) => self.on_own_profile(*own, true, window, cx),
             Ev::ProfileFailed(reason) => self.on_profile_failed(reason, false, cx),

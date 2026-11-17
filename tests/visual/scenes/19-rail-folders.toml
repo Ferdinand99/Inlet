@@ -1,0 +1,10 @@
+# The rail with an open folder, a closed one that shows its icon, loose servers and
+# unread marks; the favourites star, Explore and Add at the ends.
+name = "rail-folders"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "rail-folders"
+guild = "g1"
+channel = "c-general"

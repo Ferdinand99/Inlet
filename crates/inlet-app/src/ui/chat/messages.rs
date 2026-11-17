@@ -1294,6 +1294,7 @@ impl Inlet {
                 self.settings.profile.reset();
             }
             self.follow_account_settings(cx);
+            self.rail_sync(cx);
             self.after_changes(changes, false, cx);
             // A first READY, or a new one after a reconnect: the open channel's window is
             // missing or stale, so load its newest page.
@@ -1313,6 +1314,7 @@ impl Inlet {
         self.pickers_on_dispatch(&dispatch, cx);
         if matches!(dispatch, p::Dispatch::UserSettingsUpdate(_)) {
             self.follow_account_settings(cx);
+            self.rail_sync(cx);
         }
         self.note_saved(&dispatch);
         self.inbox_on_dispatch(&dispatch, &rendered, cx);

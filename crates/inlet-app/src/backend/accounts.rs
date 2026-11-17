@@ -999,6 +999,7 @@ impl Backend {
             policy,
             restart_timer: None,
             settings_writes: Vec::new(),
+            ops: Default::default(),
         }));
         Some(key)
     }
@@ -1101,6 +1102,7 @@ impl Backend {
             policy,
             restart_timer: None,
             settings_writes: Vec::new(),
+            ops: Default::default(),
         });
     }
 
@@ -1200,6 +1202,7 @@ impl Backend {
     /// with its tag so the UI never keeps the previous account's.
     fn session_activated(&self, session: &p::Session) {
         super::media::session_started(self, session);
+        super::settings::guilds::instance_known(self, session);
     }
 
     /// Makes `key` the active account: a connected one at once, a stored one that is not
