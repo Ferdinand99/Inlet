@@ -49,13 +49,52 @@ What the system must have:
 - macOS: nothing (WKWebView is part of the system).
 - Linux: WebKitGTK 4.1 (`libwebkit2gtk-4.1-0`, from the distribution) and GTK 3. The helper links them dynamically and they are not in the AppImage. Without them the helper cannot start and the flow fails with `helper_exited`. The development files are in the builder image and the CI jobs that build the helper.
 
-`packaging/macos` and the signing workflows are the same as on main (a check enforces it), so the macOS bundle gets the helper in `build.yml` (the step "Assemble Inlet.app"), after `build-app.sh`. **The signing workflow must be changed on main before a signed release can include the helper.** `macos-sign.yml` signs `Inlet.app` without `--deep`, so a second executable in `Contents/MacOS` stays unsigned and notarisation rejects the app. The helper must be signed first, with the hardened runtime and a timestamp, then the bundle (signing the bundle seals the helper's signature):
+How the helper behaves (the rules are in `crates/inlet-web/src/helper.rs` and `gate.rs`):
 
-```sh
-codesign --force --options runtime --timestamp   --keychain "$KEYCHAIN" --sign "$SIGN_IDENTITY"   build/Inlet.app/Contents/MacOS/inlet-web
+- The window may only navigate to the hosts of the flow's `allow`. Frames inside the page may go to `allow` and to the flow's separate `frames` list, and to nothing else; a frame of another host ends the flow, like a refused navigation. This holds on all three platforms, by different means: wry 0.57 reports frame navigations like window navigations on Linux and macOS (a host that only `frames` lists is let through and, if it turns out to be the window, the flow ends when its load starts), and not at all on Windows (the helper hooks WebView2's frame callback). Subresources (images, scripts, requests) are not filtered. List only first-party hosts, and in `frames` only what a page needs inside it (a captcha, a payment form).
+- The window is above Inlet's main window only where it can be tied to it (Windows, an owner window). On macOS and Linux a window cannot be tied to another process's window, so it is on top of every window there (a recorded deviation).
+- The helper holds no secret of Inlet's and its code never touches Inlet's keyring. It runs as the same user, so it is not a wall against a compromised web engine: web content is kept apart by the engine's process sandbox (Chromium's on Windows, WebContent on macOS).
+- Follow-up for Linux: WebKitGTK's own sandbox (bubblewrap) is off by default and wry does not switch it on. Call `webkit_web_context_set_sandbox_enabled(true)` on the view's context before `load_url`, check under Xvfb that `WebKitWebProcess` runs under `bwrap` (and that `bubblewrap` and `xdg-dbus-proxy` are present), and if WebKit has launched the web process by then, patch wry or ask for an upstream option.
+
+#### Before the port to main
+
+`packaging/macos` and the signing workflows are the same as on main (a check enforces it), so the macOS bundle gets the helper in `build.yml` (the step "Assemble Inlet.app"), after `build-app.sh`. Two changes have to land on main with the port; neither blocks `v0`.
+
+**1. macOS signing.** `macos-sign.yml` signs `Inlet.app` without `--deep`, so a second executable in `Contents/MacOS` is unsigned nested code, and notarisation rejects the app. The helper must be signed first, with the hardened runtime and a timestamp, then the bundle (signing the bundle seals the helper's signature). The step is conditional, so it can land before the port without breaking today's helper-less app:
+
+```yaml
+      # .github/workflows/macos-sign.yml, new step directly before "Sign the app"
+      - name: Sign the web view helper
+        run: |
+          helper=build/Inlet.app/Contents/MacOS/inlet-web
+          if [ -e "$helper" ]; then
+            codesign --force --options runtime --timestamp \
+              --identifier no.opland.inlet.web \
+              --keychain "$KEYCHAIN" --sign "$SIGN_IDENTITY" \
+              "$helper"
+            codesign --verify --strict --verbose=2 "$helper"
+            codesign --display --verbose=4 "$helper" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*runtime'
+          fi
 ```
 
-as a step before "Sign the app". The helper needs no entitlements (WKWebView runs in Apple's own web content process), so no entitlements file is passed. `build-app.sh` should also copy the helper (and check its `arm64` slice), so that the step in `build.yml` can go.
+- No `--entitlements`: WKWebView's JIT runs in Apple's WebContent XPC service.
+- `--identifier no.opland.inlet.web` keeps the helper's designated requirement apart from the app's, so the keychain access list of Inlet's items does not cover the helper.
+- Keep "Sign the app" as it is, after this step.
+- After the port, make it strict: in "Unpack the unsigned app" add `test -x build/Inlet.app/Contents/MacOS/inlet-web`, and let `packaging/macos/build-app.sh` take the helper (copy, `chmod 755`, `lipo -archs` must show arm64) so that the copy step in `build.yml` can go.
+- Cosmetic, to check on a Mac: a bare executable in `Contents/MacOS` may show a second Dock icon. `tao::platform::macos::EventLoopExtMacOS::set_activation_policy_at_runtime(ActivationPolicy::Accessory)` in `helper::run` avoids it.
+
+**2. SBOM.** `sbom.yml` covers only `crates/inlet-app/inlet.cdx.json` and `cargo tree -p inlet`, so the shipped helper's dependencies (wry, tao, webview2-com, objc2-web-kit, webkit2gtk, gtk) are missing from the release SBOMs. To keep the three files that `release.yml` expects, merge the helper into each platform's SBOM:
+
+```sh
+cargo tree --locked -e normal --target "$TARGET" -p inlet -p inlet-web --prefix none | ... > shipped.txt
+jq -s '.[0] as $a | .[1] as $b
+  | $a | .components = ($a.components + $b.components | unique_by(."bom-ref"))
+       | .dependencies = ($a.dependencies + $b.dependencies | unique_by(.ref))' \
+  <(sed "s|file://$PWD|file:///workspace|g" crates/inlet-app/inlet.cdx.json) \
+  <(sed "s|file://$PWD|file:///workspace|g" crates/inlet-web/inlet-web.cdx.json) > full.cdx.json
+```
+
+Also add `inlet-web` as a component, or a check such as `jq -e 'any(.components[]; .name=="wry")'`. `sbom.yml` is not one of the files that must equal main, so this can go in this PR's successor or in the port.
 
 ### Updates
 

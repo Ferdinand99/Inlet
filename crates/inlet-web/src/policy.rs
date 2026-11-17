@@ -100,6 +100,8 @@ struct AllowRule {
 #[derive(Debug, Clone)]
 pub struct Policy {
     allow: Vec<AllowRule>,
+    /// Hosts that may be frames of the page, and only frames.
+    frames: Vec<AllowRule>,
     intercept: Vec<Url>,
     options: PolicyOptions,
 }
@@ -129,9 +131,23 @@ impl Policy {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Policy {
             allow,
+            frames: Vec::new(),
             intercept,
             options,
         })
+    }
+
+    /// Adds the hosts that may appear as frames (the `frames` of a request).
+    pub fn with_frames(mut self, frames: &[String]) -> Result<Policy, RequestError> {
+        if frames.len() > MAX_RULES {
+            return Err(RequestError::TooManyRules);
+        }
+        self.frames = frames
+            .iter()
+            .enumerate()
+            .map(|(i, p)| parse_pattern(p, self.options).ok_or(RequestError::BadFramePattern(i)))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self)
     }
 
     /// The rules of an `open` request. Also checks the title, the size and that the start
@@ -141,15 +157,27 @@ impl Policy {
         options: PolicyOptions,
     ) -> Result<Policy, RequestError> {
         request.check_window()?;
-        let policy = Policy::new(&request.allow, &request.intercept, options)?;
+        let policy = Policy::new(&request.allow, &request.intercept, options)?
+            .with_frames(&request.frames)?;
         if policy.check(&request.url) != Verdict::Allow {
             return Err(RequestError::BadUrl);
         }
         Ok(policy)
     }
 
-    /// What to do with a navigation to `raw`.
+    /// What to do with a navigation of the window to `raw`: only `allow` counts.
     pub fn check(&self, raw: &str) -> Verdict {
+        self.verdict(raw, false)
+    }
+
+    /// What to do with a navigation of a frame to `raw`: `allow` and `frames` count. The
+    /// same basic rules apply as for the window, and an `intercept` URL still ends the
+    /// flow.
+    pub fn check_frame(&self, raw: &str) -> Verdict {
+        self.verdict(raw, true)
+    }
+
+    fn verdict(&self, raw: &str, frame: bool) -> Verdict {
         if raw.len() > MAX_URL_LEN {
             return Verdict::Block(BlockReason::TooLong);
         }
@@ -166,7 +194,8 @@ impl Policy {
         {
             return Verdict::Intercept;
         }
-        if self.allow.iter().any(|rule| rule_matches(rule, &url)) {
+        let listed = |rules: &[AllowRule]| rules.iter().any(|rule| rule_matches(rule, &url));
+        if listed(&self.allow) || (frame && listed(&self.frames)) {
             Verdict::Allow
         } else {
             Verdict::Block(BlockReason::NotAllowed)
@@ -899,6 +928,7 @@ mod tests {
             url: url.into(),
             allow: strings(&["id.example"]),
             intercept: strings(&["https://id.example/done"]),
+            frames: vec![],
             title: "Sign in".into(),
             size: crate::protocol::Size {
                 width: 480,
@@ -929,6 +959,84 @@ mod tests {
         assert_eq!(
             Policy::for_request(&odd, NORMAL).unwrap_err(),
             RequestError::BadWindow
+        );
+    }
+
+    #[test]
+    fn a_frame_host_is_allowed_as_a_frame_and_never_as_the_window() {
+        let p = Policy::new(&strings(&["id.example"]), &[], NORMAL)
+            .unwrap()
+            .with_frames(&strings(&["captcha.example", "*.pay.example"]))
+            .unwrap();
+        // The window may only go to `allow`.
+        assert_eq!(p.check("https://id.example/a"), Verdict::Allow);
+        assert_eq!(
+            p.check("https://captcha.example/"),
+            blocked(BlockReason::NotAllowed)
+        );
+        assert_eq!(
+            p.check("https://js.pay.example/"),
+            blocked(BlockReason::NotAllowed)
+        );
+        // A frame may go to either list, and to nothing else.
+        for url in [
+            "https://id.example/a",
+            "https://captcha.example/widget",
+            "https://js.pay.example/frame",
+        ] {
+            assert_eq!(p.check_frame(url), Verdict::Allow, "{url}");
+        }
+        for (url, reason) in [
+            ("https://evil.example/", BlockReason::NotAllowed),
+            ("https://pay.example/", BlockReason::NotAllowed),
+            (
+                "https://captcha.example@evil.example/",
+                BlockReason::Userinfo,
+            ),
+            ("http://captcha.example/", BlockReason::Scheme),
+            ("data:text/html,x", BlockReason::Scheme),
+            ("javascript:alert(1)", BlockReason::Scheme),
+            ("https://127.0.0.1/", BlockReason::IpAddress),
+        ] {
+            assert_eq!(p.check_frame(url), blocked(reason), "{url}");
+        }
+    }
+
+    #[test]
+    fn frame_patterns_are_held_to_the_same_rules() {
+        let base = || Policy::new(&strings(&["id.example"]), &[], NORMAL).unwrap();
+        for bad in [
+            "*",
+            "*.com",
+            "https://x.example",
+            "localhost",
+            "1.2.3.4",
+            "",
+        ] {
+            assert!(
+                base().with_frames(&strings(&[bad])).is_err(),
+                "{bad:?} was accepted"
+            );
+        }
+        assert_eq!(
+            base()
+                .with_frames(&strings(&["ok.example", "*.com"]))
+                .unwrap_err(),
+            RequestError::BadFramePattern(1)
+        );
+        let many: Vec<String> = (0..=MAX_RULES).map(|i| format!("h{i}.example")).collect();
+        assert_eq!(
+            base().with_frames(&many).unwrap_err(),
+            RequestError::TooManyRules
+        );
+    }
+
+    #[test]
+    fn an_intercept_url_in_a_frame_ends_the_flow_too() {
+        let p = policy(&["id.example"], &["https://id.example/done"]);
+        assert_eq!(
+            p.check_frame("https://id.example/done?code=1"),
+            Verdict::Intercept
         );
     }
 

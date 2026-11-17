@@ -12,7 +12,7 @@ publish = false
 default = ["helper", "client"]
 # The helper program `inlet-web` (wry and tao). Off for the app, which only needs the
 # protocol and the client; the app finds the helper next to its own executable.
-helper = ["dep:wry", "dep:tao"]
+helper = ["dep:wry", "dep:tao", "dep:webview2-com", "dep:windows-core"]
 # The client: starts the helper and reads its events.
 client = ["dep:tokio", "dep:futures-core"]
 # Accept plain http on loopback (and an IP address as the host, there), and the small web
@@ -37,6 +37,11 @@ name = "helper"
 path = "tests/helper.rs"
 required-features = ["helper", "client", "test-loopback"]
 
+[[test]]
+name = "loopback"
+path = "tests/loopback.rs"
+required-features = ["helper", "client", "test-loopback"]
+
 [[example]]
 name = "web_demo"
 path = "examples/web_demo.rs"
@@ -56,6 +61,12 @@ tao = { version = "=0.37.1", optional = true }
 tokio = { version = "1", optional = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 wry = { version = "=0.57.1", optional = true }
 
+# WebView2's frame callback (wry only hooks the window's), at the versions wry uses so the
+# types are shared.
+[target.'cfg(windows)'.dependencies]
+webview2-com = { version = "0.39", optional = true }
+windows-core = { version = "0.62", optional = true }
+
 # The same version wry uses (it must match to share the types). Only the test-loopback
 # build touches it.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -64,4 +75,4 @@ webkit2gtk = { version = "=2.0.2", optional = true }
 [dev-dependencies]
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "test-util", "time"] }

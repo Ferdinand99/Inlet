@@ -21,6 +21,7 @@ async fn main() {
         url: format!("http://{host}/"),
         allow: vec![host.clone()],
         intercept: vec![format!("http://{host}/cb")],
+        frames: vec![],
         title: "Inlet web view demo".into(),
         size: Size {
             width: 720,

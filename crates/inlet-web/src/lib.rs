@@ -4,9 +4,10 @@
 //! gpui has no web view, and the system's engines (WebView2, WKWebView, WebKitGTK) want
 //! an event loop of their own, so a web page runs in a separate helper program,
 //! `inlet-web`, that Inlet starts only when a flow needs one (a sign-in at an identity
-//! provider, a payment, an OAuth consent) and that ends with its window. It cannot read
-//! Inlet's keyring or settings: it is another process with a nearly empty environment,
-//! and it is handed a URL and the rules for it, nothing else.
+//! provider, a payment, an OAuth consent) and that ends with its window. It is handed a
+//! URL and the rules for it and nothing else: another process with a nearly empty
+//! environment, no secret of Inlet's, and code that never touches Inlet's keyring or
+//! settings. Web content itself is kept apart by the engine's process sandbox.
 //!
 //! - [`protocol`]: the messages, JSON lines on the helper's standard input and output;
 //! - [`policy`]: which URLs the window may load, and which end the flow;
@@ -15,6 +16,7 @@
 //! - [`helper`] (feature `helper`): the helper itself, built on wry and tao.
 
 pub mod datadir;
+pub mod gate;
 pub mod policy;
 pub mod protocol;
 

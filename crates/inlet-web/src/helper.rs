@@ -9,21 +9,30 @@
 //! - no script of its own goes into the page: nothing is injected and the page has no
 //!   channel to the helper;
 //! - no developer tools;
-//! - private mode, in a data folder that is new for this window and removed at its end;
+//! - private mode: the engine keeps nothing on disk (Linux and macOS), or, where it must
+//!   have a folder (Windows, WebView2), a data folder that is new for this window and
+//!   removed at its end;
 //! - no new windows, no downloads, no permission (camera, microphone, location,
 //!   notifications ...) and nothing dropped onto the window is opened;
 //! - a navigation to a URL the rules do not allow is stopped, reported as `blocked`, and
 //!   the window closes; a navigation to an `intercept` URL is stopped, reported as
-//!   `intercepted`, and the window closes;
+//!   `intercepted`, and the window closes. The window may only go to `allow`; frames of
+//!   the page may go to `allow` and `frames`, on every platform (see [`crate::gate`]);
+//! - a page that asks for more than a few new windows or downloads ends the flow;
 //! - HTTPS only (see [`crate::policy`]);
 //! - the window is closed when Inlet closes the helper's input.
 //!
 //! The policy is checked for every navigation the engine reports and again for every
 //! page load it reports, so a redirect the first check did not see is still caught.
 //! Subresources (images, scripts, requests the page makes itself) are not navigations
-//! and are not filtered: the page is as trusted as the hosts in `allow`. On Linux the
-//! engine reports the navigations of frames too, so a page that embeds a frame from
-//! another host needs that host in `allow` there.
+//! and are not filtered: the page is as trusted as the hosts in `allow`.
+//!
+//! What this protects: the helper holds no secret of Inlet's (it is started with none),
+//! and its own code never touches Inlet's keyring or settings. Web content is kept apart
+//! from the rest of the user's session by the engine's own process sandbox: Chromium's
+//! on Windows, the WebContent sandbox on macOS. WebKitGTK's sandbox is not switched on
+//! yet on Linux (a follow-up), so there a renderer exploit would run with the user's
+//! rights; that is why the helper is not given anything to find.
 
 use std::cell::Cell;
 use std::io::{BufRead, Read, Write};
@@ -39,10 +48,11 @@ use tao::window::{Window, WindowBuilder};
 use wry::{NewWindowResponse, PermissionResponse, WebContext, WebView, WebViewBuilder};
 
 use crate::datadir::{self, DataDir};
-use crate::policy::{Policy, PolicyOptions, Verdict};
+use crate::gate::{Decision, Gate, Refusal};
+use crate::policy::{Policy, PolicyOptions};
 use crate::protocol::{
-    decode_request, encode_event, truncate_url, ErrorKind, Event, OpenRequest, ProtocolError,
-    Request, MAX_BLOCKED_URL_LEN, MAX_LINE_LEN,
+    decode_request, encode_event, ErrorKind, Event, OpenRequest, ProtocolError, Request,
+    MAX_LINE_LEN,
 };
 
 /// Present only in a test build, so a release check can tell one by its bytes.
@@ -229,14 +239,15 @@ fn fail(session: Option<Session>, kind: ErrorKind) -> ! {
 /// the window it sits in, and the data folder (removed on drop) goes last.
 struct Session {
     webview: WebView,
-    context: WebContext,
+    /// Only where the engine needs a data folder (Windows).
+    context: Option<WebContext>,
     window: Window,
-    data_dir: DataDir,
+    data_dir: Option<DataDir>,
 }
 
 impl Session {
     /// Closes the window and the web view and hands back the data folder to remove.
-    fn into_data_dir(self) -> DataDir {
+    fn into_data_dir(self) -> Option<DataDir> {
         let Session {
             webview,
             context,
@@ -252,7 +263,7 @@ impl Session {
 
 /// What the web view's callbacks share.
 struct Shared {
-    policy: Policy,
+    gate: Gate,
     /// The flow is over; nothing more is reported.
     done: Cell<bool>,
     proxy: EventLoopProxy<Wake>,
@@ -264,34 +275,48 @@ impl Shared {
         if self.done.get() {
             return false;
         }
-        // The engine's own empty page, which it may report before the first load. It
-        // holds nothing and loads nothing.
-        if url == "about:blank" {
-            return true;
-        }
-        match self.policy.check(url) {
-            Verdict::Allow => true,
-            Verdict::Intercept => {
-                self.end(&Event::Intercepted {
-                    url: url.to_string(),
-                });
-                false
-            }
-            Verdict::Block(_) => {
-                self.end(&Event::Blocked {
-                    url: truncate_url(url, MAX_BLOCKED_URL_LEN),
-                });
+        match self.gate.navigation(url) {
+            Decision::Load => true,
+            Decision::Stop(event) => {
+                self.end(&event);
                 false
             }
         }
     }
 
-    /// A new window or a download was refused; the page stays.
+    /// Whether a frame may go to `url` (Windows: the engine's frame callback).
+    #[cfg(windows)]
+    fn navigate_frame(&self, url: &str) -> bool {
+        if self.done.get() {
+            return false;
+        }
+        match self.gate.frame(url) {
+            Decision::Load => true,
+            Decision::Stop(event) => {
+                self.end(&event);
+                false
+            }
+        }
+    }
+
+    /// The window loads `url`: the second look at what `navigate` let through.
+    fn page_load(&self, url: &str) {
+        if self.done.get() {
+            return;
+        }
+        if let Some(event) = self.gate.page_load(url) {
+            self.end(&event);
+        }
+    }
+
+    /// A new window or a download was refused; the page stays, unless it keeps asking.
     fn refuse(&self, url: &str) {
-        if !self.done.get() {
-            emit(&Event::Blocked {
-                url: truncate_url(url, MAX_BLOCKED_URL_LEN),
-            });
+        if self.done.get() {
+            return;
+        }
+        match self.gate.refusal(url) {
+            Refusal::Report(event) => emit(&event),
+            Refusal::EndFlow(event) => self.end(&event),
         }
     }
 
@@ -310,16 +335,24 @@ fn start(
 ) -> Result<Session, ErrorKind> {
     let policy = Policy::for_request(open, PolicyOptions::of_this_build())
         .map_err(|_| ErrorKind::InvalidRequest)?;
-    let data_dir = DataDir::create().map_err(|_| ErrorKind::WindowFailed)?;
+    // The engine's private mode keeps nothing on disk on Linux (an ephemeral context) and
+    // macOS (a non-persistent store), so a data folder and a context of ours would only
+    // be a place for stray files. WebView2 on Windows always needs a folder.
+    #[cfg(windows)]
+    let data_dir = Some(DataDir::create().map_err(|_| ErrorKind::WindowFailed)?);
+    #[cfg(not(windows))]
+    let data_dir: Option<DataDir> = None;
     let shared = Rc::new(Shared {
-        policy,
+        gate: Gate::new(policy, cfg!(not(windows))),
         done: Cell::new(false),
         proxy: proxy.clone(),
     });
 
     let window = build_window(open, target)?;
-    let mut context = WebContext::new(Some(data_dir.path().to_path_buf()));
-    let webview = build_webview(&window, &mut context, &shared)?;
+    let mut context = data_dir
+        .as_ref()
+        .map(|dir| WebContext::new(Some(dir.path().to_path_buf())));
+    let webview = build_webview(&window, context.as_mut(), &shared)?;
     webview
         .load_url(&open.url)
         .map_err(|_| ErrorKind::WindowFailed)?;
@@ -333,6 +366,13 @@ fn start(
 
 /// A window of Inlet's style: its own title (the page cannot change it), above Inlet's
 /// main window and centred over it.
+///
+/// Where the window has a parent (Windows: an owner window) it is kept above Inlet and
+/// nothing else, so it does not cover the user's password manager or authenticator.
+// Deviation: where a window cannot be tied to another process's window (macOS, Linux) it is
+// always on top of every window, the only way to keep it above Inlet. The Windows owner
+// window ties the two threads' input queues, so a stall in one can freeze input in both;
+// a stale handle falls back to no owner.
 fn build_window(
     open: &OpenRequest,
     target: &EventLoopWindowTarget<Wake>,
@@ -346,7 +386,6 @@ fn build_window(
             240.0,
         ))
         .with_resizable(true)
-        .with_always_on_top(true)
         .with_visible(true)
         .with_focused(true);
     if let Some(bounds) = open.parent.and_then(|parent| parent.bounds) {
@@ -359,20 +398,28 @@ fn build_window(
         .and_then(|parent| parent.handle)
         .filter(|h| *h != 0);
     let build = |parent_handle: Option<u64>| {
-        #[allow(unused_mut)]
         let mut builder = base.clone();
         #[cfg(windows)]
-        if let Some(handle) = parent_handle {
-            // Tied to Inlet's main window: always above it, minimised with it.
+        let owned = if let Some(handle) = parent_handle {
+            // Tied to Inlet's main window: above it, minimised with it.
             use tao::platform::windows::WindowBuilderExtWindows;
             builder = builder.with_owner_window(handle as isize);
-        }
+            true
+        } else {
+            false
+        };
         #[cfg(not(windows))]
-        let _ = parent_handle;
+        let owned = {
+            let _ = parent_handle;
+            false
+        };
+        if !owned {
+            builder = builder.with_always_on_top(true);
+        }
         builder.build(target)
     };
     // A handle that has gone stale must not stop the flow: without a parent the window
-    // is still on top.
+    // is on top of everything instead.
     build(parent_handle)
         .or_else(|_| build(None))
         .map_err(|_| ErrorKind::WindowFailed)
@@ -380,36 +427,39 @@ fn build_window(
 
 fn build_webview(
     window: &Window,
-    context: &mut WebContext,
+    context: Option<&mut WebContext>,
     shared: &Rc<Shared>,
 ) -> Result<WebView, ErrorKind> {
     let on_navigate = shared.clone();
     let on_load = shared.clone();
     let on_download = shared.clone();
     let on_window = shared.clone();
-    let builder = WebViewBuilder::new_with_web_context(context)
-        // The rules of the module documentation.
-        .with_devtools(false)
-        .with_incognito(true)
-        .with_clipboard(false)
-        .with_autoplay(false)
-        .with_hotkeys_zoom(false)
-        .with_navigation_handler(move |url| on_navigate.navigate(&url))
-        .with_on_page_load_handler(move |_, url| {
-            // The second look: a load the navigation callback did not see.
-            on_load.navigate(&url);
-        })
-        .with_new_window_req_handler(move |url, _| {
-            on_window.refuse(&url);
-            NewWindowResponse::Deny
-        })
-        .with_download_started_handler(move |url, _| {
-            on_download.refuse(&url);
-            false
-        })
-        .with_permission_handler(|_| PermissionResponse::Deny)
-        // Files dropped onto the window are not opened.
-        .with_drag_drop_handler(|_| true);
+    let builder = match context {
+        Some(context) => WebViewBuilder::new_with_web_context(context),
+        None => WebViewBuilder::new(),
+    }
+    // The rules of the module documentation.
+    .with_devtools(false)
+    .with_incognito(true)
+    .with_clipboard(false)
+    .with_autoplay(false)
+    .with_hotkeys_zoom(false)
+    .with_navigation_handler(move |url| on_navigate.navigate(&url))
+    .with_on_page_load_handler(move |_, url| {
+        // The second look: a load the navigation callback did not see.
+        on_load.page_load(&url);
+    })
+    .with_new_window_req_handler(move |url, _| {
+        on_window.refuse(&url);
+        NewWindowResponse::Deny
+    })
+    .with_download_started_handler(move |url, _| {
+        on_download.refuse(&url);
+        false
+    })
+    .with_permission_handler(|_| PermissionResponse::Deny)
+    // Files dropped onto the window are not opened.
+    .with_drag_drop_handler(|_| true);
 
     #[cfg(target_os = "linux")]
     let webview = {
@@ -422,9 +472,48 @@ fn build_webview(
     let webview = builder.build(window);
 
     let webview = webview.map_err(|_| ErrorKind::WindowFailed)?;
+    // Frames must be held to the same rules as everywhere else, or the flow does not start.
+    #[cfg(windows)]
+    hook_frames(&webview, shared)?;
     #[cfg(all(feature = "test-loopback", target_os = "linux"))]
     test_loopback_linux(&webview);
     Ok(webview)
+}
+
+/// Windows: wry hooks the window's navigations only, so the frames' go through WebView2's
+/// own frame callback into the same rules ([`Gate::frame`]). When the hook cannot be set
+/// the flow does not start: frames would be open.
+#[cfg(windows)]
+fn hook_frames(webview: &WebView, shared: &Rc<Shared>) -> Result<(), ErrorKind> {
+    use webview2_com::{take_pwstr, FrameNavigationStartingEventHandler};
+    use windows_core::PWSTR;
+    use wry::WebViewExtWindows;
+
+    let shared = shared.clone();
+    let handler = FrameNavigationStartingEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        let url = {
+            let mut uri = PWSTR::null();
+            // SAFETY: WebView2 fills `uri` with a string it allocated; `take_pwstr` copies
+            // it and frees it.
+            unsafe { args.Uri(&mut uri)? };
+            take_pwstr(uri)
+        };
+        let allow = shared.navigate_frame(&url);
+        // SAFETY: `args` is the event's own argument object, valid for this call.
+        unsafe { args.SetCancel(!allow)? };
+        Ok(())
+    }));
+    let mut token = 0;
+    // SAFETY: the handler is a live COM object and the token a valid pointer for the call.
+    unsafe {
+        webview
+            .webview()
+            .add_FrameNavigationStarting(&handler, &mut token)
+    }
+    .map_err(|_| ErrorKind::WindowFailed)
 }
 
 /// For the tests against a local server (never in a release build): trust the server's

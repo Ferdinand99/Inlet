@@ -59,6 +59,12 @@ pub struct OpenRequest {
     /// the navigation, reports `intercepted` with the URL and closes.
     #[serde(default)]
     pub intercept: Vec<String>,
+    /// Host patterns (as in `allow`) that may appear as frames inside the page, and only
+    /// as frames: the window may not navigate to them. Frames of any other host are
+    /// refused, and a refused frame ends the flow like a refused navigation. Name here
+    /// only what the flow needs inside a page (a captcha, a payment form).
+    #[serde(default)]
+    pub frames: Vec<String>,
     /// The window title.
     pub title: String,
     /// The size of the page area, in logical pixels.
@@ -103,7 +109,10 @@ pub struct Bounds {
 }
 
 /// An event from the helper to Inlet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Debug` hides the query and the fragment of every URL: an intercepted URL carries the
+/// authorisation code, which must not reach a log by accident.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     /// The window is open and the first page is loading.
@@ -121,6 +130,36 @@ pub enum Event {
     Closed,
     /// The helper could not do what it was asked. The last event.
     Error { kind: ErrorKind },
+}
+
+impl std::fmt::Debug for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::Ready => f.write_str("Ready"),
+            Event::Intercepted { url } => f
+                .debug_struct("Intercepted")
+                .field("url", &RedactedUrl(url))
+                .finish(),
+            Event::Blocked { url } => f
+                .debug_struct("Blocked")
+                .field("url", &RedactedUrl(url))
+                .finish(),
+            Event::Closed => f.write_str("Closed"),
+            Event::Error { kind } => f.debug_struct("Error").field("kind", kind).finish(),
+        }
+    }
+}
+
+/// A URL as it is printed: up to the query or the fragment, and a mark where it was cut.
+struct RedactedUrl<'a>(&'a str);
+
+impl std::fmt::Debug for RedactedUrl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0.find(['?', '#']) {
+            Some(at) => write!(f, "\"{}?...\"", &self.0[..at]),
+            None => write!(f, "{:?}", self.0),
+        }
+    }
 }
 
 impl Event {
@@ -229,6 +268,8 @@ pub enum RequestError {
     BadPattern(usize),
     #[error("`intercept` prefix {0} is not accepted")]
     BadPrefix(usize),
+    #[error("`frames` pattern {0} is not accepted")]
+    BadFramePattern(usize),
     #[error("the start URL is not accepted")]
     BadUrl,
     #[error("the title or the size is not accepted")]
@@ -263,6 +304,7 @@ mod tests {
             url: "https://id.example/login".into(),
             allow: vec!["id.example".into(), "*.id.example".into()],
             intercept: vec!["https://id.example/done".into()],
+            frames: vec!["captcha.example".into()],
             title: "Sign in".into(),
             size: Size {
                 width: 480,
@@ -415,6 +457,37 @@ mod tests {
             mutate(&mut request);
             assert_eq!(request.check_window(), Err(RequestError::BadWindow));
         }
+    }
+
+    #[test]
+    fn debug_never_prints_a_query_or_a_fragment() {
+        let intercepted = Event::Intercepted {
+            url: "https://id.example/done?code=SECRET&state=s#frag".into(),
+        };
+        let printed = format!("{intercepted:?}");
+        assert!(
+            !printed.contains("SECRET") && !printed.contains("state") && !printed.contains("frag")
+        );
+        assert!(printed.contains("https://id.example/done"), "{printed}");
+        let blocked = format!(
+            "{:?}",
+            Event::Blocked {
+                url: "https://evil.example/#token=SECRET".into()
+            }
+        );
+        assert!(!blocked.contains("SECRET"), "{blocked}");
+        // Without a query the URL is printed as it is.
+        assert_eq!(
+            format!(
+                "{:?}",
+                Event::Blocked {
+                    url: "https://a.example/x".into()
+                }
+            ),
+            "Blocked { url: \"https://a.example/x\" }"
+        );
+        // The alternate form, used by pretty printing, is held to the same rule.
+        assert!(!format!("{intercepted:#?}").contains("SECRET"));
     }
 
     #[test]

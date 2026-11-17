@@ -54,6 +54,7 @@ async fn run(parent: inlet_web::protocol::Parent) {
         url: format!("http://{host}/"),
         allow: vec![host.clone()],
         intercept: vec![format!("http://{host}/cb")],
+        frames: vec![],
         title: "Web view demo".into(),
         size: (720, 520),
     };

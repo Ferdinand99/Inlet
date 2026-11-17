@@ -221,6 +221,13 @@ jobs:
       - name: Platform tests on the real system
         run: cargo test --profile ci --locked -p inlet-platform -- --include-ignored
 
+      # The web view helper with a real WebView2 window against a local server: the URL a
+      # sign-in redirects to (script and 302) is stopped before the request leaves, other
+      # hosts and data: URLs are blocked. The test-loopback feature (plain http on
+      # loopback) is refused in release builds.
+      - name: Web view helper tests on the real system
+        run: cargo test --profile ci --locked -p inlet-web --features test-loopback --test loopback -- --include-ignored --test-threads=1
+
       # Runs the platform demo (window, tray icon, badge, notification) and keeps a
       # screenshot. It fails if the tray icon could not be created or gpui logged a
       # borrow error (a dropped frame).
@@ -491,6 +498,13 @@ jobs:
       # ignored in a plain `cargo test`; they run here.
       - name: Platform tests on the real system
         run: cargo test --profile ci --locked -p inlet-platform -- --include-ignored
+
+      # The web view helper with a real WKWebView window against a local server: the URL a
+      # sign-in redirects to (script and 302) is stopped before the request leaves, other
+      # hosts and data: URLs are blocked. The test-loopback feature (plain http on
+      # loopback) is refused in release builds.
+      - name: Web view helper tests on the real system
+        run: cargo test --profile ci --locked -p inlet-web --features test-loopback --test loopback -- --include-ignored --test-threads=1
 
       # The menu bar only accepts a status item from the main thread, which test
       # threads are not, so the tray is checked with the demo. It fails if the
@@ -825,7 +839,7 @@ jobs:
       # refused in release builds.
       - name: Web view helper tests under Xvfb
         run: |
-          xvfb-run -a cargo test --profile ci --locked -p inlet-web --features test-loopback --test helper -- --include-ignored --test-threads=1
+          xvfb-run -a cargo test --profile ci --locked -p inlet-web --features test-loopback --test helper --test loopback -- --include-ignored --test-threads=1
           cargo clippy --profile ci --locked -p inlet-web --features test-loopback --all-targets -- -D warnings
 
       # The tray test needs a session bus to register on. The gpui glue and the

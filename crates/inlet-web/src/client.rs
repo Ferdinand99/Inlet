@@ -4,8 +4,9 @@
 //!
 //! What the helper gets: the request (a URL and the rules for it), and a small set of
 //! environment variables it needs to show a window ([`helper_env`]). No argument, no
-//! token, no cookie and none of Inlet's other variables, so even a page that took over
-//! the helper finds nothing of Inlet's in its process.
+//! token, no cookie and none of Inlet's other variables, so there is nothing of Inlet's
+//! in its process to find. (The helper runs as the same user, so this is not a wall
+//! against code that took over the helper: that is the engine's process sandbox's job.)
 //!
 //! The helper lives as long as the [`Session`]: dropping the session kills it, and it
 //! exits by itself when its input closes (Inlet going away included).
@@ -35,6 +36,10 @@ use crate::protocol::{
 /// How long the helper has to clean up and exit after its last event, before it is
 /// killed.
 const EXIT_GRACE: Duration = Duration::from_secs(5);
+
+/// How long the helper has to show its window and say so (`ready`, or an error). It waits
+/// for the web engine to start, which can hang; a flow does not wait for ever.
+pub const READY_WITHIN: Duration = Duration::from_secs(30);
 
 /// How much of the helper's standard error is kept, for the log.
 const STDERR_KEPT: usize = 4096;
@@ -247,6 +252,7 @@ async fn supervise(
     let mut abnormal = false;
     let mut kill_now = false;
     let mut tx = Some(tx);
+    let mut heard = false;
     while let Some(sender) = tx.as_ref() {
         let line = tokio::select! {
             _ = sender.closed() => {
@@ -254,10 +260,18 @@ async fn supervise(
                 kill_now = true;
                 break;
             }
-            line = read_line(&mut reader, MAX_LINE_LEN) => line,
+            line = next_line(&mut reader, heard) => line,
         };
+        heard = true;
         let event = match line {
-            Ok(Line::Text(text)) => match decode_event(&text) {
+            Ok(None) => {
+                log::warn!("inlet-web did not open its window in time");
+                abnormal = true;
+                Event::Error {
+                    kind: ErrorKind::WindowFailed,
+                }
+            }
+            Ok(Some(Line::Text(text))) => match decode_event(&text) {
                 Ok(event) => event,
                 Err(err) => {
                     log::warn!("inlet-web wrote something that is not the protocol: {err}");
@@ -270,13 +284,13 @@ async fn supervise(
                     }
                 }
             },
-            Ok(Line::TooLong | Line::NotText) => {
+            Ok(Some(Line::TooLong | Line::NotText)) => {
                 abnormal = true;
                 Event::Error {
                     kind: ErrorKind::Protocol,
                 }
             }
-            Ok(Line::End) | Err(_) => {
+            Ok(Some(Line::End)) | Err(_) => {
                 abnormal = true;
                 Event::Error {
                     kind: ErrorKind::HelperExited,
@@ -327,6 +341,21 @@ async fn supervise(
     }
 }
 
+/// The next line of the helper's output. Before anything has been heard from it, the
+/// wait is limited to [`READY_WITHIN`]; `None` is that time running out.
+async fn next_line<R>(reader: &mut R, heard: bool) -> io::Result<Option<Line>>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    if heard {
+        return read_line(reader, MAX_LINE_LEN).await.map(Some);
+    }
+    match tokio::time::timeout(READY_WITHIN, read_line(reader, MAX_LINE_LEN)).await {
+        Ok(line) => line.map(Some),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Keeps the first bytes of the helper's standard error and drains the rest, so the
 /// helper never blocks on a full pipe.
 async fn keep_tail(mut stderr: ChildStderr) -> String {
@@ -370,6 +399,10 @@ const ENV_NAMES: &[&str] = &[
     "XAUTHORITY",
     "DBUS_SESSION_BUS_ADDRESS",
     "LD_LIBRARY_PATH",
+    // WebKit's rendering switches, by name: the prefix would also pass the remote
+    // inspector and the switch that turns the sandbox off.
+    "WEBKIT_DISABLE_COMPOSITING_MODE",
+    "WEBKIT_DISABLE_DMABUF_RENDERER",
     // macOS
     "__CF_USER_TEXT_ENCODING",
     // Windows
@@ -389,11 +422,9 @@ const ENV_NAMES: &[&str] = &[
     "OS",
 ];
 
-/// Prefixes passed as they are: the locale, the desktop session, GTK and WebKit's
-/// own switches, and software rendering.
-const ENV_PREFIXES: &[&str] = &[
-    "LC_", "XDG_", "GDK_", "GTK_", "GIO_", "WEBKIT_", "LIBGL_", "MESA_",
-];
+/// Prefixes passed as they are: the locale, the desktop session, GTK's own switches and
+/// software rendering.
+const ENV_PREFIXES: &[&str] = &["LC_", "XDG_", "GDK_", "GTK_", "GIO_", "LIBGL_", "MESA_"];
 
 fn env_name_is_allowed(name: &OsStr) -> bool {
     let Some(name) = name.to_str() else {
@@ -458,6 +489,10 @@ mod tests {
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
             "WEBVIEW2_USER_DATA_FOLDER",
             "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+            "WEBKIT_INSPECTOR_SERVER",
+            "WEBKIT_INSPECTOR_HTTP_SERVER",
+            "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS",
+            "WEBKIT_FORCE_SANDBOX",
             "COMSPEC",
             "USERNAME",
             "USER",
@@ -492,7 +527,13 @@ mod tests {
     fn a_name_that_only_starts_like_an_allowed_prefix_is_not_enough() {
         // `LC` and `XDG` are not the prefixes `LC_` and `XDG_`.
         assert_eq!(
-            passed(&["LCX_TOKEN", "XDGTOKEN", "GDK", "WEBKIT"]),
+            passed(&[
+                "LCX_TOKEN",
+                "XDGTOKEN",
+                "GDK",
+                "WEBKIT",
+                "WEBKIT_DISABLE_COMPOSITING_MODE_X"
+            ]),
             Vec::<String>::new()
         );
         // And a name that merely contains an allowed name does not pass either.
@@ -588,6 +629,19 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_helper_that_says_nothing_is_given_up_on() {
+        // Nothing is ever written: the first wait is bounded, and runs out.
+        let (_writer, reader) = tokio::io::duplex(64);
+        let mut reader = BufReader::new(reader);
+        assert!(matches!(next_line(&mut reader, false).await, Ok(None)));
+
+        // Once it has spoken the wait is not bounded here: a page may sit as long as the
+        // user likes, so the client waits for its events (or for the session to drop).
+        let waited = tokio::time::timeout(READY_WITHIN * 4, next_line(&mut reader, true)).await;
+        assert!(waited.is_err(), "the wait ended: {waited:?}");
+    }
+
     #[tokio::test]
     async fn bytes_that_are_not_text_are_refused() {
         assert_eq!(feed(b"\xff\xfe\n", 100).await, vec![Line::NotText]);
@@ -599,6 +653,7 @@ mod tests {
             url: "https://id.example/".into(),
             allow: vec!["id.example".into()],
             intercept: vec![],
+            frames: vec![],
             title: "t".into(),
             size: crate::protocol::Size {
                 width: 400,

@@ -35,6 +35,10 @@ pub struct WebFlow {
     pub allow: Vec<String>,
     /// URL prefixes that end the flow; the window reports the URL and closes.
     pub intercept: Vec<String>,
+    /// Hosts that may appear as frames inside the page, and only as frames (a captcha, a
+    /// payment form). Frames of any other host end the flow. Empty for a page that
+    /// embeds nothing.
+    pub frames: Vec<String>,
     /// The window's title, already translated. Inlet's name is added.
     pub title: String,
     /// The page area, in logical pixels.
@@ -48,6 +52,7 @@ impl WebFlow {
             url: self.url,
             allow: self.allow,
             intercept: self.intercept,
+            frames: self.frames,
             title: window_title(&self.title),
             size: Size {
                 width: self.size.0.clamp(MIN_WINDOW, MAX_WINDOW),
@@ -129,6 +134,7 @@ mod tests {
             url: "https://id.example/login".into(),
             allow: vec!["id.example".into()],
             intercept: vec!["https://id.example/done".into()],
+            frames: vec![],
             title: "Sign in".into(),
             size: (480, 640),
         }
@@ -211,6 +217,7 @@ mod tests {
                 "url",
                 "allow",
                 "intercept",
+                "frames",
                 "title",
                 "size",
                 "parent"

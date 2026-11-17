@@ -15,11 +15,14 @@
 //! | `/cb` | a plain page; the flows intercept it |
 //! | `/file` | answers with `Content-Disposition: attachment` |
 //! | `/redirect` | `302` to `/redir-target` on the other host |
+//! | `/redirect-cb` | `302` to `/cb?code=abc` on the same host: the way an identity provider sends the user back |
+//! | `/auto/frame` | embeds a frame of `/frame` on the other host |
 //! | `/auto/next` | goes to `/next` by itself |
 //! | `/auto/blocked` | goes to `/blocked` on the other host by itself |
 //! | `/auto/intercept` | goes to `/cb?code=abc` by itself |
 //! | `/auto/download` | goes to `/file` by itself |
 //! | `/auto/window` | calls `window.open('/popup')` |
+//! | `/auto/window-flood` | calls `window.open` thirty times |
 //! | `/auto/data` | goes to a `data:` URL |
 
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -173,6 +176,16 @@ fn answer(path: &str, scheme: &str, other: &str) -> String {
             format!("Location: {scheme}://{other}/redir-target\r\n"),
             String::new(),
         ),
+        "/redirect-cb" => (
+            "302 Found",
+            "Location: /cb?code=abc\r\n".to_string(),
+            String::new(),
+        ),
+        "/auto/frame" => (
+            "200 OK",
+            String::new(),
+            format!("<iframe src=\"{scheme}://{other}/frame\"></iframe>"),
+        ),
         "/auto/next" => ("200 OK", String::new(), go("/next")),
         "/auto/blocked" => (
             "200 OK",
@@ -186,6 +199,11 @@ fn answer(path: &str, scheme: &str, other: &str) -> String {
             "200 OK",
             String::new(),
             "<script>window.open('/popup');</script>".to_string(),
+        ),
+        "/auto/window-flood" => (
+            "200 OK",
+            String::new(),
+            "<script>for (let i = 0; i < 30; i++) window.open('/popup' + i);</script>".to_string(),
         ),
         other_path => ("200 OK", String::new(), format!("page {other_path}")),
     };

@@ -114,6 +114,7 @@ fn request(server: &PageServer, path: &str) -> OpenRequest {
         url: format!("https://{}{path}", server.host_ip()),
         allow: vec![server.host_ip()],
         intercept: vec![format!("https://{}/cb", server.host_ip())],
+        frames: vec![],
         title: "Inlet test".into(),
         size: Size {
             width: 480,
@@ -304,18 +305,128 @@ async fn a_new_window_is_blocked_and_the_window_stays() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a display and WebKitGTK; run under xvfb-run"]
-async fn the_data_folder_exists_while_the_window_is_open_and_is_removed_after() {
+async fn nothing_is_left_on_disk_in_the_temporary_folder() {
+    // Private mode keeps nothing on disk here (an ephemeral context), and the helper makes
+    // no data folder of its own on Linux: before, during and after, the folder is empty.
     let server = https_server();
     let tmp = Scratch::new("datadir");
     let mut session = Session::open(&options(&tmp.0), request(&server, "/next"))
         .await
         .expect("open");
     assert_eq!(next(&mut session).await, Some(Event::Ready));
-    assert_eq!(tmp.data_dirs().len(), 1, "{:?}", tmp.data_dirs());
+    assert_eq!(tmp.data_dirs(), Vec::<String>::new());
     session.close().await;
     assert_eq!(all_events(&mut session).await, vec![Event::Closed]);
     session.finished().await;
     assert_eq!(tmp.data_dirs(), Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a display and WebKitGTK; run under xvfb-run"]
+async fn a_redirect_to_the_intercept_url_is_stopped_before_the_request() {
+    // How an identity provider sends the user back: `302 Location: <redirect_uri>?code=`.
+    let server = https_server();
+    let tmp = Scratch::new("redirect-cb");
+    let mut session = Session::open(&options(&tmp.0), request(&server, "/redirect-cb"))
+        .await
+        .expect("open");
+    let events = all_events(&mut session).await;
+    assert_eq!(
+        events,
+        vec![
+            Event::Ready,
+            Event::Intercepted {
+                url: format!("https://{}/cb?code=abc", server.host_ip())
+            },
+            Event::Closed,
+        ]
+    );
+    session.finished().await;
+    // The page was asked for, the callback never was: the code did not leave.
+    assert!(server.saw(&server.host_ip(), "/redirect-cb"));
+    assert!(!server.saw(&server.host_ip(), "/cb"), "{:?}", server.hits());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a display and WebKitGTK; run under xvfb-run"]
+async fn a_frame_of_a_listed_host_loads() {
+    let server = https_server();
+    let tmp = Scratch::new("frame-ok");
+    let mut open = request(&server, "/auto/frame");
+    open.frames = vec![server.host_name()];
+    let mut session = Session::open(&options(&tmp.0), open).await.expect("open");
+    assert_eq!(next(&mut session).await, Some(Event::Ready));
+    let deadline = Instant::now() + WAIT;
+    while !server.saw(&server.host_name(), "/frame") {
+        assert!(Instant::now() < deadline, "the frame never loaded");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // Nothing was reported and the window is still there.
+    session.close().await;
+    assert_eq!(all_events(&mut session).await, vec![Event::Closed]);
+    session.finished().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a display and WebKitGTK; run under xvfb-run"]
+async fn a_frame_of_another_host_ends_the_flow() {
+    let server = https_server();
+    let tmp = Scratch::new("frame-blocked");
+    let mut session = Session::open(&options(&tmp.0), request(&server, "/auto/frame"))
+        .await
+        .expect("open");
+    let events = all_events(&mut session).await;
+    assert_eq!(events.last(), Some(&Event::Closed), "{events:?}");
+    assert_eq!(
+        blocked_url(&events),
+        Some(format!("https://{}/frame", server.host_name()).as_str())
+    );
+    session.finished().await;
+    assert!(
+        !server.saw(&server.host_name(), "/frame"),
+        "{:?}",
+        server.hits()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a display and WebKitGTK; run under xvfb-run"]
+async fn the_window_may_not_go_to_a_host_that_is_only_listed_for_frames() {
+    // The window itself navigates to a frame host: ended, even though a frame could go
+    // there. (On Linux the request has started by then; the load is what ends it.)
+    let server = https_server();
+    let tmp = Scratch::new("frame-host-window");
+    let mut open = request(&server, "/auto/blocked");
+    open.frames = vec![server.host_name()];
+    let mut session = Session::open(&options(&tmp.0), open).await.expect("open");
+    let events = all_events(&mut session).await;
+    assert_eq!(events.last(), Some(&Event::Closed), "{events:?}");
+    let url = blocked_url(&events).expect("a blocked event");
+    assert_eq!(url, format!("https://{}/blocked", server.host_name()));
+    session.finished().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a display and WebKitGTK; run under xvfb-run"]
+async fn a_page_that_keeps_opening_windows_ends_the_flow() {
+    let server = https_server();
+    let tmp = Scratch::new("flood");
+    let mut session = Session::open(&options(&tmp.0), request(&server, "/auto/window-flood"))
+        .await
+        .expect("open");
+    let events = all_events(&mut session).await;
+    assert_eq!(events.last(), Some(&Event::Closed), "{events:?}");
+    let blocked = events
+        .iter()
+        .filter(|e| matches!(e, Event::Blocked { .. }))
+        .count();
+    // The limit, and the one that ended the flow; the other twenty were never reported.
+    assert_eq!(
+        blocked as u32,
+        inlet_web::gate::MAX_REFUSALS + 1,
+        "{events:?}"
+    );
+    session.finished().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
