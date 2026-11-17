@@ -1041,93 +1041,113 @@ async fn a_throwaway_account_signs_in_with_its_password_and_then_with_a_totp_cod
         .to_string();
     let key = AccountKey::new(instance.origin(), &user_id).unwrap();
 
-    // 1. The password path, through the app's own flow.
-    {
-        let (mut b, mut rx, mut irx, store) = backend();
-        handle(
-            &mut b,
-            Cmd::Start {
-                instance: origin.clone(),
-            },
-        );
-        let _ = next_entry(&mut b, &mut irx, &mut rx).await;
-        password(&mut b, &username, &pw);
-        until_signed_in(&mut b, &mut irx, &mut rx).await;
-        if let Some(tail) = b.store_tail.take() {
-            let _ = tail.await;
-        }
-        let entry = store.entries.lock().unwrap().get(&key.entry()).cloned();
-        let stored: Value = serde_json::from_str(&entry.expect("the keychain entry")).unwrap();
-        let token = stored["token"].as_str().unwrap_or_default();
-        assert!(
-            !token.is_empty() && token != first_token,
-            "a new session token"
-        );
-        assert!(b.store.lock().await.list().iter().any(|a| a.key == key));
-        println!("password path: signed in, token stored under the account's entry");
-    }
-
-    // 2. Turn TOTP on through the API, then sign in with the password and a code.
+    // The steps run under a catch: whatever fails in them, the account is deleted after.
     let secret: Vec<u8> = (0..20)
         .map(|i| u8::from_str_radix(&random_hex(20)[i * 2..i * 2 + 2], 16).unwrap())
         .collect();
     let step = now_step();
-    let (status, enabled) = call(
-        &http,
-        &base,
-        reqwest::Method::POST,
-        "/users/@me/mfa/totp/enable",
-        Some(&first_token),
-        json!({"secret": base32(&secret), "code": totp(&secret, step), "password": pw}),
-    )
-    .await;
-    assert_eq!(
-        status, 200,
-        "enabling TOTP: {} {}",
-        enabled["code"], enabled["message"]
-    );
-    {
-        let (mut b, mut rx, mut irx, store) = backend();
-        handle(
-            &mut b,
-            Cmd::Start {
-                instance: origin.clone(),
-            },
-        );
-        let _ = next_entry(&mut b, &mut irx, &mut rx).await;
-        password(&mut b, &username, &pw);
-        match next_entry(&mut b, &mut irx, &mut rx).await {
-            Ev::Step(EntryStep::Mfa { totp, .. }) => assert!(totp),
-            _ => panic!("no second factor step"),
+    let totp_on = std::cell::Cell::new(false);
+    let steps = std::panic::AssertUnwindSafe(async {
+        // 1. The password path, through the app's own flow.
+        {
+            let (mut b, mut rx, mut irx, store) = backend();
+            handle(
+                &mut b,
+                Cmd::Start {
+                    instance: origin.clone(),
+                },
+            );
+            let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+            password(&mut b, &username, &pw);
+            until_signed_in(&mut b, &mut irx, &mut rx).await;
+            if let Some(tail) = b.store_tail.take() {
+                let _ = tail.await;
+            }
+            let entry = store.entries.lock().unwrap().get(&key.entry()).cloned();
+            let stored: Value = serde_json::from_str(&entry.expect("the keychain entry")).unwrap();
+            let token = stored["token"].as_str().unwrap_or_default();
+            assert!(
+                !token.is_empty() && token != first_token,
+                "a new session token"
+            );
+            assert!(b.store.lock().await.list().iter().any(|a| a.key == key));
+            println!("password path: signed in, token stored under the account's entry");
         }
-        // The next step is inside the instance's one-step skew, and is not the code
-        // that enabled TOTP.
-        handle(
-            &mut b,
-            Cmd::Mfa {
-                code: p::Secret::new(totp(&secret, step + 1)),
-            },
-        );
-        until_signed_in(&mut b, &mut irx, &mut rx).await;
-        if let Some(tail) = b.store_tail.take() {
-            let _ = tail.await;
-        }
-        assert!(store.entries.lock().unwrap().contains_key(&key.entry()));
-        println!("totp path: signed in with a code, token stored under the account's entry");
-    }
 
-    // 3. Clean up: delete the account now; if the instance refuses, it stays behind.
+        // 2. Turn TOTP on through the API, then sign in with the password and a code.
+        let (status, enabled) = call(
+            &http,
+            &base,
+            reqwest::Method::POST,
+            "/users/@me/mfa/totp/enable",
+            Some(&first_token),
+            json!({"secret": base32(&secret), "code": totp(&secret, step), "password": pw}),
+        )
+        .await;
+        assert_eq!(
+            status, 200,
+            "enabling TOTP: {} {}",
+            enabled["code"], enabled["message"]
+        );
+        totp_on.set(true);
+        {
+            let (mut b, mut rx, mut irx, store) = backend();
+            handle(
+                &mut b,
+                Cmd::Start {
+                    instance: origin.clone(),
+                },
+            );
+            let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+            password(&mut b, &username, &pw);
+            match next_entry(&mut b, &mut irx, &mut rx).await {
+                Ev::Step(EntryStep::Mfa { totp, .. }) => assert!(totp),
+                _ => panic!("no second factor step"),
+            }
+            // The next step is inside the instance's one-step skew, and is not the code
+            // that enabled TOTP.
+            handle(
+                &mut b,
+                Cmd::Mfa {
+                    code: p::Secret::new(totp(&secret, step + 1)),
+                },
+            );
+            until_signed_in(&mut b, &mut irx, &mut rx).await;
+            if let Some(tail) = b.store_tail.take() {
+                let _ = tail.await;
+            }
+            assert!(store.entries.lock().unwrap().contains_key(&key.entry()));
+            println!("totp path: signed in with a code, token stored under the account's entry");
+        }
+    });
+    let steps = futures::FutureExt::catch_unwind(steps).await;
+
+    // 3. Clean up, always: delete the account now. With TOTP on, the deletion needs a code
+    // of a step that was not used before (the two before were `step` and `step + 1`).
+    let mut delete = json!({"password": pw, "immediate": true});
+    if totp_on.get() {
+        let now = now_step();
+        let fresh = [now.saturating_sub(1), now, now + 1]
+            .into_iter()
+            .find(|s| *s != step && *s != step + 1)
+            .expect("a step that was not used");
+        delete["mfa_method"] = json!("totp");
+        delete["mfa_code"] = json!(totp(&secret, fresh));
+    }
     let (status, gone) = call(
         &http,
         &base,
         reqwest::Method::POST,
         "/users/@me/delete",
         Some(&first_token),
-        json!({"password": pw, "mfa_method": "totp",
-               "mfa_code": totp(&secret, step.saturating_sub(1)), "immediate": true}),
+        delete,
     )
     .await;
     println!("cleanup: {status} {}", gone["code"]);
+    assert_eq!(status, 200, "the account was not deleted: {}", gone["code"]);
+    if let Err(panic) = steps {
+        std::panic::resume_unwind(panic);
+    }
 }
 
 // ---------- a session that arrives after the person left is ended ----------
@@ -1247,7 +1267,7 @@ async fn a_sign_in_that_starts_from_an_invite_carries_the_code_with_every_step()
         .mount(&server)
         .await;
     let (mut b, mut rx, mut irx, _store) = backend();
-    handle(&mut b, Cmd::Invite(Some("abc123".into())));
+    handle(&mut b, Cmd::Invite(Some((server.uri(), "abc123".into()))));
     start(&mut b, &server);
     let _ = next_entry(&mut b, &mut irx, &mut rx).await;
     password(&mut b, "ana@example.org", "correct horse");
@@ -1274,7 +1294,10 @@ async fn a_sign_in_without_an_invite_sends_no_invite_code() {
         .await;
     let (mut b, mut rx, mut irx, _store) = backend();
     // An invite that was left behind by an earlier sign-in is forgotten with it.
-    handle(&mut b, Cmd::Invite(Some("old".into())));
+    handle(
+        &mut b,
+        Cmd::Invite(Some(("http://old.example".into(), "old".into()))),
+    );
     handle(&mut b, Cmd::Leave);
     start(&mut b, &server);
     let _ = next_entry(&mut b, &mut irx, &mut rx).await;
@@ -1325,4 +1348,37 @@ async fn leaving_while_the_captcha_is_solved_stops_the_work_and_frees_the_solver
         );
     }
     assert_eq!(count(&server, "/api/v1/auth/login").await, 1);
+}
+
+#[tokio::test]
+async fn an_invite_code_is_never_sent_to_an_instance_the_invite_did_not_come_from() {
+    let server = instance(classic()).await;
+    // The login must carry no invite code: the invite is from another instance.
+    Mock::given(path("/api/v1/auth/login"))
+        .and(body_json(
+            json!({"login": "ana@example.org", "password": "correct horse"}),
+        ))
+        .respond_with(token_response())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (mut b, mut rx, mut irx, _store) = backend();
+    handle(
+        &mut b,
+        Cmd::Invite(Some(("https://chat.example".into(), "abc123".into()))),
+    );
+    start(&mut b, &server);
+    let _ = next_entry(&mut b, &mut irx, &mut rx).await;
+    password(&mut b, "ana@example.org", "correct horse");
+    until_signed_in(&mut b, &mut irx, &mut rx).await;
+}
+
+#[test]
+fn an_invite_belongs_to_the_host_it_came_from() {
+    assert_eq!(host_of("https://chat.example"), Some("chat.example".into()));
+    assert_eq!(
+        host_of("http://127.0.0.1:8080"),
+        Some("127.0.0.1:8080".into())
+    );
+    assert_eq!(host_of("not a url"), None);
 }

@@ -55,6 +55,7 @@ impl Inlet {
                 self.focus_sign_in_step(window, cx);
             }
             Ev::Lost => {
+                self.sign_in.invite_sent = false;
                 self.sign_in_reset_flow(cx);
                 self.sign_in.flow.error = Some(super::flow::FormError {
                     message: t!("entry-error-timed-out"),
@@ -63,6 +64,7 @@ impl Inlet {
                 self.focus_sign_in_step(window, cx);
             }
             Ev::Failed(err) => {
+                self.sign_in.invite_sent = false;
                 let field = err.field;
                 self.sign_in.flow.failed(err, now);
                 // The cursor goes where the error is, unless it is about the instance.

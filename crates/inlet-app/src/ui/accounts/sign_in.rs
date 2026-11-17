@@ -194,6 +194,15 @@ impl Inlet {
                 }
             }
         };
+        // The invite code goes with these requests, when the instance is the invite's.
+        if matches!(
+            command,
+            entry::Cmd::Password { .. } | entry::Cmd::Code { .. } | entry::Cmd::Mfa { .. }
+        ) {
+            let host = self.sign_in.flow.info.as_ref().map(|i| i.host.clone());
+            let invite_host = self.sign_in.invite_host();
+            self.sign_in.invite_sent = invite_host.is_some() && invite_host == host;
+        }
         self.backend.send(Cmd::Entry(command));
         self.start_sign_in_clock(cx);
         cx.notify();
@@ -272,6 +281,7 @@ impl Inlet {
         if instance.is_empty() || self.sign_in.busy || self.sign_in.flow.busy() {
             return;
         }
+        self.sign_in.invite_sent = false;
         // A password typed but not sent does not stay in its field.
         self.sign_in.password_input.update(cx, |i, cx| i.clear(cx));
         self.sign_in.code_input.update(cx, |i, cx| i.clear(cx));

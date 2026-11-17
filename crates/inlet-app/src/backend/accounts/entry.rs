@@ -226,9 +226,10 @@ pub enum Cmd {
     Back,
     /// The person left the sign-in screen or changed the instance: forget all of it.
     Leave,
-    /// The sign-in starts from this invite code: the sign-in requests carry it, so the
-    /// instance joins the server (`None`: no invite). Sent before `Start`.
-    Invite(Option<String>),
+    /// The sign-in starts from an invite: its origin and code. The sign-in requests carry
+    /// the code, so the instance joins the server, but only when the instance signed in
+    /// to is the one the invite came from (`None`: no invite). Sent before `Start`.
+    Invite(Option<(String, String)>),
 }
 
 /// What the UI hears from the in-app sign-in.
@@ -366,7 +367,7 @@ pub(super) fn handle(b: &mut Backend, cmd: Cmd) {
             }
         }
         Cmd::Leave => b.entry_leave(),
-        Cmd::Invite(code) => b.entry_invite = code.filter(|c| !c.is_empty()),
+        Cmd::Invite(invite) => b.entry_invite = invite.filter(|(_, code)| !code.is_empty()),
     }
 }
 
@@ -473,6 +474,7 @@ impl Backend {
     fn entry_password(&mut self, identifier: String, password: p::Secret) {
         let invite = self.entry_invite.clone();
         self.entry_task("entry password", move |instance| async move {
+            let invite = invite_for(&instance, invite.as_ref());
             let result = p::sign_in_password_with_invite(
                 &instance,
                 &identifier,
@@ -504,6 +506,7 @@ impl Backend {
         };
         let invite = self.entry_invite.clone();
         self.entry_task("entry code", move |instance| async move {
+            let invite = invite_for(&instance, invite.as_ref());
             let result =
                 p::verify_email_code_with_invite(&instance, &ticket, &code, invite.as_deref())
                     .await;
@@ -524,6 +527,7 @@ impl Backend {
         drop(code);
         let invite = self.entry_invite.clone();
         self.entry_task("entry mfa", move |instance| async move {
+            let invite = invite_for(&instance, invite.as_ref());
             let result =
                 p::sign_in_totp_with_invite(&instance, &ticket, &cleaned, invite.as_deref()).await;
             drop(cleaned);
@@ -781,6 +785,24 @@ impl Backend {
             None,
         );
     }
+}
+
+/// The host (with a port, if any) of an origin such as `https://chat.example`.
+fn host_of(origin: &str) -> Option<String> {
+    let url = url::Url::parse(origin).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
+}
+
+/// The invite code to send to `instance`: only when the invite came from that instance,
+/// so a code never reaches another instance the person types after a failed lookup.
+fn invite_for(instance: &p::Instance, invite: Option<&(String, String)>) -> Option<String> {
+    let (origin, code) = invite?;
+    let same = host_of(origin)? == host_of(instance.origin())?;
+    same.then(|| code.clone())
 }
 
 fn info_of(instance: &p::Instance) -> EntryInfo {

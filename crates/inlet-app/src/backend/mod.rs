@@ -501,7 +501,7 @@ struct Backend {
     /// The discovery an in-app sign-in starts with, if one is running (its flow number).
     entry_starting: Option<u64>,
     /// The invite code the in-app sign-in carries (it starts from an invite link).
-    entry_invite: Option<String>,
+    entry_invite: Option<(String, String)>,
     open_guild: Option<AbortHandle>,
     open_channel: Option<AbortHandle>,
     /// Messages with files on their way, and failed ones kept for Retry (all accounts).

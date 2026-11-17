@@ -56,9 +56,12 @@ impl Inlet {
         self.overlays.link_prompt = None;
         self.begin_add_account(window, cx);
         // The sign-in requests carry the invite, so the instance joins the server.
-        self.backend
-            .send(Cmd::Entry(entry::Cmd::Invite(Some(code.clone()))));
+        self.backend.send(Cmd::Entry(entry::Cmd::Invite(Some((
+            origin.clone(),
+            code.clone(),
+        )))));
         self.sign_in.invite = Some((origin, code));
+        self.sign_in.invite_sent = false;
         self.sign_in.mode = SignInMode::Password;
         self.sign_in
             .instance_input
@@ -75,5 +78,6 @@ impl Inlet {
     pub(crate) fn sign_in_left(&mut self, cx: &mut Context<Self>) {
         self.sign_in_reset_flow(cx);
         self.sign_in.invite = None;
+        self.sign_in.invite_sent = false;
     }
 }

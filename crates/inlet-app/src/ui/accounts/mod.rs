@@ -47,6 +47,9 @@ pub struct SignInState {
     /// An invite link to another instance that the person is signing in for: its origin
     /// and code. Offered again once the sign-in worked.
     pub invite: Option<(String, String)>,
+    /// A password, code or second factor was sent for that invite, so the instance has
+    /// joined the server through it and the link need not be asked about again.
+    pub invite_sent: bool,
     pub mode: SignInMode,
     pub busy: bool,
     pub error: Option<String>,
@@ -107,6 +110,7 @@ impl SignInState {
             flow: flow::Flow::default(),
             clock: None,
             invite: None,
+            invite_sent: false,
             mode: SignInMode::Password,
             busy: false,
             error: None,
@@ -247,6 +251,7 @@ impl Inlet {
                 self.sign_in.error = None;
                 self.sign_in.notice = None;
                 self.sign_in.token_input.update(cx, |i, cx| i.clear(cx));
+                let joined = std::mem::take(&mut self.sign_in.invite_sent);
                 self.sign_in_reset_flow(cx);
                 let invite = self.sign_in.invite.take();
                 if let Some(hash) = self.sign_in.pasted_token_hash.take() {
@@ -271,8 +276,10 @@ impl Inlet {
                 }
                 // Signed in on the instance an invite link pointed at: the link is asked
                 // about again, now as an invite on the signed-in instance.
+                // Not after an in-app sign-in that carried the invite code: the instance
+                // joined the server then.
                 if let Some((origin, code)) = invite {
-                    if host_of(&origin) == host_of(&self.instance) {
+                    if !joined && host_of(&origin) == host_of(&self.instance) {
                         self.ask_about_link(Incoming::WebInvite { origin, code }, cx);
                     }
                 }
@@ -760,6 +767,73 @@ mod tests {
             this.sign_in_for_invite("https://chat.example".into(), "abc123".into(), window, cx);
         });
         assert_eq!(names(&commands), ["leave", "invite", "start"]);
-        assert!(matches!(&commands[1], entry::Cmd::Invite(Some(code)) if code == "abc123"));
+        assert!(
+            matches!(&commands[1], entry::Cmd::Invite(Some((origin, code))) if origin == "https://chat.example" && code == "abc123")
+        );
+    }
+
+    /// An in-app sign-in on `host` for an invite that came from `https://chat.example`.
+    fn invited_submit(cx: &mut TestAppContext, host: &str) -> bool {
+        let host = host.to_string();
+        let sent = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = sent.clone();
+        let _ = on_the_sign_in_screen(cx, move |this, window, cx| {
+            this.sign_in_for_invite("https://chat.example".into(), "abc123".into(), window, cx);
+            this.sign_in.flow.started(EntryInfo {
+                host,
+                ..info(false)
+            });
+            this.sign_in
+                .identifier_input
+                .update(cx, |i, cx| i.set_text("ana@example.org", cx));
+            this.sign_in
+                .password_input
+                .update(cx, |i, cx| i.set_text("correct horse", cx));
+            this.sign_in.flow.busy_since = None;
+            this.submit_sign_in(window, cx);
+            seen.set(this.sign_in.invite_sent);
+        });
+        sent.get()
+    }
+
+    #[gpui::test]
+    fn an_in_app_sign_in_on_the_invites_instance_is_marked_as_joined(cx: &mut TestAppContext) {
+        assert!(invited_submit(cx, "chat.example"));
+    }
+
+    #[gpui::test]
+    fn an_in_app_sign_in_on_another_instance_is_not_marked_as_joined(cx: &mut TestAppContext) {
+        assert!(!invited_submit(cx, "other.example"));
+    }
+
+    /// Whether the invite is asked about again after a sign-in on the invite's instance.
+    fn asked_again(cx: &mut TestAppContext, joined: bool) -> bool {
+        let asked = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = asked.clone();
+        let _ = on_the_sign_in_screen(cx, move |this, window, cx| {
+            this.sign_in.invite = Some(("https://chat.example".into(), "abc123".into()));
+            this.sign_in.invite_sent = joined;
+            this.on_accounts_event(
+                Ev::SignedIn {
+                    key: AccountKey::new("https://chat.example", "1").unwrap(),
+                    username: "ana".into(),
+                    instance: "https://chat.example".into(),
+                },
+                window,
+                cx,
+            );
+            seen.set(this.overlays.link_prompt.is_some());
+        });
+        asked.get()
+    }
+
+    #[gpui::test]
+    fn the_invite_is_asked_about_again_after_a_browser_or_token_sign_in(cx: &mut TestAppContext) {
+        assert!(asked_again(cx, false));
+    }
+
+    #[gpui::test]
+    fn the_invite_is_not_asked_about_again_after_joining_through_it(cx: &mut TestAppContext) {
+        assert!(!asked_again(cx, true));
     }
 }
