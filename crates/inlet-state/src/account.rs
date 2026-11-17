@@ -710,6 +710,27 @@ impl AccountState {
         c
     }
 
+    /// Takes up to `limit` messages of the older buffer of `ch` into its window, as scrolling
+    /// back asks for older ones. `Some` when there were any: no request for an older page
+    /// is needed then.
+    pub fn drain_older(&mut self, ch: ChannelId, limit: usize) -> Option<Changes> {
+        self.windows.drain_older(ch, limit).then(|| {
+            let mut c = Changes::default();
+            c.message(ch);
+            c
+        })
+    }
+
+    /// The same from the newer buffer, as scrolling down to a window that misses its newest
+    /// messages asks for newer ones.
+    pub fn drain_newer(&mut self, ch: ChannelId, limit: usize) -> Option<Changes> {
+        self.windows.drain_newer(ch, limit).then(|| {
+            let mut c = Changes::default();
+            c.message(ch);
+            c
+        })
+    }
+
     /// Drops every message window (for an account moved to the background).
     pub fn drop_message_windows(&mut self) -> Changes {
         let mut c = Changes::default();

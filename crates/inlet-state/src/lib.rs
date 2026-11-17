@@ -71,8 +71,17 @@ use smallvec::SmallVec;
 
 /// The caps that keep the state's memory bounded.
 pub mod limits {
-    /// Messages kept per channel window.
-    pub const MAX_MESSAGES_PER_CHANNEL: usize = 500;
+    /// Messages a window may hold in its list while its channel is shown: Fluxer's client
+    /// (`MAX_LOADED_MESSAGES`) cuts a loaded list that passes this down to
+    /// [`MAX_TRUNCATED_VIEW`], from the side away from the reader.
+    pub const MAX_MESSAGES_PER_CHANNEL: usize = 200;
+    /// What a list that passed [`MAX_MESSAGES_PER_CHANNEL`] is cut to (`TRUNCATED_MESSAGE_VIEW_SIZE`).
+    pub const MAX_TRUNCATED_VIEW: usize = 100;
+    /// Messages the buffer on each side of a window holds (`MAX_MESSAGE_CACHE_SIZE`).
+    pub const MAX_MESSAGE_CACHE: usize = 250;
+    /// What a window is cut to when its channel is shown again (`MAX_MESSAGES_PER_CHANNEL` in
+    /// Fluxer's client, one page).
+    pub const MAX_REOPEN_MESSAGES: usize = 50;
     /// Approximate bytes kept per channel window; the oldest messages go
     /// first. The estimate undercounts `serde_json`'s real heap use by about
     /// half, so the real cap is somewhat higher.
