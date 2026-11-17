@@ -301,6 +301,7 @@ pub fn init(cx: &mut App) {
     } else {
         prefs::settings_path()
     };
+    #[cfg_attr(not(feature = "demo"), allow(unused_mut))]
     let mut prefs = path.as_deref().map(prefs::load).unwrap_or_default();
     // A demo run can show the cat.
     #[cfg(feature = "demo")]
