@@ -304,7 +304,7 @@ fn decimals_use_the_separator_of_the_locale() {
     assert_eq!(decimal_in(1.5, 1, "en-US"), "1.5");
     assert_eq!(decimal_in(1.5, 1, "nb-NO"), "1,5");
     assert_eq!(decimal_in(12.0, 0, "nb"), "12");
-    assert_eq!(decimal_in(3.14159, 2, "de_DE.UTF-8"), "3,14");
+    assert_eq!(decimal_in(2.75, 2, "de_DE.UTF-8"), "2,75");
     assert_eq!(decimal_in(2.0, 1, ""), "2.0");
     assert_eq!(decimal_separator_of("nn-NO"), ',');
     assert_eq!(decimal_separator_of("ja-JP"), '.');
