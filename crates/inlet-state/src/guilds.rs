@@ -40,6 +40,9 @@ pub struct GuildState {
     pub stickers: Vec<GuildSticker>,
     /// The account was removed from the guild (kicked or left); everything is denied.
     pub left: bool,
+    /// The guild's READY or GUILD_CREATE carried a `threads` list: the instance's
+    /// gateway has threads on for this guild (Fluxer's `ThreadGuilds.isActive`).
+    pub threads_active: bool,
     /// Permission bits per channel, recomputed on every change that can affect them.
     pub(crate) perms: BTreeMap<ChannelId, u64>,
     /// Guild-level permission bits.
@@ -65,6 +68,7 @@ impl GuildState {
             emojis: Vec::new(),
             stickers: Vec::new(),
             left: false,
+            threads_active: false,
             perms: BTreeMap::new(),
             guild_perms: 0,
             timed_out: false,

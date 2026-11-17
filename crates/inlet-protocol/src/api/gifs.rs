@@ -167,9 +167,15 @@ pub struct GifProvider {
 }
 
 impl Discovery {
-    /// Whether the instance has a GIF picker (`features.gif_enabled`).
+    /// Whether the instance has a GIF picker: `services.gif_enabled` in Fluxer's
+    /// document, or `features.gif_enabled` in a document that carries it there.
     pub fn gif_enabled(&self) -> bool {
-        self.features.get("gif_enabled") == Some(&Value::Bool(true))
+        let services = self
+            .extra
+            .get("services")
+            .and_then(|s| s.get("gif_enabled"))
+            .and_then(Value::as_bool);
+        services.unwrap_or(self.features.get("gif_enabled") == Some(&Value::Bool(true)))
     }
 
     /// The GIF provider to credit.

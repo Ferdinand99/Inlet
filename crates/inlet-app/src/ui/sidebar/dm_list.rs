@@ -126,6 +126,12 @@ fn switcher_keys() -> [String; 2] {
     [modifier, t!("sidebar-key-k")]
 }
 
+/// Fluxer's `dmPickerAvailable`: new direct messages and groups need direct messages and
+/// friends both (the picker lists friends).
+fn new_dm_available(direct_messages: bool, friends: bool) -> bool {
+    direct_messages && friends
+}
+
 impl Inlet {
     /// The header of the DM list: the quick switcher bar.
     pub(super) fn render_dm_header(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -188,6 +194,12 @@ impl Inlet {
 
     /// The rows of the DM list.
     pub(super) fn dm_rows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        // What the instance lets the account do: friends, personal notes, new DMs.
+        let friends_on = self.has_cap(cx, inlet_state::Cap::Friends);
+        let notes_on = self.has_cap(cx, inlet_state::Cap::PersonalNotes);
+        let dms_on = self.has_cap(cx, inlet_state::Cap::DirectMessages);
+        // Fluxer's `dmPickerAvailable`: new DMs need direct messages and friends both.
+        let new_dm_on = new_dm_available(dms_on, friends_on);
         let cached = self.social.dm_rows.clone();
         let (rows, pending, notes_id) = match self.account.as_ref().map(|a| a.read(cx)) {
             Some(state) => (
@@ -203,26 +215,30 @@ impl Inlet {
         let friends_selected = self.friends_page_shown();
         let open_friends =
             cx.listener(|this: &mut Inlet, _: &gpui::ClickEvent, _, cx| this.show_friends(cx));
-        out.push(nav_row(
-            "dm-friends",
-            SocialIcon::Friends,
-            t!("social-friends"),
-            friends_selected,
-            pending,
-            open_friends,
-        ));
+        if friends_on {
+            out.push(nav_row(
+                "dm-friends",
+                SocialIcon::Friends,
+                t!("social-friends"),
+                friends_selected,
+                pending,
+                open_friends,
+            ));
+        }
         let notes_selected = notes_id.is_some() && self.selected_channel == notes_id;
         let open_notes = cx.listener(|this: &mut Inlet, _: &gpui::ClickEvent, window, cx| {
             this.open_personal_notes(window, cx)
         });
-        out.push(nav_row(
-            "dm-notes",
-            SocialIcon::Notes,
-            t!("social-personal-notes"),
-            notes_selected,
-            0,
-            open_notes,
-        ));
+        if notes_on {
+            out.push(nav_row(
+                "dm-notes",
+                SocialIcon::Notes,
+                t!("social-personal-notes"),
+                notes_selected,
+                0,
+                open_notes,
+            ));
+        }
         out.push(
             div()
                 .flex_none()
@@ -242,7 +258,8 @@ impl Inlet {
                         .text_color(theme::text_muted())
                         .child(t!("sidebar-direct-messages")),
                 )
-                .child(
+                // New direct messages and groups, unless the instance has turned them off.
+                .children(new_dm_on.then(|| {
                     div()
                         .id("dm-new")
                         .debug_selector(|| "dm-new".into())
@@ -256,12 +273,13 @@ impl Inlet {
                         .child(SocialIcon::Plus.el(14., theme::text_muted()))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_group_dm(Mode::Create, window, cx)
-                        })),
-                )
+                        }))
+                }))
                 .into_any_element(),
         );
         let selected = self.selected_channel.clone();
-        for row in rows {
+        // With direct messages off, Fluxer lists no DM channels at all.
+        for row in rows.into_iter().filter(|_| dms_on) {
             let active = selected.as_deref() == Some(row.id.as_str());
             out.push(self.dm_row(&row, active, cx));
         }
@@ -681,5 +699,100 @@ mod tests {
         let rows = dm_rows_of(&s, &[extra, notes]);
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[3].name, "late");
+    }
+
+    #[test]
+    fn the_new_dm_button_needs_direct_messages_and_friends() {
+        assert!(new_dm_available(true, true));
+        assert!(!new_dm_available(true, false));
+        assert!(!new_dm_available(false, true));
+        assert!(!new_dm_available(false, false));
+    }
+
+    struct Probe;
+
+    impl gpui::Render for Probe {
+        fn render(&mut self, _: &mut gpui::Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// The Friends row and the Personal notes row are there while the instance lets the
+    /// account have friends and notes, and each goes when the instance turns it off.
+    #[gpui::test]
+    fn the_friends_and_notes_rows_follow_what_the_instance_allows(cx: &mut gpui::TestAppContext) {
+        use crate::backend::accounts::AccountKey;
+        use crate::backend::instance::Ev;
+
+        let window = cx.add_window(|_, _| Probe);
+        let inlet = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    Inlet::new_with(window, cx, |_| crate::backend::BackendHandle::detached())
+                })
+            })
+            .unwrap();
+        let origin = "https://fluxer.opland.net";
+        let key = AccountKey::new(origin, "1").unwrap();
+        let discovery = |community: serde_json::Value| {
+            Box::new(
+                serde_json::from_value::<inlet_protocol::Discovery>(json!({
+                    "api_code_version": 1,
+                    "endpoints": {"api_public": "https://x.example/api", "gateway": "wss://x.example/gw"},
+                    "features": {},
+                    "community": community
+                }))
+                .unwrap(),
+            )
+        };
+        window
+            .update(cx, |_, _, cx| {
+                inlet.update(cx, |this, cx| {
+                    let ready: Ready = serde_json::from_value(json!({
+                        "session_id": "s", "user": {"id": "1", "username": "me"}, "guilds": [],
+                        "users": [{"id": "2", "username": "ada"}], "read_states": [],
+                        "private_channels": [{"id": "900", "type": 1, "last_message_id": "901",
+                            "recipients": [{"id": "2", "username": "ada"}]}],
+                        "user_guild_settings": []
+                    }))
+                    .unwrap();
+                    this.switcher.active = Some(key.clone());
+                    this.account = Some(cx.new(|_| AccountState::from_ready_at(&ready, 1)));
+                    // Friends, Personal notes, the heading with its plus button, one DM.
+                    let rows = |this: &mut Inlet, cx: &mut Context<Inlet>| this.dm_rows(cx).len();
+                    assert_eq!(rows(this, cx), 4);
+                    let says = |this: &mut Inlet, cx: &mut Context<Inlet>, community| {
+                        this.on_instance_event(
+                            Some(key.clone()),
+                            Ev::Discovery(discovery(community)),
+                            cx,
+                        );
+                    };
+                    says(this, cx, json!({"friends_disabled": true}));
+                    assert_eq!(rows(this, cx), 3, "no friends row");
+                    says(this, cx, json!({"personal_notes_enabled": false}));
+                    assert_eq!(rows(this, cx), 3, "no notes row");
+                    says(
+                        this,
+                        cx,
+                        json!({"friends_disabled": true, "personal_notes_enabled": false}),
+                    );
+                    assert_eq!(rows(this, cx), 2, "the heading and the DM");
+                    // Direct messages off (friends left on): no DM rows, as in Fluxer.
+                    says(
+                        this,
+                        cx,
+                        json!({"direct_messages_disabled": true, "friends_disabled": false}),
+                    );
+                    assert_eq!(rows(this, cx), 3, "friends, notes and the heading, no DM");
+                    // Direct messages off alone turns friends off with them.
+                    says(this, cx, json!({"direct_messages_disabled": true}));
+                    assert_eq!(rows(this, cx), 2, "notes and the heading");
+                    // Everything back on.
+                    says(this, cx, json!({}));
+                    assert_eq!(rows(this, cx), 4);
+                })
+            })
+            .unwrap();
     }
 }

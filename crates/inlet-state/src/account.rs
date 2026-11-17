@@ -8,6 +8,7 @@ use inlet_protocol::models::{
 };
 use inlet_protocol::{CurrentUser, Dispatch};
 
+use crate::capabilities::{AccountNotices, Capabilities, ExperimentState, GuildFeature};
 use crate::channels::{has_read_state, is_guild_text_based, is_private, Channels};
 use crate::guild_settings::{notifications, GuildSettings};
 use crate::guilds::GuildState;
@@ -64,6 +65,8 @@ pub struct AccountState {
     pub(crate) threads: Threads,
     settings: Settings,
     voice: Voice,
+    /// What the account's instance lets it do. Kept across a new READY.
+    caps: Capabilities,
     now_ms: i64,
     /// Cached members other than the account, across guilds.
     member_total: usize,
@@ -100,6 +103,7 @@ impl AccountState {
             threads: Threads::default(),
             settings: Settings::from_ready(r),
             voice: Voice::default(),
+            caps: Capabilities::new(),
             now_ms,
             member_total: 0,
             passive: false,
@@ -134,8 +138,10 @@ impl AccountState {
             Dispatch::Ready(r) => {
                 let windows = std::mem::take(&mut self.windows);
                 let passive = self.passive;
+                let caps = self.caps.clone();
                 *self = AccountState::from_ready_at(r, self.now_ms);
                 self.windows = windows;
+                self.caps = caps;
                 let channels = &self.channels;
                 self.windows.retain(|ch| channels.get(ch).is_some());
                 self.windows.mark_stale();
@@ -496,6 +502,8 @@ impl AccountState {
                     self.users.upsert(&me.user);
                     self.me = me;
                     c.users = true;
+                    // The account's own flags (email, limits, terms) are banners.
+                    c.capabilities = true;
                     let ids: Vec<GuildId> = self.guilds.keys().copied().collect();
                     for g in ids {
                         self.recompute(g, &mut c);
@@ -814,6 +822,61 @@ impl AccountState {
     /// The signed-in account.
     pub fn me(&self) -> &CurrentUser {
         &self.me
+    }
+
+    /// What the account's instance lets it do. Until a discovery document is taken in
+    /// ([`AccountState::set_discovery`]) it has Fluxer's defaults.
+    pub fn capabilities(&self) -> &Capabilities {
+        &self.caps
+    }
+
+    /// Takes in the instance's discovery document (at start, on a new connection and
+    /// every 24 hours).
+    pub fn set_discovery(&mut self, d: &inlet_protocol::Discovery) -> Changes {
+        Changes {
+            capabilities: self.caps.set_discovery(d),
+            ..Changes::default()
+        }
+    }
+
+    /// Takes in the state of the account's experiment assignments.
+    pub fn set_experiments(&mut self, state: ExperimentState) -> Changes {
+        Changes {
+            capabilities: self.caps.set_experiments(state),
+            ..Changes::default()
+        }
+    }
+
+    /// Sets when the instance's policies last changed (see
+    /// [`crate::capabilities::POLICY_DATES`]); for a build that knows them, and tests.
+    pub fn set_policy_dates(&mut self, dates: crate::PolicyDates) -> Changes {
+        self.caps.set_policy_dates(dates);
+        Changes {
+            capabilities: true,
+            ..Changes::default()
+        }
+    }
+
+    /// What the account's own flags ask the person to do (confirm the email, a paused
+    /// account, updated terms).
+    pub fn notices(&self) -> AccountNotices {
+        self.caps.notices(&self.me)
+    }
+
+    /// Whether threads are on for a guild: its READY or GUILD_CREATE carried a `threads`
+    /// list. The instance decides this per guild; the client never reads the
+    /// experiment for it.
+    pub fn threads_active(&self, guild: GuildId) -> bool {
+        self.guilds.get(&guild).is_some_and(|g| g.threads_active)
+    }
+
+    /// Whether the guild has `feature`, as the instance lets it count
+    /// ([`Capabilities::guild_has`]).
+    pub fn guild_has(&self, guild: GuildId, feature: GuildFeature) -> bool {
+        self.guilds
+            .get(&guild)
+            .and_then(|g| g.properties.as_ref())
+            .is_some_and(|p| self.caps.guild_has(&p.features, feature))
     }
 
     /// The signed-in account's ID.
@@ -1338,6 +1401,9 @@ impl AccountState {
         }
         // Its active threads (with the account's memberships), after their parents.
         self.ingest_threads(id, g.extra.get("threads"), &mut fresh, c);
+        if let Some(guild) = self.guilds.get_mut(&id) {
+            guild.threads_active = g.extra.get("threads").is_some_and(|t| !t.is_null());
+        }
         // Channels the guild no longer sends were hidden: keep their acks.
         for gone in old.difference(&fresh) {
             self.forget_channel(*gone, true, c);

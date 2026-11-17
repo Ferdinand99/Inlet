@@ -84,6 +84,8 @@ pub struct Inlet {
     pub settings: ui::settings::State,
     /// The signed-in accounts and the account switcher.
     pub switcher: ui::overlays::account_switcher::Switcher,
+    /// The banners across the top and what feeds them (the instance's capabilities).
+    pub banners: ui::banners::State,
 
     /// Demo screenshots: the channel to open once the guild's channels arrive.
     #[cfg(feature = "demo")]
@@ -134,6 +136,7 @@ impl Inlet {
         subscriptions.push(cx.observe_window_activation(window, |this, window, cx| {
             let active = window.is_window_active();
             this.notifications.window_active = active;
+            this.banners_window_active(active);
             if active {
                 let at_bottom = this.chat.message_list.is_following_tail();
                 this.read_if_watched(true, at_bottom, cx);
@@ -190,6 +193,7 @@ impl Inlet {
             notifications,
             settings: Default::default(),
             switcher: Default::default(),
+            banners: Default::default(),
             #[cfg(feature = "demo")]
             demo_channel: None,
             _subscriptions: subscriptions,
@@ -270,7 +274,12 @@ impl Inlet {
             Event::Notifications(ev) => self.on_notifications_event(ev, window, cx),
             Event::Voice(ev) => self.on_voice_event(ev, window, cx),
             Event::Platform(ev) => self.on_platform_event(ev, window, cx),
-            Event::Tagged { account, event } => self.on_tagged_event(account, *event, window, cx),
+            Event::Instance(ev) => self.on_instance_event(None, ev, cx),
+            Event::Tagged { account, event } => match *event {
+                // The instance's answers, for the active account and the others alike.
+                Event::Instance(ev) => self.on_instance_event(Some(account), ev, cx),
+                other => self.on_tagged_event(account, other, window, cx),
+            },
         }
         cx.notify();
     }
@@ -315,6 +324,7 @@ impl Inlet {
         self.chat.error = None;
         self.chat.notice = None;
         self.chat.gateway_down = None;
+        self.banners.close_windows();
     }
 }
 

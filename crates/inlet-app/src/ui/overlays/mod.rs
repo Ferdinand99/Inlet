@@ -90,6 +90,9 @@ impl Inlet {
         }
         // The quick switcher: over the status picker, under the link prompts.
         out.extend(self.render_quick_switcher(cx));
+        // The updated-terms window: under the link confirmation, so a link opened from it
+        // is asked about on top of it.
+        out.extend(self.render_banner_windows(cx));
         if let Some(url) = self.overlays.pending_link.clone() {
             // A layer like the link prompt: it has the keyboard while it is topmost, and
             // Escape closes it.

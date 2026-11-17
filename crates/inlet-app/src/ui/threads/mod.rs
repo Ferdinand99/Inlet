@@ -135,7 +135,15 @@ impl State {
 /// text or announcement channel of a guild, it opens the thread list.
 pub fn header_button(this: &Inlet, cx: &mut Context<Inlet>) -> Option<AnyElement> {
     let open = this.selected_channel.as_ref()?;
-    this.selected_guild.as_ref()?;
+    let guild = this.selected_guild.as_ref()?;
+    // Threads are on per guild: the instance's gateway sends a `threads` list for the
+    // guilds that have them (Fluxer's `ThreadGuilds.isActive`), whatever `/experiments` says.
+    let on = inlet_state::GuildId::parse(guild)
+        .zip(this.account.as_ref())
+        .is_some_and(|(g, a)| a.read(cx).threads_active(g));
+    if !on {
+        return None;
+    }
     let channel = this.channels.iter().find(|c| &c.id == open)?;
     if !matches!(
         channel.kind,

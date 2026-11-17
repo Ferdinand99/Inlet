@@ -1,0 +1,11 @@
+# The banners across the top: the account's address is not confirmed (a banner the
+# person cannot dismiss, with its Resend email button) and the administrator's notice (a
+# dismissible banner with its close button and Learn more).
+name = "banners"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "banners"
+guild = "g1"
+channel = "c-general"
