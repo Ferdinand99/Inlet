@@ -80,9 +80,9 @@ impl Request {
 /// What the person typed, or nothing (the first try).
 pub enum Proof {
     /// The account password.
-    Password(p::SudoSecret),
+    Password(p::Secret),
     /// An authenticator app code or a backup code.
-    Code(p::SudoSecret),
+    Code(p::Secret),
 }
 
 impl Proof {

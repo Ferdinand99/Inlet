@@ -397,6 +397,7 @@ impl Inlet {
         self.sign_in.error = None;
         self.sign_in.notice = None;
         self.sign_in.handoff = None;
+        self.sign_in_reset_flow(cx);
         self.screen = Screen::SignIn;
         self.sign_in
             .instance_input
@@ -413,6 +414,7 @@ impl Inlet {
     /// "Back" on the sign-in screen: to the active account, or to another signed-in one.
     pub(crate) fn back_from_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.backend.send(Cmd::CancelSignIn);
+        self.sign_in_left(cx);
         self.switcher.adding = false;
         self.sign_in.busy = false;
         self.sign_in.handoff = None;

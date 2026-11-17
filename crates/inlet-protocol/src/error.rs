@@ -76,6 +76,10 @@ pub enum Error {
     /// Solving the CAPTCHA failed or took too long.
     #[error("captcha could not be solved: {0}")]
     Captcha(String),
+    /// The caller cancelled while the CAPTCHA was being solved (see
+    /// [`crate::altcha::with_solve_cancel`]). Nothing was sent with the answer.
+    #[error("the CAPTCHA was cancelled")]
+    Cancelled,
     /// The instance now names a different API or gateway host than the one this
     /// token was signed in with. The token is not sent there. Ask the person to
     /// confirm the instance and sign in again.

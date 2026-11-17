@@ -5,7 +5,7 @@ mod common;
 
 use inlet_protocol::sudo::{MAX_WRONG_PROOFS, SUDO_HEADER};
 use inlet_protocol::{
-    Client, Error, Instance, Method, SudoMethods, SudoProof, SudoRejection, SudoSecret, Token,
+    Client, Error, Instance, Method, SudoMethods, SudoProof, SudoRejection, Secret, Token,
 };
 use serde_json::{json, Value};
 use wiremock::matchers::{body_json, method, path};
@@ -433,8 +433,8 @@ async fn a_wrong_code_and_a_wrong_email_code_are_named() {
             "/users/@me/recovery-kit",
             None,
             Some(&SudoProof::EmailCode {
-                ticket: SudoSecret::new("ticket"),
-                code: SudoSecret::new("123456"),
+                ticket: Secret::new("ticket"),
+                code: Secret::new("123456"),
             }),
         )
         .await

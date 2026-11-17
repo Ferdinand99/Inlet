@@ -48,6 +48,7 @@ use zeroize::Zeroize;
 
 use crate::error::{Error, Result};
 use crate::rest::{Client, RawResponse};
+use crate::secret::Secret;
 
 /// The request header Fluxer's sudo token travels in.
 pub const SUDO_HEADER: &str = "X-Fluxer-Sudo-Mode-JWT";
@@ -66,38 +67,6 @@ const MAX_CODE_CHARS: usize = 32;
 const MAX_TICKET_CHARS: usize = 128;
 /// A real token is a JWT of about 200 bytes; anything much larger is not one.
 const MAX_TOKEN_BYTES: usize = 2048;
-
-/// A secret string: a password, a code or a ticket. Wiped when dropped, `Debug` shows
-/// nothing, no `Clone` and no `Display`.
-pub struct SudoSecret(String);
-
-impl SudoSecret {
-    /// Wraps a value.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    /// The raw value. Keep the borrow short and never log it.
-    pub fn expose_secret(&self) -> &str {
-        &self.0
-    }
-
-    fn chars(&self) -> usize {
-        self.0.chars().count()
-    }
-}
-
-impl Drop for SudoSecret {
-    fn drop(&mut self) {
-        self.0.zeroize();
-    }
-}
-
-impl fmt::Debug for SudoSecret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("SudoSecret(<redacted>)")
-    }
-}
 
 /// The short-lived token that proves the account was confirmed. Wiped when dropped,
 /// redacted in `Debug`, no `Display`.
@@ -171,29 +140,29 @@ impl Eq for SudoToken {}
 #[non_exhaustive]
 pub enum SudoProof {
     /// The account password. Fluxer takes it only when the account has no second factor.
-    Password(SudoSecret),
+    Password(Secret),
     /// A code from the authenticator app, or an unused backup code. Fluxer takes both as
     /// the same method (`totp`).
-    Code(SudoSecret),
+    Code(Secret),
     /// The code e-mailed after [`Client::send_sudo_email_code`], for accounts with a
     /// confirmed address and no password or second factor.
     EmailCode {
         /// The ticket that came with the e-mail.
-        ticket: SudoSecret,
+        ticket: Secret,
         /// The six digits from the e-mail.
-        code: SudoSecret,
+        code: Secret,
     },
 }
 
 impl SudoProof {
     /// A password proof.
     pub fn password(value: impl Into<String>) -> Self {
-        SudoProof::Password(SudoSecret::new(value))
+        SudoProof::Password(Secret::new(value))
     }
 
     /// An authenticator or backup code proof.
     pub fn code(value: impl Into<String>) -> Self {
-        SudoProof::Code(SudoSecret::new(value))
+        SudoProof::Code(Secret::new(value))
     }
 
     /// Checks the lengths Fluxer accepts, so a value it would refuse is not sent (and
@@ -202,18 +171,22 @@ impl SudoProof {
         let bad = |what: &str| Err(Error::InvalidInput(format!("sudo proof: {what}")));
         match self {
             SudoProof::Password(p) => {
-                if p.chars() == 0 || p.chars() > MAX_PASSWORD_CHARS {
+                if p.expose_secret().chars().count() == 0
+                    || p.expose_secret().chars().count() > MAX_PASSWORD_CHARS {
                     return bad("the password is empty or too long");
                 }
             }
             SudoProof::Code(c) => {
-                if c.chars() == 0 || c.chars() > MAX_CODE_CHARS {
+                if c.expose_secret().chars().count() == 0
+                    || c.expose_secret().chars().count() > MAX_CODE_CHARS {
                     return bad("the code is empty or too long");
                 }
             }
             SudoProof::EmailCode { ticket, code } => {
-                let digits = code.0.len() == 6 && code.0.bytes().all(|b| b.is_ascii_digit());
-                if ticket.chars() == 0 || ticket.chars() > MAX_TICKET_CHARS || !digits {
+                let code = code.expose_secret();
+                let digits = code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit());
+                let ticket_chars = ticket.expose_secret().chars().count();
+                if ticket_chars == 0 || ticket_chars > MAX_TICKET_CHARS || !digits {
                     return bad("the e-mail code is not six digits");
                 }
             }
@@ -225,16 +198,16 @@ impl SudoProof {
     fn put_into(&self, body: &mut Map<String, Value>) {
         match self {
             SudoProof::Password(p) => {
-                body.insert("password".into(), Value::String(p.0.clone()));
+                body.insert("password".into(), Value::String(p.expose_secret().to_owned()));
             }
             SudoProof::Code(c) => {
                 body.insert("mfa_method".into(), json!("totp"));
-                body.insert("mfa_code".into(), Value::String(c.0.clone()));
+                body.insert("mfa_code".into(), Value::String(c.expose_secret().to_owned()));
             }
             SudoProof::EmailCode { ticket, code } => {
                 body.insert("mfa_method".into(), json!("email_code"));
-                body.insert("email_code_ticket".into(), Value::String(ticket.0.clone()));
-                body.insert("email_code".into(), Value::String(code.0.clone()));
+                body.insert("email_code_ticket".into(), Value::String(ticket.expose_secret().to_owned()));
+                body.insert("email_code".into(), Value::String(code.expose_secret().to_owned()));
             }
         }
     }
@@ -320,7 +293,7 @@ pub enum SudoRejection {
 #[derive(Debug)]
 pub struct SudoEmailCode {
     /// Send it back with the code ([`SudoProof::EmailCode`]).
-    pub ticket: SudoSecret,
+    pub ticket: Secret,
     /// When the code stops working (RFC 3339), when the instance said.
     pub code_expires_at: Option<String>,
     /// When another e-mail may be asked for (RFC 3339), when the instance said.
@@ -654,7 +627,7 @@ impl Client {
                 .map(str::to_owned)
         };
         Ok(SudoEmailCode {
-            ticket: SudoSecret::new(ticket),
+            ticket: Secret::new(ticket),
             code_expires_at: text("code_expires_at"),
             resend_available_at: text("resend_available_at"),
         })
@@ -669,7 +642,7 @@ mod tests {
 
     #[test]
     fn secrets_are_redacted() {
-        let secret = SudoSecret::new("hunter2-very-secret");
+        let secret = Secret::new("hunter2-very-secret");
         let token = SudoToken::parse(JWT).unwrap();
         for shown in [format!("{secret:?}"), format!("{token:?}")] {
             assert!(!shown.contains("hunter2"), "{shown}");
@@ -678,9 +651,11 @@ mod tests {
         }
         let proof = SudoProof::password("hunter2-very-secret");
         assert!(!format!("{proof:?}").contains("hunter2"));
+        let proof = SudoProof::code("123456");
+        assert!(!format!("{proof:?}").contains("123456"));
         let proof = SudoProof::EmailCode {
-            ticket: SudoSecret::new("tick-et-value"),
-            code: SudoSecret::new("123456"),
+            ticket: Secret::new("tick-et-value"),
+            code: Secret::new("123456"),
         };
         let shown = format!("{proof:?}");
         assert!(!shown.contains("tick-et-value") && !shown.contains("123456"));
@@ -714,18 +689,15 @@ mod tests {
     }
 
     #[test]
-    fn secrets_are_wiped_on_drop() {
+    fn the_token_is_wiped_on_drop() {
         // Drop calls `zeroize` on the string; run the same call by hand and look at the
         // buffer it leaves (the capacity is kept, so the pointer stays valid).
-        let mut secret = SudoSecret::new("abcdef");
         let mut token = SudoToken::parse(JWT).unwrap();
-        for (value, was_len) in [(&mut secret.0, 6), (&mut token.0, JWT.len())] {
-            let ptr = value.as_ptr();
-            value.zeroize();
-            assert_eq!(value.len(), 0);
-            let bytes = unsafe { std::slice::from_raw_parts(ptr, was_len) };
-            assert!(bytes.iter().all(|b| *b == 0));
-        }
+        let ptr = token.0.as_ptr();
+        token.0.zeroize();
+        assert_eq!(token.0.len(), 0);
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, JWT.len()) };
+        assert!(bytes.iter().all(|b| *b == 0));
     }
 
     #[test]
@@ -798,8 +770,8 @@ mod tests {
         );
         let mut m = Map::new();
         SudoProof::EmailCode {
-            ticket: SudoSecret::new("t"),
-            code: SudoSecret::new("123456"),
+            ticket: Secret::new("t"),
+            code: Secret::new("123456"),
         }
         .put_into(&mut m);
         assert_eq!(
@@ -816,8 +788,8 @@ mod tests {
         assert!(SudoProof::code("").check().is_err());
         assert!(SudoProof::code("x".repeat(33)).check().is_err());
         let email = |code: &str| SudoProof::EmailCode {
-            ticket: SudoSecret::new("t"),
-            code: SudoSecret::new(code),
+            ticket: Secret::new("t"),
+            code: Secret::new(code),
         };
         assert!(email("12345").check().is_err());
         assert!(email("12345a").check().is_err());

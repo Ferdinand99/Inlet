@@ -8,7 +8,7 @@
 //!
 //! The dialog is a layer (`desktop::Layer::SudoConfirm`): it has the keyboard, Escape
 //! closes it, and nothing behind it reacts. What the person typed goes into a
-//! [`inlet_protocol::SudoSecret`] when they press Confirm, and the field is cleared in the
+//! [`inlet_protocol::Secret`] when they press Confirm, and the field is cleared in the
 //! same step. The proof is never kept, logged or shown again; a wrong one only shows an
 //! error. The state of the dialog is a plain value ([`state::State`]) with its own tests.
 //!
@@ -205,7 +205,7 @@ impl Inlet {
         if !dialog.state.can_submit(!typed.is_empty()) || !dialog.state.submit() {
             return;
         }
-        let secret = p::SudoSecret::new(typed);
+        let secret = p::Secret::new(typed);
         let proof = match dialog.state.mode {
             Mode::Password => Proof::Password(secret),
             Mode::Code => Proof::Code(secret),

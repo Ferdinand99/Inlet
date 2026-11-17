@@ -63,6 +63,9 @@
 //! - `sudo-confirm`, `sudo-confirm-code`: for `#general`, the "Confirm it's you" dialog open
 //!   over the chat, in the password way after a wrong password, or in the code way after a
 //!   wrong code (see `ui/overlays/sudo_confirm.rs`).
+//! - `sign-in-identifier`, `sign-in-classic`, `sign-in-password`, `sign-in-code`,
+//!   `sign-in-mfa`, `sign-in-ip`: the sign-in screen on that step, to add an account (see
+//!   `signin.rs`).
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -128,6 +131,8 @@ pub enum Scene {
     KeybindHelp,
     SudoConfirm,
     SudoConfirmCode,
+    /// The sign-in screen on one of its steps (see `signin.rs`).
+    SignIn(super::signin::Step),
 }
 
 impl Scene {
@@ -175,7 +180,7 @@ impl Scene {
             "keybind-help" => Scene::KeybindHelp,
             "sudo-confirm" => Scene::SudoConfirm,
             "sudo-confirm-code" => Scene::SudoConfirmCode,
-            _ => return None,
+            other => return super::signin::Step::from_name(other).map(Scene::SignIn),
         })
     }
 }
@@ -588,6 +593,12 @@ mod tests {
             "profile-popout",
             "search-results",
             "quick-switcher",
+            "sign-in-identifier",
+            "sign-in-classic",
+            "sign-in-password",
+            "sign-in-code",
+            "sign-in-mfa",
+            "sign-in-ip",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);

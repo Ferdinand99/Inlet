@@ -54,11 +54,11 @@ fn kit() -> Request {
 }
 
 fn password(text: &str) -> Option<Proof> {
-    Some(Proof::Password(p::SudoSecret::new(text)))
+    Some(Proof::Password(p::Secret::new(text)))
 }
 
 fn code(text: &str) -> Option<Proof> {
-    Some(Proof::Code(p::SudoSecret::new(text)))
+    Some(Proof::Code(p::Secret::new(text)))
 }
 
 fn needs_password() -> ResponseTemplate {

@@ -295,6 +295,7 @@ fn share_error(e: &Error) -> Error {
         Error::Captcha(s) => Error::Captcha(s.clone()),
         Error::SudoRequired(r) => Error::SudoRequired(r.clone()),
         Error::SudoRejected(r) => Error::SudoRejected(*r),
+        Error::Cancelled => Error::Cancelled,
     }
 }
 
