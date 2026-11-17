@@ -4,7 +4,8 @@ name = "gif-command"
 window = [1280, 860]
 scale = 1.0
 theme = "dark"
-ignore = []
+# The text caret may blink.
+ignore = [[444, 812, 70, 28]]
 scene = "gif-command"
 guild = "g1"
 channel = "c-general"
