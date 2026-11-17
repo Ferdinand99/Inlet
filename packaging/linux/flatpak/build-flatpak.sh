@@ -106,9 +106,18 @@ flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/fl
 
 build="$work/build"
 repo="$work/repo"
-flatpak-builder --user --force-clean --disable-rofiles-fuse \
+if ! flatpak-builder --user --force-clean --disable-rofiles-fuse \
   --state-dir="$work/state" --install-deps-from=flathub --default-branch=stable \
-  --repo="$repo" "$build" "$stage/$app_id.yml" >&2
+  --repo="$repo" "$build" "$stage/$app_id.yml" >&2; then
+  # flatpak-builder only says that the metadata compose failed; show why.
+  echo "flatpak-builder failed; what the metadata compose sees:" >&2
+  id >&2 || true
+  ls -lAR "$build/files/share" >&2 || true
+  appstreamcli compose --verbose --prefix=/ --origin=flatpak \
+    --components="$app_id,$app_id.desktop" --data-dir="$work/diag/xmls" \
+    --icons-dir="$work/diag/icons" --result-root="$work/diag" "$build/files" >&2 || true
+  exit 1
+fi
 
 bundle="$out_dir/inlet-$version-linux-x86_64.flatpak"
 flatpak build-bundle "$repo" "$bundle" "$app_id" stable \
