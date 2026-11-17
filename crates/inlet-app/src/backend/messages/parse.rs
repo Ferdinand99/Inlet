@@ -183,17 +183,12 @@ fn to_reply(v: &serde_json::Value, names: &Names) -> Option<Reply> {
     let snippet = if content.trim().is_empty() {
         t!("reply-no-text")
     } else {
-        // Only what the chat parses of a message (a huge reply target costs no more). A
-        // spoiler that opens before the cut and closes after it is closed here, or its
-        // text would show as plain text.
-        let (mut text, cut) = match content.char_indices().nth(model::DISPLAY_CHARS) {
-            Some((at, _)) => (content[..at].to_string(), true),
-            None => (content.to_string(), false),
-        };
-        if cut && text.matches("||").count() % 2 == 1 {
-            text.push_str("||");
-        }
-        let plain = crate::ui::markdown::plain_text(&text, names);
+        // The whole text up to the size a message keeps, not only the first screenful:
+        // cutting the text before parsing could split a spoiler in two, and what is cut
+        // after parsing cannot. The preview itself is cut by `snippet`.
+        let end = model::floor_char_boundary(content, model::MAX_CONTENT_BYTES);
+        let text = &content[..end];
+        let plain = crate::ui::markdown::plain_text(text, names);
         if plain.trim().is_empty() {
             t!("reply-no-text")
         } else {
@@ -324,6 +319,24 @@ mod tests {
         let r = to_reply(&v, &Names::default()).unwrap();
         assert_eq!(r.author, "Ferdinand99");
         assert!(r.snippet.starts_with("Hi! I can't see"));
+    }
+
+    #[test]
+    fn a_marker_inside_code_does_not_unbalance_a_cut_spoiler() {
+        // Two `||` before the cut, one of them in code: counting them says "closed".
+        let content = format!("`||` ||secret {} more||", "y".repeat(model::DISPLAY_CHARS));
+        let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
+        let r = to_reply(&v, &Names::default()).unwrap();
+        assert!(!r.snippet.contains("secret"), "{}", r.snippet);
+        assert!(r.snippet.starts_with("|| \u{2588}"), "{}", r.snippet);
+    }
+
+    #[test]
+    fn reply_preview_keeps_emoji_sequences_whole() {
+        let text = "look \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{1F1F3}\u{1F1F4} \u{1F44D}\u{1F3FD} \u{1F469}\u{200D}\u{1F4BB}";
+        let v = serde_json::json!({"author": {"username": "ana"}, "content": text});
+        let r = to_reply(&v, &Names::default()).unwrap();
+        assert_eq!(r.snippet, text);
     }
 
     #[test]

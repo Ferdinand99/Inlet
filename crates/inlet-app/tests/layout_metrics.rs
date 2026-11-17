@@ -191,3 +191,38 @@ fn channel_name_keeps_its_width_beside_the_search_column(cx: &mut TestAppContext
         "the status line ends inside the header"
     );
 }
+
+/// The channel with the long name (`c-rules`) beside the search column: the name is
+/// cut with an ellipsis, keeps at least its minimum and stays inside the header, and the
+/// status line keeps its place after it.
+#[gpui::test]
+fn a_long_channel_name_is_cut_inside_the_header(cx: &mut TestAppContext) {
+    let (_probe, cx) = cx.add_window_view(Probe::with_search_open_in("c-rules"));
+    cx.simulate_resize(size(px(WINDOW.0), px(WINDOW.1)));
+    cx.run_until_parked();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let header = bounds(cx, selector::CHAT_HEADER);
+    let title = bounds(cx, selector::CHAT_HEADER_TITLE);
+    let status = bounds(cx, selector::CHAT_HEADER_STATUS);
+    // The minimum of the name group is 96 px, 32 of them for the icon and the gap.
+    assert!(
+        title.size.width >= px(64.),
+        "the name keeps its minimum: {} px",
+        px_f(title.size.width)
+    );
+    assert!(
+        title.origin.x + title.size.width <= status.origin.x,
+        "the name ends before the status line"
+    );
+    assert!(
+        status.origin.x + status.size.width <= header.origin.x + header.size.width,
+        "the status line ends inside the header"
+    );
+    // A 75-character name does not fit: it is cut, not pushed past the header.
+    assert!(
+        title.size.width < px(400.),
+        "the long name is cut: {} px",
+        px_f(title.size.width)
+    );
+}

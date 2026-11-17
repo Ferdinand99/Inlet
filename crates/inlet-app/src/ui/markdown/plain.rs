@@ -56,22 +56,46 @@ fn blocks_text(blocks: &[Block], names: &Names, hidden: bool, out: &mut Vec<Stri
 }
 
 fn inline_text(inline: &Inline, names: &Names, hidden: bool) -> String {
-    let in_style = |pos: usize, style: Style| {
-        inline
-            .highlights
-            .iter()
-            .any(|(r, s)| *s == style && r.contains(&pos))
-    };
+    // The styles per byte, worked out once, so the loop below is linear in the text.
+    let mut spoiler = vec![false; inline.text.len()];
+    let mut link_target = vec![false; inline.text.len()];
+    for (range, style) in &inline.highlights {
+        let marks = match style {
+            Style::Spoiler => &mut spoiler,
+            Style::LinkTarget => &mut link_target,
+            _ => continue,
+        };
+        let end = range.end.min(marks.len());
+        if let Some(slice) = marks.get_mut(range.start.min(end)..end) {
+            slice.fill(true);
+        }
+    }
+    // `live` and `emoji` are sorted and apart, and `pos` only grows: one cursor each.
+    let (mut next_live, mut next_emoji) = (0, 0);
     let mut out = String::with_capacity(inline.text.len());
     let mut pos = 0;
     while pos < inline.text.len() {
-        let covered = hidden || in_style(pos, Style::Spoiler);
+        let covered = hidden || spoiler[pos];
+        while inline
+            .live
+            .get(next_live)
+            .is_some_and(|l| l.range.start < pos)
+        {
+            next_live += 1;
+        }
+        while inline
+            .emoji
+            .get(next_emoji)
+            .is_some_and(|(r, _)| r.start < pos)
+        {
+            next_emoji += 1;
+        }
         // Roles and channels are named when drawn in the chat; here from `names`.
         if let Some((range, label)) = inline
             .live
-            .iter()
+            .get(next_live)
             .filter(|l| l.range.start == pos)
-            .find_map(|l| named(&l.kind, names).map(|name| (l.range.clone(), name)))
+            .and_then(|l| named(&l.kind, names).map(|name| (l.range.clone(), name)))
         {
             if covered {
                 out.extend(label.chars().map(|_| SPOILER_COVER));
@@ -81,7 +105,7 @@ fn inline_text(inline: &Inline, names: &Names, hidden: bool) -> String {
             pos = range.end;
             continue;
         }
-        if let Some((range, emoji)) = inline.emoji.iter().find(|(r, _)| r.start == pos) {
+        if let Some((range, emoji)) = inline.emoji.get(next_emoji).filter(|(r, _)| r.start == pos) {
             if covered {
                 out.push(SPOILER_COVER);
             } else {
@@ -98,9 +122,10 @@ fn inline_text(inline: &Inline, names: &Names, hidden: bool) -> String {
             continue;
         }
         let c = inline.text[pos..].chars().next().unwrap_or(' ');
+        let at = pos;
         pos += c.len_utf8();
         // The host a masked link points to is an addition of the chat, not the text.
-        if in_style(pos - c.len_utf8(), Style::LinkTarget) {
+        if link_target[at] {
             continue;
         }
         out.push(match c {
@@ -200,6 +225,54 @@ mod tests {
         }
         // Subtext and inline styles are still parsed.
         assert_eq!(plain_text("-# small **bold**", &names()), "small bold");
+    }
+
+    #[test]
+    fn unicode_emoji_show_as_themselves() {
+        // A family (ZWJ sequence), a flag, a skin tone and a keycap stay whole.
+        let text = "ok \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{1F1F3}\u{1F1F4} \u{1F44D}\u{1F3FD} 1\u{FE0F}\u{20E3} end";
+        assert_eq!(plain_text(text, &names()), text);
+        // In a spoiler the emoji is covered, never shown.
+        let hidden = plain_text("||\u{1F44D}\u{1F3FD}||", &names());
+        assert!(!hidden.contains('\u{1F44D}') && hidden.contains(SPOILER_COVER));
+    }
+
+    #[test]
+    fn links_and_everyone_show_their_text() {
+        assert_eq!(
+            plain_text("see https://example.com/a now", &names()),
+            "see https://example.com/a now"
+        );
+        let plain = plain_text("@everyone and @here: hi", &names());
+        assert_eq!(plain, "@everyone and @here: hi");
+    }
+
+    #[test]
+    fn several_and_styled_spoilers_stay_covered() {
+        let plain = plain_text("||one|| and ||two||", &names());
+        let cover = |n: usize| SPOILER_COVER.to_string().repeat(n);
+        assert_eq!(plain, format!("{} and {}", cover(3), cover(3)));
+        // Markers inside a spoiler go and nothing of its text shows.
+        let styled = plain_text("||**bold** and `code`||", &names());
+        assert!(
+            !styled.contains("bold") && !styled.contains("code"),
+            "{styled}"
+        );
+        assert!(
+            styled.contains(SPOILER_COVER) && !styled.contains('*'),
+            "{styled}"
+        );
+    }
+
+    #[test]
+    fn a_spoiler_around_lines_covers_all_of_them() {
+        let plain = plain_text("before\n||\nline one\nline two\n||\nafter", &names());
+        assert!(!plain.contains("line") && !plain.contains("||"), "{plain}");
+        assert!(plain.contains(SPOILER_COVER), "{plain}");
+        assert!(
+            plain.starts_with("before") && plain.ends_with("after"),
+            "{plain}"
+        );
     }
 
     #[test]

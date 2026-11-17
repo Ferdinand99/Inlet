@@ -60,7 +60,7 @@ impl Probe {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, window, cx);
+            open_demo(&mut inlet, "c-general", window, cx);
             inlet
         });
         Self { inlet }
@@ -71,11 +71,27 @@ impl Probe {
     pub fn with_search_open(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, window, cx);
+            open_demo(&mut inlet, "c-general", window, cx);
             inlet.open_search(window, cx);
             inlet
         });
         Self { inlet }
+    }
+
+    /// The same with `channel` of `g1` open instead of `#general` and the search column
+    /// open beside it (the channel with the long name is `c-rules`).
+    pub fn with_search_open_in(
+        channel: &'static str,
+    ) -> impl FnOnce(&mut Window, &mut Context<Self>) -> Self {
+        move |window, cx| {
+            let inlet = cx.new(|cx| {
+                let mut inlet = Inlet::detached(window, cx);
+                open_demo(&mut inlet, channel, window, cx);
+                inlet.open_search(window, cx);
+                inlet
+            });
+            Self { inlet }
+        }
     }
 }
 
@@ -95,7 +111,7 @@ impl Render for Probe {
 
 /// What the demo backend sends after sign-in, then the guild and channel the
 /// screenshots open, then that channel's newest page.
-fn open_demo(inlet: &mut Inlet, window: &mut Window, cx: &mut Context<Inlet>) {
+fn open_demo(inlet: &mut Inlet, channel: &str, window: &mut Window, cx: &mut Context<Inlet>) {
     let data = scenes::data(scenes::Scene::Default);
     let names = Arc::new(Mutex::new(demo::demo_names(&data.channels)));
     // As the demo backend: the account list, which account it is, then its READY.
@@ -123,7 +139,7 @@ fn open_demo(inlet: &mut Inlet, window: &mut Window, cx: &mut Context<Inlet>) {
     inlet.handle_event(msgs::Ev::Guilds(data.guilds).into(), window, cx);
 
     let guild = snowflake("g1");
-    let channel = snowflake("c-general");
+    let channel = snowflake(channel);
     inlet.select_guild(Some(guild.clone()), cx);
     inlet.demo_channel = Some(channel.clone());
     let channels = data
