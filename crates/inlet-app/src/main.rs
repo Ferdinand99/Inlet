@@ -4,7 +4,8 @@
 //! The app lives in the library (`lib.rs`); this file only starts it. Two things are
 //! answered before the app starts, because they must not open a window or claim the
 //! single-instance lock: `--version`, which the package smoke tests use, and the hook
-//! arguments the installer passes while it installs, updates or removes the app.
+//! arguments the installer passes while it installs, updates or removes the app (handled
+//! by `inlet::update::startup`, which exits after a hook).
 // Release builds on Windows are GUI apps: no console window next to Inlet.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -15,22 +16,14 @@ use std::ffi::OsStr;
 enum EarlyExit {
     /// Print the version and exit.
     Version,
-    /// An installer hook (`--veloapp-install`, `--veloapp-updated`, `--veloapp-obsolete`,
-    /// `--veloapp-uninstall`): there is nothing to do yet, so exit with success at once.
-    /// The installer waits for the hook and would otherwise start a second Inlet.
-    InstallerHook,
 }
 
-/// Only these exact names count. Any other argument, including other `--veloapp-*`
-/// ones such as the first-run marker, starts the app as usual, and so does an argument
-/// that is not valid Unicode (it cannot be one of them).
+/// Only these exact names count. Any other argument starts the app as usual, and so does
+/// an argument that is not valid Unicode (it cannot be one of them). The installer's
+/// `--veloapp-*` hook arguments are not here: the Velopack call in `main` handles them.
 fn early_exit(first_arg: Option<&OsStr>) -> Option<EarlyExit> {
     match first_arg?.to_str()? {
         "--version" | "-V" => Some(EarlyExit::Version),
-        "--veloapp-install"
-        | "--veloapp-updated"
-        | "--veloapp-obsolete"
-        | "--veloapp-uninstall" => Some(EarlyExit::InstallerHook),
         _ => None,
     }
 }
@@ -76,11 +69,14 @@ fn print_line(line: &str) {
 fn main() {
     // First, so that a panic anywhere after this (the installer hooks included) is recorded.
     inlet::crash::install();
-    match early_exit(std::env::args_os().nth(1).as_deref()) {
-        Some(EarlyExit::Version) => print_line(&format!("inlet {}", env!("CARGO_PKG_VERSION"))),
-        Some(EarlyExit::InstallerHook) => {}
-        None => inlet::run(),
+    if let Some(EarlyExit::Version) = early_exit(std::env::args_os().nth(1).as_deref()) {
+        print_line(&format!("inlet {}", env!("CARGO_PKG_VERSION")));
+        return;
     }
+    // The installer's hooks (install, update, uninstall) run the app with `--veloapp-*`
+    // and wait for it to exit: this call handles them and exits, before any window.
+    inlet::update::startup();
+    inlet::run();
 }
 
 #[cfg(test)]
@@ -99,14 +95,14 @@ mod tests {
     }
 
     #[test]
-    fn installer_hooks_exit_at_once() {
+    fn installer_hooks_are_left_to_velopack() {
         for hook in [
             "--veloapp-install",
             "--veloapp-updated",
             "--veloapp-obsolete",
             "--veloapp-uninstall",
         ] {
-            assert_eq!(exit_for(hook), Some(EarlyExit::InstallerHook));
+            assert_eq!(exit_for(hook), None);
         }
     }
 

@@ -17,6 +17,9 @@ demo = ["dep:toml", "dep:image-webp"]
 # Trust the private test instance's CA (REST, gateway and media). Debug builds only:
 # inlet-protocol refuses it in a release build.
 test-extra-ca = ["inlet-protocol/test-extra-ca"]
+# `inlet-update-probe`: runs the update logic against a local folder of packages, for the
+# update test in `packaging/velopack/update-test.sh`. Never shipped.
+update-probe = []
 
 [[bin]]
 name = "inlet"
@@ -27,6 +30,13 @@ path = "src/main.rs"
 name = "inlet-visual"
 path = "src/bin/visual.rs"
 required-features = ["demo"]
+
+# Checks, downloads and applies an update from a local folder (a fake release feed).
+# Packed by the update test in place of the app; never shipped.
+[[bin]]
+name = "inlet-update-probe"
+path = "src/bin/update_probe.rs"
+required-features = ["update-probe"]
 
 # Measures the main layout with gpui's test platform. Needs the demo data:
 # cargo test -p inlet --features demo --test layout_metrics
@@ -82,11 +92,15 @@ log = "0.4"
 # The media proxy client (images, saved files): no cookies, no token, no redirects.
 # Also gives the `Method` of `inlet_protocol::Client::request_json`. Same version and
 # TLS stack as inlet-protocol.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Code block highlighting: the parser and grammars only, with the pure-Rust regex engine.
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
+# Automatic updates (Velopack; MIT), pinned to the version of the packer CI uses
+# (packaging/velopack/vpk.sh). `public-utils` is needed to write our own update source.
+velopack = { version = "=1.2.161", features = ["public-utils"] }
 # The system locale, for the date and time format in the chat.
 sys-locale = "0.3"
 # Demo scene files (tests/visual/scenes/*.toml). Demo builds only.

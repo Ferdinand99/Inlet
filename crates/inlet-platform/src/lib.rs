@@ -37,6 +37,7 @@ mod single_instance;
 #[cfg(windows)]
 mod toast;
 mod tray;
+pub mod uninstall;
 #[cfg(target_os = "linux")]
 mod xdg;
 

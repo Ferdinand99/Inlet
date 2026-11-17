@@ -27,6 +27,15 @@ Changelog sections: `feat` is Features, `fix` is Bug Fixes, `perf` is Performanc
 - **Checks on the release PR.** A pull request made with `GITHUB_TOKEN` does not start the CI checks (see step 3 for the reopen). The full CI also runs on `main` right after the merge, and again inside the release build.
 - **One release run at a time.** The `Release Please` run keeps its concurrency group until the macOS signing is approved, which can take a while. Pushes to `main` in that time wait for it, and only the newest waiting run is kept.
 
+## What the app updates from
+
+Installed copies of Inlet update themselves from the releases cut here (see `packaging/README.md`, "Updates"). Two things follow for whoever cuts a release:
+
+- The update feed is part of the release. Besides the downloads, `release.yml` attaches, for each of Windows and Linux, `no.opland.inlet-<version>-beta-<os>-full.nupkg` and `releases.beta-<os>.json`. The app reads the newest published release that has the feed file of its own channel. A release without these files offers no update to anyone.
+- A release is found once it is published. A draft is invisible to the app, so a failed build never reaches users. Because every release is a pre-release and none is "latest", the app lists releases through the API (the newest ten) instead of the "latest release" address.
+- The "What's new" text the app shows is the section of `CHANGELOG.md` for the version, taken when the packages are built. A manual tag on a commit without that section ships without notes.
+- An update is never pulled back: the app does not go to an older version. A broken release is fixed with the next version, not by deleting the release (the copies that already updated stay on it).
+
 ## If something goes wrong
 
 - The build or signing failed for a reason outside the code (a network error, a missing secret, an approval that timed out): use "Re-run failed jobs" on the `Release Please` run. The draft and the tag stay; assets with the same name are replaced. A re-run uses the same commit and the same workflow files, so a fix in code or in a workflow needs a new commit and the release becomes the next version.

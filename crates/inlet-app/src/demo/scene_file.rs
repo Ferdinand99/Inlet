@@ -14,7 +14,8 @@
 //! channel = "c-general"
 //! ```
 //!
-//! Optional too: `settings` (a settings tab to open), `deep_link` (an `inlet://` link to
+//! Optional too: `settings` (a settings tab to open), `update` (the updater's state in the
+//! Desktop tab: `ready`, `downloading`, `uptodate` or `failed`), `deep_link` (an `inlet://` link to
 //! offer), `accent` (an instance accent such as `"#ff7e00"`), and `tolerance`
 //! (`{ channel = 2, pixels = 0.0 }`: how far a colour channel may be off before a pixel
 //! counts as different, and the share of pixels that may differ). CI draws every scene
@@ -54,6 +55,7 @@ pub struct SceneFile {
     pub guild: Option<String>,
     pub channel: Option<String>,
     pub settings: Option<String>,
+    pub update: Option<String>,
     pub deep_link: Option<String>,
     pub accent: Option<String>,
 }
