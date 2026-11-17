@@ -486,6 +486,9 @@ impl Inlet {
         panel.view.prune(account.read(cx), changes);
         if can_open(account.read(cx), ch).is_none() {
             self.retire_panel();
+            // The thread is no longer shown: its window is cut like any channel not on screen.
+            let changes = account.update(cx, |s, _| s.set_open_thread(None));
+            self.after_changes(changes, false, cx);
             self.chat.notice = Some(t!("threads-unavailable"));
             self.subscribe_threads();
             cx.notify();
