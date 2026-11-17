@@ -30,7 +30,8 @@ use inlet_state::{AccountState, ChannelId};
 use crate::app::Inlet;
 use crate::backend::composer::{Cmd, Ev, Outgoing, Upload};
 use crate::backend::messages;
-use crate::ui::chat::messages::MessageView;
+use crate::ui::chat::messages::{JumpAction, MessageView};
+use crate::ui::settings::sync::Values;
 use crate::ui::sidebar::channel_list::channel_label;
 pub use editor::{bind_keys, ChannelContext, ComposerEvent, ComposerView, Shared};
 
@@ -130,6 +131,24 @@ pub fn begin_upload(view: &mut MessageView, upload: Upload) -> Cmd {
     Cmd::Upload(upload)
 }
 
+/// Whether a sent message scrolls the chat to the bottom (Fluxer's "scroll to the bottom
+/// when sending a message"): the setting is on, the message went to the open channel, and
+/// the window holds the newest messages.
+pub fn scroll_on_send(settings: &Values, to_open_channel: bool, action: JumpAction) -> bool {
+    settings.flag(inlet_state::flags::Flag::ScrollToBottomOnSend)
+        && to_open_channel
+        && action == JumpAction::Scroll
+}
+
+impl ComposerView {
+    /// The composer is editing message `id` or replying to it: a double click on the
+    /// message does not start either again.
+    pub(crate) fn is_busy_with(&self, id: &str) -> bool {
+        self.edit.as_ref().is_some_and(|e| e.message_id == id)
+            || self.reply.as_ref().is_some_and(|r| r.message_id == id)
+    }
+}
+
 /// Up in an empty composer: opens the account's newest message in `channel` for editing,
 /// read from the account state's window (the message list's source).
 pub(crate) fn edit_last(
@@ -226,15 +245,17 @@ impl Inlet {
                 // Sent to the open channel: Fluxer's "scroll to the bottom when sending".
                 let here = inlet_state::ChannelId::parse(&message.channel_id)
                     .is_some_and(|c| Some(c) == self.open_channel_id());
+                // Whoever reads history in a window without the newest messages stays
+                // there (Fluxer scrolls only when nothing newer is left to load).
+                let action = match (self.open_channel_id(), self.account.clone()) {
+                    (Some(ch), Some(account)) => self.chat.view.jump_action(account.read(cx), ch),
+                    _ => JumpAction::Scroll,
+                };
                 // The row shows "sending" at once; the backend reports the outcome to it.
                 let cmd = begin_send(&mut self.chat.view, message);
                 self.refresh_rows(cx);
                 self.backend.send(cmd);
-                if here
-                    && self
-                        .settings_values()
-                        .flag(inlet_state::flags::Flag::ScrollToBottomOnSend)
-                {
+                if scroll_on_send(self.settings_values(), here, action) {
                     self.jump_to_present(cx);
                 }
             }
@@ -494,5 +515,30 @@ mod tests {
         // The own copy, sent after the row was shown, does.
         assert!(view.clear_arrived("10", "301", &[listed(t + 1_000, "10", "hello", 0)]));
         assert!(pending_rows(&mut view, &state).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod scroll_on_send_tests {
+    use super::scroll_on_send;
+    use crate::backend::settings::write::Change;
+    use crate::ui::chat::messages::JumpAction;
+    use crate::ui::settings::sync::Values;
+    use inlet_state::flags::Flag;
+
+    #[test]
+    fn a_sent_message_scrolls_to_the_bottom_only_where_the_newest_messages_are() {
+        let on = Values::default();
+        assert!(on.flag(Flag::ScrollToBottomOnSend), "Fluxer's default");
+        // Sent here, the window has the newest messages.
+        assert!(scroll_on_send(&on, true, JumpAction::Scroll));
+        // Sent here, but the person reads history in a window without them: stays put.
+        assert!(!scroll_on_send(&on, true, JumpAction::LoadNewest));
+        // Sent to another channel (a thread, a direct message command).
+        assert!(!scroll_on_send(&on, false, JumpAction::Scroll));
+        // The setting off.
+        let mut off = Values::default();
+        off.apply(&Change::Flag(Flag::ScrollToBottomOnSend, false));
+        assert!(!scroll_on_send(&off, true, JumpAction::Scroll));
     }
 }

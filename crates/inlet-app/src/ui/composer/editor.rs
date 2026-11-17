@@ -573,23 +573,18 @@ impl ComposerView {
         if let (Trigger::Mention(q), Some(g)) = (&trigger, &guild) {
             self.search_members(g.clone(), q.clone(), cx);
         }
+        let shown = crate::ui::settings::store::values(cx);
         let src = Sources {
+            emoji: autocomplete::EmojiKinds {
+                default: shown.flag(Flag::AutocompleteDefaultEmojis),
+                custom: shown.flag(Flag::AutocompleteCustomEmojis),
+            },
             directory: self.directory(),
             members: self.known_members(),
             in_guild: guild.is_some(),
             rights: self.rights(),
         };
-        let (section, mut rows) = autocomplete::candidates(&trigger, &src);
-        if section == Section::Emoji {
-            // Fluxer's "Expression autocomplete": the person picks what the colon offers.
-            let shown = crate::ui::settings::store::values(cx);
-            rows.retain(|row| {
-                shown.flag(match row.pick {
-                    Pick::Token(..) => Flag::AutocompleteCustomEmojis,
-                    Pick::Text(_) => Flag::AutocompleteDefaultEmojis,
-                })
-            });
-        }
+        let (section, rows) = autocomplete::candidates(&trigger, &src);
         let selected = match &self.autocomplete {
             Some(open) if open.start == range.start && open.section == section => {
                 open.selected.min(rows.len().saturating_sub(1))

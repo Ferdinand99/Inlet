@@ -311,6 +311,10 @@ impl Tracker {
     pub fn set_local(&mut self, change: Change) {
         self.pending.retain(|p| p.change.kind() != change.kind());
         self.confirmed.apply(&change);
+        // The answer kept for [`Tracker::expire`] must not take it back.
+        if let Some(answer) = &mut self.answer {
+            answer.apply(&change);
+        }
     }
 
     /// Whether an edit of this kind waits for the server.
@@ -729,6 +733,21 @@ pub(crate) mod tests {
         );
         t.gateway(snap);
         assert!(t.values().flag(Flag::HideBlockedMessages));
+    }
+
+    #[test]
+    fn a_local_switch_flipped_before_an_echo_expires_is_not_taken_back() {
+        let mut t = Tracker::new(Values::default());
+        let seq = t.edit(Change::Theme(Pref::Coal));
+        // The write is answered with the values from then; the echo has not come.
+        let answer = Values::from_server(&fluxer("coal", 3), None, t.confirmed());
+        t.answered(Some(answer), seq, false);
+        // In the wait, the person flips a switch that is only for this computer.
+        t.set_local(Change::Flag(Flag::HideBlockedMessages, true));
+        // The echo never comes: the answer's values stand, and the switch keeps its value.
+        t.expire(seq, false);
+        assert!(t.values().flag(Flag::HideBlockedMessages));
+        assert_eq!(shown(&t), Pref::Coal);
     }
 
     #[test]

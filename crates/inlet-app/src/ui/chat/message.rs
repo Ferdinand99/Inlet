@@ -50,6 +50,30 @@ const COMPACT_TIME_COLUMN: f32 = 64.;
 /// Group name for hover styles of a message row.
 const ROW_GROUP: &str = "message-row";
 
+/// A press inside this area is for a control in it (media, an embed, the reply preview):
+/// the row does not see it, so a double click there does not edit or reply as well.
+fn controls_only(child: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .min_w_0()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(child)
+}
+
+/// How long after a link or a spoiler was clicked a double click on the row still counts
+/// as being on that control.
+const CONTROL_CLICK_GRACE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Whether a link or a spoiler of the row was clicked just now (the same click that
+/// reaches the row: the control runs first).
+pub(crate) fn control_just_clicked(
+    hit: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    hit.is_some_and(|at| now.saturating_duration_since(at) < CONTROL_CLICK_GRACE)
+}
+
 impl Inlet {
     pub(super) fn render_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(row) = self.chat.view.rows.get(ix).cloned() else {
@@ -104,11 +128,17 @@ impl Inlet {
                 let weak = weak.clone();
                 move |url, masked, _window, cx| {
                     let url = url.to_string();
-                    let _ = weak.update(cx, |this, cx| this.open_link(&url, masked, cx));
+                    let _ = weak.update(cx, |this, cx| {
+                        this.chat.view.control_hit = Some(std::time::Instant::now());
+                        this.open_link(&url, masked, cx)
+                    });
                 }
             }),
             on_reveal: Rc::new(move |_window, cx| {
-                let _ = weak.update(cx, |this, cx| this.reveal(id, cx));
+                let _ = weak.update(cx, |this, cx| {
+                    this.chat.view.control_hit = Some(std::time::Instant::now());
+                    this.reveal(id, cx)
+                });
             }),
         }
     }
@@ -131,6 +161,7 @@ impl Inlet {
                     .text_color(theme::link())
                     .cursor_pointer()
                     .child(t!("message-show-more"))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| this.expand(id, cx))),
             );
         }
@@ -157,7 +188,7 @@ impl Inlet {
                 } else {
                     continue;
                 };
-                body = body.child(render_embed(self, &id, e, hidden, &ctx, cx));
+                body = body.child(controls_only(render_embed(self, &id, e, hidden, &ctx, cx)));
             }
         }
         if m.is_empty() {
@@ -168,14 +199,17 @@ impl Inlet {
                     .child(t!("message-no-text")),
             );
         }
-        body.children(self.attachments_slot(row, cx))
+        body.children(self.attachments_slot(row, cx).map(controls_only))
             .children(
                 settings
                     .render_reactions
                     .then(|| self.reactions_slot(row, cx))
                     .flatten(),
             )
-            .children(self.render_stickers(&m.id, &m.stickers, cx))
+            .children(
+                self.render_stickers(&m.id, &m.stickers, cx)
+                    .map(controls_only),
+            )
     }
 
     /// Images and files under the text: previews, video stills, file cards (see
@@ -213,10 +247,14 @@ impl Inlet {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let m = &row.message;
-        let reply = row
-            .reply
-            .as_ref()
-            .map(|r| reply_preview::render(&format!("reply-{}", m.id), r, compact, cx));
+        let reply = row.reply.as_ref().map(|r| {
+            controls_only(reply_preview::render(
+                &format!("reply-{}", m.id),
+                r,
+                compact,
+                cx,
+            ))
+        });
         let name = div()
             .flex_none()
             .font_weight(FontWeight::MEDIUM)
@@ -402,7 +440,13 @@ impl Inlet {
                     // Fluxer's "double-click a message to edit or reply".
                     .when_some(channel.filter(|_| double_click), |d, ch| {
                         d.on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
-                            if e.click_count() == 2 {
+                            // A link or a spoiler of the row ran first when the click was on it.
+                            if e.click_count() == 2
+                                && !control_just_clicked(
+                                    this.chat.view.control_hit,
+                                    std::time::Instant::now(),
+                                )
+                            {
                                 this.double_click_message(ch, id, e.position(), window, cx);
                             }
                         }))
@@ -666,5 +710,26 @@ mod tests {
         let source = include_str!("message.rs");
         let code = &source[..source.find("#[cfg(test)]").unwrap_or(source.len())];
         assert_eq!(code.matches(".on_hover(").count(), 1, "only in `row_frame`");
+    }
+}
+
+#[cfg(test)]
+mod control_click_tests {
+    use super::control_just_clicked;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_double_click_on_a_link_or_spoiler_is_not_one_on_the_row() {
+        let now = Instant::now();
+        assert!(!control_just_clicked(None, now), "no control was clicked");
+        assert!(
+            control_just_clicked(Some(now), now),
+            "the control ran in this click"
+        );
+        let earlier = now - Duration::from_secs(2);
+        assert!(
+            !control_just_clicked(Some(earlier), now),
+            "an old click of a control does not count"
+        );
     }
 }

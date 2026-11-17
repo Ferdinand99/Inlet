@@ -45,7 +45,8 @@ struct LocalCopy {
     /// The theme goes to the account and follows it (Fluxer's "sync theme across
     /// devices"); off keeps this computer on its own theme.
     sync_theme: bool,
-    /// The switches this computer keeps for itself, when they are not at their default.
+    /// The switches that are not at their default: the ones only this computer keeps, and
+    /// the last known values of the synced ones (shown until the account's own come).
     switches: BTreeMap<String, bool>,
 }
 
@@ -67,7 +68,7 @@ impl LocalCopy {
             sync_theme: true,
             switches: Flag::ALL
                 .iter()
-                .filter(|f| !f.is_synced() && v.flag(**f) != f.default_value())
+                .filter(|f| v.flag(**f) != f.default_value())
                 .map(|f| (f.def().key.to_owned(), v.flag(*f)))
                 .collect(),
         }
@@ -85,8 +86,8 @@ impl LocalCopy {
         v.compact_group_spacing = self.compact_group_spacing.min(64);
         v.compact_avatars = self.compact_avatars;
         for (key, on) in &self.switches {
-            // A switch of a newer version, or a synced one, is not kept here.
-            if let Some(flag) = Flag::from_key(key).filter(|f| !f.is_synced()) {
+            // A switch of a newer version is not known here.
+            if let Some(flag) = Flag::from_key(key) {
                 v.apply(&Change::Flag(flag, *on));
             }
         }
@@ -511,8 +512,8 @@ pub(crate) mod tests {
             "a local switch is read back"
         );
         assert!(
-            v.flag(Flag::ActionBar),
-            "a synced switch is not taken from the file, and an unknown one is dropped"
+            !v.flag(Flag::ActionBar),
+            "a synced switch shows its last known value until the account's own comes"
         );
         assert_eq!(LocalCopy::default().values(), Values::default());
     }

@@ -12,6 +12,8 @@ mod my_profile;
 mod notifications;
 mod privacy;
 
+pub(super) use advanced::{account_id, item_row};
+
 use super::SettingsTab;
 
 /// Every tab, in the order the list shows them.

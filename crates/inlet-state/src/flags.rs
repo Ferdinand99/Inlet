@@ -5,7 +5,11 @@
 //! for the synced ones, the way to read it from and write it into the preferences.
 //!
 //! Fluxer's rule for reading: a switch that is absent from the preferences has its
-//! default; one that is present has its value.
+//! default; one that is present has its value. Deviation: Fluxer keeps the current value
+//! of a switch a snapshot leaves out and goes back to the defaults only when the whole
+//! accessibility message is missing after an account change; here a switch a snapshot does
+//! not name is at its default. They differ only for a client that writes a partial
+//! accessibility message.
 
 use inlet_protocol::api::preferences::Preferences;
 

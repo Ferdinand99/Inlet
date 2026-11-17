@@ -453,6 +453,9 @@ pub struct MessageView {
     /// Messages of blocked people are left out altogether, not folded into a line
     /// (Fluxer's "hide messages from blocked users").
     pub hide_blocked: bool,
+    /// When a link or a spoiler of a row was last clicked (a double click on that control
+    /// is not a double click on the row).
+    pub control_hit: Option<std::time::Instant>,
     /// The open channel's newest page has landed.
     loaded: bool,
     newest_retries: u8,
@@ -793,6 +796,7 @@ impl MessageView {
             compact: starts_compact(),
             spoilers: 1,
             hide_blocked: false,
+            control_hit: None,
             ..Self::default()
         }
     }
@@ -927,6 +931,14 @@ impl MessageView {
                 let Some(id) = MessageId::parse(&m.id) else {
                     continue;
                 };
+                let blocked = is_regular(m.kind)
+                    && UserId::parse(&m.author.id).is_some_and(|a| state.is_blocked(a));
+                // Fluxer's "hide messages from blocked users" leaves a message out before
+                // any divider, unread line or grouping is worked out (the message the
+                // person jumped to stays).
+                if blocked && self.hide_blocked && !self.jumped.is_some_and(|(j, _)| j == id) {
+                    continue;
+                }
                 let c = self.conversions.get(state, ch, id, m);
                 let (ms, day) = (c.ms, c.day);
                 let unread = unread_after.is_some_and(|a| id > a);
@@ -951,12 +963,6 @@ impl MessageView {
                 }
                 last_mine = UserId::parse(&m.author.id) == Some(me) && is_regular(m.kind);
                 // Fluxer folds messages from blocked people into one line per run.
-                let blocked = is_regular(m.kind)
-                    && UserId::parse(&m.author.id).is_some_and(|a| state.is_blocked(a));
-                if blocked && self.hide_blocked {
-                    prev = Some((m, ms, day));
-                    continue;
-                }
                 if blocked {
                     let at = *run.get_or_insert_with(|| {
                         rows.push(Row::Blocked {
@@ -1565,9 +1571,17 @@ impl Inlet {
         self.profile.reset();
         self.account = None;
         self.chat.actions.clear();
-        let compact = self.chat.view.compact;
+        // What the settings decided stays: the next account may hold the very same values,
+        // and then nothing tells the view to follow them again.
+        let (compact, spoilers, hide_blocked) = (
+            self.chat.view.compact,
+            self.chat.view.spoilers,
+            self.chat.view.hide_blocked,
+        );
         self.chat.view = MessageView {
             compact,
+            spoilers,
+            hide_blocked,
             ..MessageView::default()
         };
     }

@@ -27,7 +27,36 @@ pub enum Category {
     Developer,
 }
 
+/// Every category, in the order Fluxer's Advanced tab lists them.
+pub const CATEGORIES: [Category; 9] = [
+    Category::Account,
+    Category::Privacy,
+    Category::Appearance,
+    Category::Accessibility,
+    Category::Chat,
+    Category::Media,
+    Category::Notifications,
+    Category::Desktop,
+    Category::Developer,
+];
+
 impl Category {
+    /// The word Fluxer's search takes the category for (its "tags"): a search for
+    /// "developer" finds every setting of that category.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Category::Account => "account",
+            Category::Privacy => "privacy",
+            Category::Appearance => "appearance",
+            Category::Accessibility => "accessibility",
+            Category::Chat => "chat",
+            Category::Media => "media",
+            Category::Notifications => "notifications",
+            Category::Desktop => "desktop",
+            Category::Developer => "developer",
+        }
+    }
+
     pub fn label(self) -> String {
         match self {
             Category::Account => t!("settings-category-account"),
@@ -234,16 +263,13 @@ pub const ITEMS: &[Item] = &[
         t!("settings-adv-input-buttons-kw"),
         Control::Group(INPUT_BUTTONS)
     ),
-    advanced!(
+    found!(
         "advanced-emoticons",
+        "messages-media",
         Category::Chat,
         t!("settings-adv-emoticons"),
         t!("settings-adv-emoticons-desc"),
-        t!("settings-adv-emoticons-kw"),
-        Control::Switch {
-            get: |v| v.convert_emoticons,
-            set: Change::ConvertEmoticons,
-        }
+        t!("settings-adv-emoticons-kw")
     ),
     advanced!(
         "advanced-double-click",
@@ -513,6 +539,7 @@ impl Words {
                 .split(',')
                 .map(|k| k.trim().to_lowercase())
                 .filter(|k| !k.is_empty())
+                .chain(std::iter::once(item.category.tag().to_owned()))
                 .collect(),
         }
     }
@@ -564,6 +591,14 @@ pub fn query_words(query: &str) -> Vec<String> {
 /// restricts the search to the settings of the Advanced tab; an empty query matches all
 /// of them.
 pub fn search(query: &str, only_advanced: bool) -> Vec<&'static Item> {
+    search_scored(query, only_advanced)
+        .into_iter()
+        .map(|(_, item)| item)
+        .collect()
+}
+
+/// [`search`] with each setting's score (1 for all when nothing is typed).
+pub fn search_scored(query: &str, only_advanced: bool) -> Vec<(u32, &'static Item)> {
     let words = query_words(query);
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
     let mut hits: Vec<(u32, String, &'static Item)> = ITEMS
@@ -579,13 +614,9 @@ pub fn search(query: &str, only_advanced: bool) -> Vec<&'static Item> {
             (s > 0).then_some((s, w.label, item))
         })
         .collect();
-    if words.is_empty() {
-        // No query: by category, each in the order of the list.
-        hits.sort_by_key(|(_, _, item)| item.category);
-    } else {
-        hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    }
-    hits.into_iter().map(|(_, _, item)| item).collect()
+    // Fluxer's order: best score first, then by label (so without a query, by label).
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    hits.into_iter().map(|(s, _, item)| (s, item)).collect()
 }
 
 #[cfg(test)]
@@ -631,12 +662,8 @@ mod tests {
     }
 
     #[test]
-    fn without_a_query_the_advanced_list_is_in_category_order() {
-        let cats: Vec<_> = search("", true).iter().map(|i| i.category).collect();
-        let mut sorted = cats.clone();
-        sorted.sort();
-        assert_eq!(cats, sorted);
-        // Inside a category the list keeps its own order: developer mode, diagnostics, ID.
+    fn inside_a_category_the_list_is_by_score_and_then_by_label() {
+        // Without a query every score is 1: alphabetical, as Fluxer's localeCompare.
         let developer: Vec<_> = search("", true)
             .iter()
             .filter(|i| i.category == Category::Developer)
@@ -645,10 +672,19 @@ mod tests {
         assert_eq!(
             developer,
             [
-                "advanced-developer-mode",
                 "advanced-diagnostics",
-                "advanced-copy-id"
+                "advanced-copy-id",
+                "advanced-developer-mode"
             ]
+        );
+        // A category word finds every setting of the category.
+        let found = ids("developer", true);
+        assert!(found.contains(&"advanced-developer-mode"));
+        assert!(found.contains(&"advanced-diagnostics"));
+        // The best match comes first.
+        assert_eq!(
+            ids("action bar", true).first(),
+            Some(&"advanced-action-bar")
         );
     }
 
@@ -686,7 +722,11 @@ mod tests {
                 _ => "other",
             })
             .collect();
-        assert_eq!(developer, ["switch", "diagnostics", "id"]);
+        assert_eq!(
+            developer,
+            ["switch", "diagnostics", "id"],
+            "in the list's own order"
+        );
         // The diagnostics text is what the crash module builds: it starts with the
         // version, and a search for "bug report" finds the row.
         assert!(crate::crash::diagnostics().contains(env!("CARGO_PKG_VERSION")));

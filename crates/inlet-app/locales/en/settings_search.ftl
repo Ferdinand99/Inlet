@@ -4,7 +4,6 @@
 
 settings-search-placeholder = Search settings
 settings-search-none = No settings found
-settings-search-in-tab = In { $tab }
 settings-open = Open
 
 ## Advanced tab
@@ -14,9 +13,9 @@ settings-advanced-none = No advanced settings found
 
 settings-category-account = Account
 settings-category-privacy = Privacy
-settings-category-appearance = Appearance
+settings-category-appearance = Look & Feel
 settings-category-accessibility = Accessibility
-settings-category-chat = Messages
+settings-category-chat = Messages & Media
 settings-category-media = Media
 settings-category-notifications = Notifications
 settings-category-desktop = Desktop

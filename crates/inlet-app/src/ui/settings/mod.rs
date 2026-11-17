@@ -12,6 +12,9 @@ pub mod store;
 pub mod sync;
 pub mod tabs;
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui::{
     div, prelude::*, px, AnyElement, Context, Entity, FontWeight, Global, SharedString, WeakEntity,
     Window,
@@ -47,6 +50,8 @@ pub struct SettingsView {
     selected: usize,
     /// The search across all tabs.
     search: Entity<TextInput>,
+    /// "Copy diagnostics" was pressed in a search result.
+    diagnostics_copied: Rc<Cell<bool>>,
 }
 
 impl SettingsView {
@@ -58,6 +63,7 @@ impl SettingsView {
             tabs: tabs::all(),
             selected: 0,
             search,
+            diagnostics_copied: Rc::default(),
         }
     }
 
@@ -75,9 +81,44 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// The results of the search, as rows to click; none when nothing is typed.
-    fn search_results(&mut self, typed: &str, cx: &mut Context<Self>) -> AnyElement {
-        let hits = registry::search(typed, false);
+    /// Opens a tab, which ends a search.
+    pub(crate) fn open_tab(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.select(id);
+        self.search.update(cx, |s, cx| s.clear(cx));
+        cx.notify();
+    }
+
+    /// The settings that match `typed`, best first. A setting of a tab this view does not
+    /// have is left out, as Fluxer does.
+    fn matches(&self, typed: &str) -> Vec<(u32, &'static registry::Item)> {
+        registry::search_scored(typed, false)
+            .into_iter()
+            .filter(|(_, item)| self.tabs.iter().any(|t| t.id() == item.tab))
+            .collect()
+    }
+
+    /// The tabs that hold a match, best tab first (a tab counts by its best setting).
+    fn matched_tabs(hits: &[(u32, &'static registry::Item)]) -> Vec<&'static str> {
+        let mut order: Vec<&'static str> = Vec::new();
+        for (_, item) in hits {
+            if !order.contains(&item.tab) {
+                order.push(item.tab);
+            }
+        }
+        order
+    }
+
+    /// The results of the search: the tabs that match, each with its matching settings.
+    /// A setting that has a control shows it, so it is changed where it is found; the
+    /// others open their tab.
+    fn search_results(
+        &mut self,
+        hits: &[(u32, &'static registry::Item)],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let values = store::values(cx);
+        let me = tabs::account_id(cx);
+        let copied = Rc::clone(&self.diagnostics_copied);
         let mut col = div()
             .flex()
             .flex_col()
@@ -98,44 +139,57 @@ impl SettingsView {
                     .child(t!("settings-search-none")),
             );
         }
-        for item in hits {
-            let tab = self
+        for tab_id in Self::matched_tabs(hits) {
+            let title = self
                 .tabs
                 .iter()
-                .find(|t| t.id() == item.tab)
+                .find(|t| t.id() == tab_id)
                 .map(|t| t.title())
                 .unwrap_or_default();
-            let id = item.id;
             col = col.child(
                 div()
-                    .id(SharedString::from(format!("settings-found-{id}")))
-                    .flex()
-                    .flex_col()
-                    .px_3()
-                    .py_2()
-                    .rounded(px(6.))
+                    .id(SharedString::from(format!("settings-found-tab-{tab_id}")))
+                    .pt_4()
+                    .pb_1()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme::text_muted())
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme::hover_bg()))
-                    .child(
-                        div()
-                            .text_color(theme::text_strong())
-                            .font_weight(FontWeight::MEDIUM)
-                            .child((item.label)()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .text_color(theme::text_muted())
-                            .child((item.description)()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(theme::text_tertiary())
-                            .child(t!("settings-search-in-tab", tab = tab.to_string())),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.open_item(id, cx))),
+                    .child(title.to_uppercase())
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_tab(tab_id, cx))),
             );
+            for (_, item) in hits.iter().filter(|(_, i)| i.tab == tab_id) {
+                let item: &'static registry::Item = item;
+                if matches!(item.control, registry::Control::Open) {
+                    let id = item.id;
+                    col = col.child(
+                        div()
+                            .id(SharedString::from(format!("settings-found-{id}")))
+                            .flex()
+                            .flex_col()
+                            .px_3()
+                            .py_2()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::hover_bg()))
+                            .child(
+                                div()
+                                    .text_color(theme::text_strong())
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child((item.label)()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(theme::text_muted())
+                                    .child((item.description)()),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| this.open_item(id, cx))),
+                    );
+                } else {
+                    col = col.child(tabs::item_row(item, &values, me.as_deref(), &copied, cx));
+                }
+            }
         }
         col.into_any_element()
     }
@@ -153,7 +207,22 @@ impl Render for SettingsView {
         let selected = self.selected;
         let typed = self.search.read(cx).text().trim().to_owned();
         let searching = !typed.is_empty();
-        let list = self.tabs.iter().enumerate().map(|(ix, tab)| {
+        // A search narrows the tab list to the tabs that hold a match, best tab first.
+        let hits = if searching {
+            self.matches(&typed)
+        } else {
+            Vec::new()
+        };
+        let shown: Vec<usize> = if searching {
+            Self::matched_tabs(&hits)
+                .iter()
+                .filter_map(|id| self.tabs.iter().position(|t| t.id() == *id))
+                .collect()
+        } else {
+            (0..self.tabs.len()).collect()
+        };
+        let list = shown.iter().map(|&ix| {
+            let tab = &self.tabs[ix];
             // While the search shows its results, no tab is the open one.
             let active = ix == selected && !searching;
             div()
@@ -185,7 +254,7 @@ impl Render for SettingsView {
                 .map(|tab| tab.render(cx))
                 .unwrap_or_else(|| div().into_any_element())
         } else {
-            self.search_results(&typed, cx)
+            self.search_results(&hits, cx)
         };
         let search = self.search.clone();
         div()
@@ -451,6 +520,23 @@ mod tests {
     use crate::backend::settings::write::Change;
     use crate::layout_probe::{selector, Probe};
 
+    /// What the settings decided for the message view survives a switch of account (the
+    /// next account may hold the same values, so nothing would tell the view again).
+    #[gpui::test]
+    fn the_message_view_keeps_the_settings_across_an_account_switch(cx: &mut TestAppContext) {
+        use crate::app::Inlet;
+        let (inlet, cx) = cx.add_window_view(Inlet::detached);
+        inlet.update_in(cx, |this, _, _| {
+            this.chat.view.hide_blocked = true;
+            this.chat.view.spoilers = 0;
+            this.chat.view.compact = true;
+            this.reset_messages();
+            assert!(this.chat.view.hide_blocked, "hide blocked messages stays");
+            assert_eq!(this.chat.view.spoilers, 0, "spoilers keep showing");
+            assert!(this.chat.view.compact);
+        });
+    }
+
     /// The settings reach the message view that keeps state of its own: the display
     /// mode, the spoilers, and the height of the rows that a new font size changes.
     #[gpui::test]
@@ -562,6 +648,125 @@ mod flag_tests {
 }
 
 #[cfg(test)]
+mod hidden_message_tests {
+    use inlet_protocol::Ready;
+    use inlet_state::{AccountState, ChannelId, MessageId, MessagesPage};
+    use serde_json::json;
+
+    use crate::ui::chat::messages::{MessageView, Row};
+
+    fn msg_at(id: u64, author: &str, timestamp: &str) -> inlet_protocol::Message {
+        serde_json::from_value(json!({
+            "id": (id << 22).to_string(), "channel_id": "100", "type": 0,
+            "content": format!("m{id}"), "timestamp": timestamp,
+            "author": {"id": author, "username": format!("u{author}")}
+        }))
+        .unwrap()
+    }
+
+    /// A direct message with person 3 blocked, holding these messages (oldest first).
+    fn state_with(messages: &[(u64, &str, &str)]) -> (AccountState, ChannelId) {
+        let ready: Ready = serde_json::from_value(json!({
+            "session_id": "s", "user": {"id": "1", "username": "me"},
+            "guilds": [], "users": [],
+            "private_channels": [{"id": "100", "type": 3,
+                "recipients": [{"id": "2", "username": "u2"}, {"id": "3", "username": "u3"}]}],
+            "relationships": [{"id": "3", "type": 2}],
+            "read_states": [], "user_guild_settings": []
+        }))
+        .unwrap();
+        let mut state = AccountState::from_ready_at(&ready, 1);
+        let ch = ChannelId(100);
+        let _ = state.begin_load(ch);
+        let page: Vec<_> = messages
+            .iter()
+            .rev()
+            .map(|(i, a, t)| msg_at(*i, a, t))
+            .collect();
+        let _ = state.apply_messages(ch, MessagesPage::latest(page, 50));
+        (state, ch)
+    }
+
+    /// The days and messages of the rows: "day" for a divider, "mN" for a message and
+    /// "mN+" for one that is grouped under the message before it.
+    fn shape(rows: &[Row]) -> Vec<String> {
+        rows.iter()
+            .filter_map(|r| match r {
+                Row::Day { .. } => Some("day".to_owned()),
+                Row::Message(m) => Some(format!(
+                    "m{}{}",
+                    m.id.0 >> 22,
+                    if m.grouped { "+" } else { "" }
+                )),
+                Row::Blocked { count, .. } => Some(format!("blocked {count}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Fluxer leaves a hidden message out before any divider or grouping is worked out
+    /// (`MessageGroupingUtils.ts`): a day that holds only hidden messages has no divider,
+    /// and A, [B hidden], A groups the two A messages.
+    #[test]
+    fn a_hidden_message_leaves_no_divider_and_no_extra_header() {
+        let (state, ch) = state_with(&[
+            (1, "2", "2026-01-01T10:00:00+00:00"),
+            (2, "3", "2026-01-02T10:00:00+00:00"),
+            (3, "3", "2026-01-02T10:01:00+00:00"),
+            (4, "2", "2026-01-03T10:00:00+00:00"),
+            (5, "2", "2026-01-03T10:00:30+00:00"),
+            (6, "3", "2026-01-03T10:00:40+00:00"),
+            (7, "2", "2026-01-03T10:01:00+00:00"),
+        ]);
+        let mut view = MessageView::default();
+        assert_eq!(
+            shape(&view.build_rows(&state, ch)),
+            [
+                "day",
+                "m1",
+                "day",
+                "blocked 2",
+                "day",
+                "m4",
+                "m5+",
+                "blocked 1",
+                "m7"
+            ],
+            "folded: the blocked day keeps its divider"
+        );
+        view.hide_blocked = true;
+        assert_eq!(
+            shape(&view.build_rows(&state, ch)),
+            ["day", "m1", "day", "m4", "m5+", "m7+"],
+            "hidden: no divider for the blocked-only day, and m7 groups under m5"
+        );
+    }
+
+    /// Fluxer never hides the message the person jumped to.
+    #[test]
+    fn the_message_jumped_to_is_shown_although_its_author_is_hidden() {
+        let (state, ch) = state_with(&[
+            (1, "2", "2026-01-01T10:00:00+00:00"),
+            (2, "3", "2026-01-01T10:00:10+00:00"),
+            (3, "2", "2026-01-01T10:00:20+00:00"),
+        ]);
+        let mut view = MessageView::default();
+        view.hide_blocked = true;
+        assert_eq!(shape(&view.build_rows(&state, ch)), ["day", "m1", "m3+"]);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        view.highlight(MessageId(2 << 22), now);
+        let rows = shape(&view.build_rows(&state, ch));
+        assert!(
+            rows.iter().any(|r| r.starts_with("blocked")),
+            "the jump target is in the list ({rows:?})"
+        );
+    }
+}
+
+#[cfg(test)]
 mod search_tests {
     use gpui::{AppContext, TestAppContext};
 
@@ -583,6 +788,24 @@ mod search_tests {
             view.update(cx, |v, cx| {
                 v.open_item("appearance-theme", cx);
                 assert_eq!(v.tabs[v.selected].id(), "appearance");
+            });
+        });
+    }
+
+    /// The tab list narrows to the tabs that hold a match, best tab first, and a setting
+    /// of a tab the view does not have is left out.
+    #[gpui::test]
+    fn a_search_narrows_the_tabs_to_those_with_a_match(cx: &mut TestAppContext) {
+        let view = cx.new(SettingsView::new);
+        cx.update(|cx| {
+            view.update(cx, |v, _| {
+                let tabs = SettingsView::matched_tabs(&v.matches("theme"));
+                assert_eq!(tabs.first(), Some(&"appearance"));
+                assert!(!tabs.contains(&"desktop"));
+                assert!(v.matches("qqqqq").is_empty());
+                v.tabs.retain(|t| t.id() != "appearance");
+                let tabs = SettingsView::matched_tabs(&v.matches("theme"));
+                assert!(!tabs.contains(&"appearance"));
             });
         });
     }
