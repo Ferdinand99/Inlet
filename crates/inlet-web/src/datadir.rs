@@ -86,14 +86,30 @@ fn make_private_dir(path: &Path) -> io::Result<()> {
     std::fs::create_dir(path)
 }
 
-/// The engine's processes may still hold a file for a moment after the window closed.
+/// The engine's processes may still hold a file for a moment after the window closed, and
+/// may write one more after the first removal (a network process that outlives the window
+/// by a few milliseconds). So the folder is removed until it stays gone for a short while.
 fn remove_with_retries(path: &Path) {
-    for _ in 0..20 {
+    let mut quiet = 0;
+    for _ in 0..40 {
         match std::fs::remove_dir_all(path) {
-            Ok(()) => return,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return,
-            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+            Ok(()) => quiet = 0,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => {
+                quiet = 0;
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
         }
+        if path.exists() {
+            quiet = 0;
+            continue;
+        }
+        quiet += 1;
+        if quiet >= 3 {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
