@@ -60,6 +60,12 @@ pub enum Icon {
     MonitorPlay,
     /// Close (`x`).
     X,
+    /// The help button of the rail (`question`).
+    Question,
+    /// A verified community (`seal-check`).
+    SealCheck,
+    /// A partnered community (`handshake`).
+    Handshake,
 }
 
 impl Icon {
@@ -98,6 +104,9 @@ impl Icon {
             Icon::VideoCamera => include_bytes!("../assets/icons/video-camera.svg"),
             Icon::MonitorPlay => include_bytes!("../assets/icons/monitor-play.svg"),
             Icon::X => include_bytes!("../assets/icons/x.svg"),
+            Icon::Question => include_bytes!("../assets/icons/question.svg"),
+            Icon::SealCheck => include_bytes!("../assets/icons/seal-check.svg"),
+            Icon::Handshake => include_bytes!("../assets/icons/handshake.svg"),
         }
     }
 

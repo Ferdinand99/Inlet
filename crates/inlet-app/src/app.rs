@@ -303,6 +303,7 @@ impl Inlet {
         self.channels.clear();
         self.selected_guild = None;
         self.selected_channel = None;
+        self.sidebar.history.clear();
         self.reset_messages();
         self.inbox.clear();
         self.reset_search(true);

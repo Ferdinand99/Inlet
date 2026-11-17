@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::platform::prefs;
 
+use super::history::Visit;
+
 /// Key of the section in `settings.json`.
 const SETTINGS_KEY: &str = "navigation";
 /// Entries kept in each list.
@@ -86,6 +88,9 @@ pub struct AccountMemory {
     pub open_folders: IdList,
     /// Forum and media channels whose content warning was accepted.
     pub local_agreed: IdList,
+    /// Where the account was last, so the next start opens there (Fluxer's last
+    /// location, kept per account).
+    pub last_place: Option<Visit>,
 }
 
 /// The remembered navigation state of every account on this computer.
@@ -93,6 +98,9 @@ pub struct AccountMemory {
 #[serde(default)]
 pub struct Remembered {
     accounts: BTreeMap<String, AccountMemory>,
+    /// The width of the channel list in pixels, when it was dragged (the same for every
+    /// account, as in Fluxer). `None` is the default width.
+    sidebar_width: Option<u32>,
 }
 
 impl Remembered {
@@ -108,11 +116,26 @@ impl Remembered {
                     AccountMemory {
                         open_folders: m.open_folders.checked(),
                         local_agreed: m.local_agreed.checked(),
+                        last_place: m.last_place.filter(Visit::is_valid),
                     },
                 )
             })
             .collect();
-        Remembered { accounts }
+        Remembered {
+            accounts,
+            sidebar_width: self.sidebar_width.map(super::resize::clamp_width),
+        }
+    }
+
+    /// The channel list's width: the one that was dragged, or the default.
+    pub fn sidebar_width(&self) -> u32 {
+        self.sidebar_width.unwrap_or(super::resize::DEFAULT_WIDTH)
+    }
+
+    /// Sets the channel list's width (clamped); the default width is stored as "none".
+    pub fn set_sidebar_width(&mut self, width: u32) {
+        let width = super::resize::clamp_width(width);
+        self.sidebar_width = (width != super::resize::DEFAULT_WIDTH).then_some(width);
     }
 
     /// What `account` has (nothing for one not seen before).
@@ -258,6 +281,51 @@ mod tests {
         assert!(list.insert("99999999"));
         assert_eq!(list.0.len(), MAX_REMEMBERED);
         assert!(!list.contains("501"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_last_place_and_the_sidebar_width_survive_a_restart() {
+        let path = temp_file("place");
+        let mut r = Remembered::default();
+        assert_eq!(r.sidebar_width(), 320, "the default");
+        r.set_sidebar_width(400);
+        r.of_mut("https://chat.example#10").unwrap().last_place = Some(Visit {
+            guild: Some("5".into()),
+            channel: "77".into(),
+        });
+        r.save(&path).unwrap();
+        let again = Remembered::load(&path);
+        assert_eq!(again, r);
+        assert_eq!(again.sidebar_width(), 400);
+        assert_eq!(
+            again
+                .of("https://chat.example#10")
+                .unwrap()
+                .last_place
+                .as_ref()
+                .map(|v| v.channel.as_str()),
+            Some("77")
+        );
+        // The default width is not written; the width stays between 200 and 480.
+        r.set_sidebar_width(320);
+        assert_eq!(r.sidebar_width(), 320);
+        r.set_sidebar_width(10_000);
+        assert_eq!(r.sidebar_width(), 480);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_hand_edited_place_and_width_are_checked() {
+        let path = temp_file("place-bad");
+        let doc = serde_json::json!({"navigation": {"sidebar_width": 9999, "accounts": {
+            "a": {"last_place": {"guild": "../1", "channel": "5"}},
+            "b": {"last_place": {"guild": null, "channel": "5"}}}}});
+        std::fs::write(&path, doc.to_string()).unwrap();
+        let r = Remembered::load(&path);
+        assert_eq!(r.sidebar_width(), 480);
+        assert!(r.of("a").unwrap().last_place.is_none(), "odd server ID");
+        assert!(r.of("b").unwrap().last_place.is_some());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

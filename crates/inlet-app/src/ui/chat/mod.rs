@@ -71,7 +71,7 @@ impl Inlet {
             if self
                 .channels
                 .iter()
-                .any(|c| c.id == channel_id && c.is_messageable())
+                .any(|c| c.id == channel_id && (c.is_messageable() || c.is_forum()))
             {
                 self.select_channel(channel_id, window, cx);
             } else {

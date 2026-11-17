@@ -54,7 +54,19 @@ actions!(
         ToggleMemberList,
         ToggleAccountSwitcher,
         NewDirectMessage,
-        JumpToOldestUnread
+        JumpToOldestUnread,
+        HistoryBack,
+        HistoryForward,
+        ToggleLastServer,
+        ServerSlot1,
+        ServerSlot2,
+        ServerSlot3,
+        ServerSlot4,
+        ServerSlot5,
+        ServerSlot6,
+        ServerSlot7,
+        ServerSlot8,
+        ServerSlot9
     ]
 );
 
@@ -153,6 +165,60 @@ const NEW_DIRECT_MESSAGE: Keys = Keys {
     other: "ctrl-shift-t",
 };
 const OLDEST_UNREAD: Keys = Keys::same("shift-pageup");
+/// Back and forward through the channels viewed: Fluxer uses Command+[ and Command+] on
+/// macOS and Alt+Left and Alt+Right elsewhere.
+const HISTORY_BACK: Keys = Keys {
+    mac: "cmd-[",
+    other: "alt-left",
+};
+const HISTORY_FORWARD: Keys = Keys {
+    mac: "cmd-]",
+    other: "alt-right",
+};
+/// Between the direct messages and the server that was open last.
+const LAST_SERVER: Keys = Keys {
+    mac: "cmd-alt-right",
+    other: "ctrl-alt-right",
+};
+/// The direct messages (1) and the first eight servers of the rail (2 to 9).
+const SERVER_SLOTS: [Keys; 9] = [
+    Keys {
+        mac: "cmd-1",
+        other: "ctrl-1",
+    },
+    Keys {
+        mac: "cmd-2",
+        other: "ctrl-2",
+    },
+    Keys {
+        mac: "cmd-3",
+        other: "ctrl-3",
+    },
+    Keys {
+        mac: "cmd-4",
+        other: "ctrl-4",
+    },
+    Keys {
+        mac: "cmd-5",
+        other: "ctrl-5",
+    },
+    Keys {
+        mac: "cmd-6",
+        other: "ctrl-6",
+    },
+    Keys {
+        mac: "cmd-7",
+        other: "ctrl-7",
+    },
+    Keys {
+        mac: "cmd-8",
+        other: "ctrl-8",
+    },
+    Keys {
+        mac: "cmd-9",
+        other: "ctrl-9",
+    },
+];
 /// Keys whose binding is made by another domain.
 const QUICK_SWITCHER: Keys = Keys {
     mac: "cmd-k",
@@ -312,6 +378,90 @@ pub fn shortcuts() -> Vec<Shortcut> {
             || t!("keys-oldest-unread")
         ),
         shortcut!(
+            "history-back",
+            Navigation,
+            HISTORY_BACK,
+            HistoryBack,
+            || t!("keys-history-back")
+        ),
+        shortcut!(
+            "history-forward",
+            Navigation,
+            HISTORY_FORWARD,
+            HistoryForward,
+            || t!("keys-history-forward")
+        ),
+        shortcut!(
+            "last-server",
+            Navigation,
+            LAST_SERVER,
+            ToggleLastServer,
+            || t!("keys-last-server")
+        ),
+        shortcut!(
+            "server-slot-1",
+            Navigation,
+            SERVER_SLOTS[0],
+            ServerSlot1,
+            || t!("keys-slot-dms")
+        ),
+        shortcut!(
+            "server-slot-2",
+            Navigation,
+            SERVER_SLOTS[1],
+            ServerSlot2,
+            || t!("keys-slot-server", number = "1")
+        ),
+        shortcut!(
+            "server-slot-3",
+            Navigation,
+            SERVER_SLOTS[2],
+            ServerSlot3,
+            || t!("keys-slot-server", number = "2")
+        ),
+        shortcut!(
+            "server-slot-4",
+            Navigation,
+            SERVER_SLOTS[3],
+            ServerSlot4,
+            || t!("keys-slot-server", number = "3")
+        ),
+        shortcut!(
+            "server-slot-5",
+            Navigation,
+            SERVER_SLOTS[4],
+            ServerSlot5,
+            || t!("keys-slot-server", number = "4")
+        ),
+        shortcut!(
+            "server-slot-6",
+            Navigation,
+            SERVER_SLOTS[5],
+            ServerSlot6,
+            || t!("keys-slot-server", number = "5")
+        ),
+        shortcut!(
+            "server-slot-7",
+            Navigation,
+            SERVER_SLOTS[6],
+            ServerSlot7,
+            || t!("keys-slot-server", number = "6")
+        ),
+        shortcut!(
+            "server-slot-8",
+            Navigation,
+            SERVER_SLOTS[7],
+            ServerSlot8,
+            || t!("keys-slot-server", number = "7")
+        ),
+        shortcut!(
+            "server-slot-9",
+            Navigation,
+            SERVER_SLOTS[8],
+            ServerSlot9,
+            || t!("keys-slot-server", number = "8")
+        ),
+        shortcut!(
             "mark-channel-read",
             Messages,
             MARK_CHANNEL_READ,
@@ -421,6 +571,8 @@ pub fn key_names(keys: &str, mac: bool) -> Vec<String> {
             "pageup" => t!("keys-page-up"),
             "pagedown" => t!("keys-page-down"),
             "tab" => t!("keys-tab"),
+            "left" => t!("keys-left"),
+            "right" => t!("keys-right"),
             "escape" => t!("keys-escape"),
             other => other.to_uppercase(),
         })
@@ -447,6 +599,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(PAGE_UP.now(), ScrollPageUp, None),
         KeyBinding::new(PAGE_DOWN.now(), ScrollPageDown, None),
         KeyBinding::new(OLDEST_UNREAD.now(), JumpToOldestUnread, None),
+        KeyBinding::new(HISTORY_BACK.now(), HistoryBack, None),
+        KeyBinding::new(HISTORY_FORWARD.now(), HistoryForward, None),
+        KeyBinding::new(LAST_SERVER.now(), ToggleLastServer, None),
+        KeyBinding::new(SERVER_SLOTS[0].now(), ServerSlot1, None),
+        KeyBinding::new(SERVER_SLOTS[1].now(), ServerSlot2, None),
+        KeyBinding::new(SERVER_SLOTS[2].now(), ServerSlot3, None),
+        KeyBinding::new(SERVER_SLOTS[3].now(), ServerSlot4, None),
+        KeyBinding::new(SERVER_SLOTS[4].now(), ServerSlot5, None),
+        KeyBinding::new(SERVER_SLOTS[5].now(), ServerSlot6, None),
+        KeyBinding::new(SERVER_SLOTS[6].now(), ServerSlot7, None),
+        KeyBinding::new(SERVER_SLOTS[7].now(), ServerSlot8, None),
+        KeyBinding::new(SERVER_SLOTS[8].now(), ServerSlot9, None),
         KeyBinding::new(SEARCH.now(), OpenSearch, None),
         KeyBinding::new(SETTINGS.now(), OpenSettings, None),
         KeyBinding::new(MEMBER_LIST.now(), ToggleMemberList, None),
@@ -516,7 +680,7 @@ impl Inlet {
     /// Whether a shortcut that acts on the chat may act now: signed in on the main
     /// screen, with nothing over the chat that has the keyboard (a layer, a message menu
     /// or dialog) and not under the About view.
-    fn shortcuts_allowed(&self) -> bool {
+    pub(crate) fn shortcuts_allowed(&self) -> bool {
         self.keys_allowed_over(None)
     }
 
@@ -827,6 +991,22 @@ impl Inlet {
         .on_action(cx.listener(|this, _: &NextMentionChannel, window, cx| {
             this.step_unread_channel(true, true, window, cx)
         }))
+        .on_action(
+            cx.listener(|this, _: &HistoryBack, window, cx| this.step_history(false, window, cx)),
+        )
+        .on_action(
+            cx.listener(|this, _: &HistoryForward, window, cx| this.step_history(true, window, cx)),
+        )
+        .on_action(cx.listener(|this, _: &ToggleLastServer, _, cx| this.toggle_last_server(cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot1, _, cx| this.go_to_slot(0, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot2, _, cx| this.go_to_slot(1, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot3, _, cx| this.go_to_slot(2, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot4, _, cx| this.go_to_slot(3, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot5, _, cx| this.go_to_slot(4, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot6, _, cx| this.go_to_slot(5, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot7, _, cx| this.go_to_slot(6, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot8, _, cx| this.go_to_slot(7, cx)))
+        .on_action(cx.listener(|this, _: &ServerSlot9, _, cx| this.go_to_slot(8, cx)))
         .on_action(cx.listener(|this, _: &PreviousServer, _, cx| this.step_server(false, cx)))
         .on_action(cx.listener(|this, _: &NextServer, _, cx| this.step_server(true, cx)))
         .on_action(cx.listener(|this, _: &ToggleInbox, window, cx| {
@@ -968,7 +1148,9 @@ mod tests {
                 }
                 // Command where the others use Control, and nothing else differs
                 // (Fluxer's Ctrl+Tab is Control on macOS too).
-                let same = set.mac == set.other;
+                // The history keys are the exception: Fluxer binds Command+[ and
+                // Command+] on macOS and Alt+Left and Alt+Right elsewhere.
+                let same = set.mac == set.other || s.id.starts_with("history-");
                 assert!(
                     same || set.mac.replace("cmd", "ctrl") == set.other,
                     "{}",
@@ -1494,5 +1676,333 @@ mod tests {
         // Nothing opens behind it.
         cx.simulate_keystrokes(SETTINGS.now());
         assert!(inlet.read_with(cx, |i, _| i.settings.view.is_none()));
+    }
+
+    /// Alt+Left and Alt+Right (Command+[ and Command+] on macOS) walk back and forward
+    /// through the channels viewed, also with the message box focused, and stop at the
+    /// ends. A channel opened after a step back drops what was ahead.
+    #[gpui::test]
+    fn history_keys_walk_back_and_forward_through_the_channels_viewed(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes(CHANNEL_NEXT.now());
+        cx.simulate_keystrokes(CHANNEL_NEXT.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("303"));
+        cx.simulate_keystrokes(HISTORY_BACK.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("302"));
+        cx.simulate_keystrokes(HISTORY_BACK.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("301"));
+        cx.simulate_keystrokes(HISTORY_BACK.now());
+        assert_eq!(
+            open_channel(&inlet, cx).as_deref(),
+            Some("301"),
+            "the first place"
+        );
+        cx.simulate_keystrokes(HISTORY_FORWARD.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("302"));
+        // A new place cuts what was ahead: forward has nowhere to go.
+        cx.simulate_keystrokes(CHANNEL_PREVIOUS.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("301"));
+        cx.simulate_keystrokes(HISTORY_FORWARD.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("301"));
+    }
+
+    /// Back goes to the channel of another server: the server opens, and the channel
+    /// follows when its list arrives.
+    #[gpui::test]
+    fn history_back_crosses_into_another_server(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes(SERVER_NEXT.now());
+        first_channel_opens(&inlet, "401", cx);
+        cx.simulate_keystrokes(HISTORY_BACK.now());
+        inlet.read_with(cx, |i, _| {
+            assert_eq!(i.selected_guild.as_deref(), Some(GUILD));
+            assert_eq!(i.overlays.link_channel.as_deref(), Some("301"));
+        });
+        // The channel list of the server arrives: the place it was at opens.
+        inlet.update_in(cx, |this, window, cx| {
+            this.channels = vec![channel("301", "general", ChannelKind::Text, 0)];
+            this.take_link_channel(window, cx);
+        });
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("301"));
+        // And forward goes to the other server again.
+        cx.simulate_keystrokes(HISTORY_FORWARD.now());
+        inlet.read_with(cx, |i, _| {
+            assert_eq!(i.selected_guild.as_deref(), Some(OTHER_GUILD));
+            assert_eq!(i.overlays.link_channel.as_deref(), Some("401"));
+        });
+    }
+
+    /// The history skips a place the account cannot open any more.
+    #[gpui::test]
+    fn history_skips_a_channel_that_is_gone(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        // A place whose channel the account does not know (it was deleted).
+        inlet.update(cx, |this, _| {
+            this.sidebar
+                .history
+                .record(crate::ui::sidebar::history::Visit {
+                    guild: Some(GUILD.into()),
+                    channel: "999".into(),
+                });
+        });
+        cx.simulate_keystrokes(CHANNEL_NEXT.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("302"));
+        cx.simulate_keystrokes(HISTORY_BACK.now());
+        assert_eq!(
+            open_channel(&inlet, cx).as_deref(),
+            Some("301"),
+            "past the gone one"
+        );
+    }
+
+    /// Ctrl+1 is the direct messages, Ctrl+2 to Ctrl+9 the servers of the rail in
+    /// order; a slot with no server does nothing.
+    #[gpui::test]
+    fn number_keys_go_to_the_direct_messages_and_the_servers(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        let guild = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
+            inlet.read_with(cx, |i, _| i.selected_guild.clone())
+        };
+        // The rail lists servers the account's folders do not name by name, last to
+        // first: "guild 200" is the first server, "guild 100" the second.
+        cx.simulate_keystrokes(SERVER_SLOTS[1].now());
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(OTHER_GUILD));
+        cx.simulate_keystrokes(SERVER_SLOTS[0].now());
+        assert_eq!(guild(&inlet, cx), None);
+        cx.simulate_keystrokes(SERVER_SLOTS[2].now());
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(GUILD));
+        cx.simulate_keystrokes(SERVER_SLOTS[8].now());
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(GUILD), "no ninth slot");
+    }
+
+    /// Ctrl+Alt+Right goes from the server to the direct messages and back to that
+    /// server.
+    #[gpui::test]
+    fn last_server_key_toggles_between_the_direct_messages_and_the_server(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        let guild = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
+            inlet.read_with(cx, |i, _| i.selected_guild.clone())
+        };
+        cx.simulate_keystrokes(LAST_SERVER.now());
+        assert_eq!(guild(&inlet, cx), None);
+        cx.simulate_keystrokes(LAST_SERVER.now());
+        assert_eq!(guild(&inlet, cx).as_deref(), Some(GUILD));
+    }
+
+    /// A server opens at the channel that was open in it last, not at its first channel.
+    #[gpui::test]
+    fn a_server_opens_at_the_channel_it_had_open_last(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        cx.simulate_keystrokes(CHANNEL_NEXT.now());
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("302"));
+        cx.simulate_keystrokes(SERVER_SLOTS[1].now());
+        first_channel_opens(&inlet, "401", cx);
+        cx.simulate_keystrokes(SERVER_SLOTS[2].now());
+        // The server's channel list arrives.
+        inlet.update_in(cx, |this, window, cx| {
+            this.on_channels(
+                Some(GUILD.into()),
+                vec![
+                    channel("301", "general", ChannelKind::Text, 0),
+                    channel("302", "chan-b", ChannelKind::Text, 1),
+                ],
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(open_channel(&inlet, cx).as_deref(), Some("302"));
+    }
+
+    /// The next start opens the place the account was at, once, and only when nothing
+    /// else was opened.
+    #[gpui::test]
+    fn the_last_place_opens_at_the_next_start(cx: &mut TestAppContext) {
+        use crate::ui::sidebar::history::Visit;
+        let (inlet, cx) = rig(cx);
+        inlet.update(cx, |this, cx| {
+            this.instance = "https://a.example".into();
+            let key = this.nav_account_key(cx).expect("an account key");
+            this.sidebar.remembered.of_mut(&key).unwrap().last_place = Some(Visit {
+                guild: Some(OTHER_GUILD.into()),
+                channel: "401".into(),
+            });
+            // Start again: nothing is open.
+            this.sidebar.history.clear();
+            this.selected_guild = None;
+            this.selected_channel = None;
+            this.restore_last_place(cx);
+            assert_eq!(this.selected_guild.as_deref(), Some(OTHER_GUILD));
+            assert_eq!(this.overlays.link_channel.as_deref(), Some("401"));
+            // Only once: a later guild list does not pull the person back.
+            this.selected_guild = None;
+            this.overlays.link_channel = None;
+            this.restore_last_place(cx);
+            assert_eq!(this.selected_guild, None);
+        });
+    }
+
+    /// A place the account no longer has is not opened at the next start.
+    #[gpui::test]
+    fn a_last_place_in_a_server_the_account_left_is_ignored(cx: &mut TestAppContext) {
+        use crate::ui::sidebar::history::Visit;
+        let (inlet, cx) = rig(cx);
+        inlet.update(cx, |this, cx| {
+            this.instance = "https://a.example".into();
+            let key = this.nav_account_key(cx).expect("an account key");
+            this.sidebar.remembered.of_mut(&key).unwrap().last_place = Some(Visit {
+                guild: Some("777".into()),
+                channel: "401".into(),
+            });
+            this.sidebar.history.clear();
+            this.selected_guild = None;
+            this.selected_channel = None;
+            this.restore_last_place(cx);
+            assert_eq!(this.selected_guild, None);
+            assert_eq!(this.overlays.link_channel, None);
+        });
+    }
+
+    /// A channel with something unread that has scrolled out of sight gets a pill at the
+    /// edge of the channel list; a click on the pill scrolls to the channel, and the
+    /// pill goes.
+    #[gpui::test]
+    fn unread_channels_out_of_sight_get_a_pill_that_scrolls_to_them(cx: &mut TestAppContext) {
+        let (inlet, cx) = rig(cx);
+        inlet.update(cx, |this, cx| {
+            // Forty channels with nothing unread, then the two that have something.
+            let mut list: Vec<Channel> = (0..40)
+                .map(|n| {
+                    channel(
+                        &format!("9{n:03}"),
+                        &format!("filler-{n}"),
+                        ChannelKind::Text,
+                        n,
+                    )
+                })
+                .collect();
+            list.push(channel("302", "chan-b", ChannelKind::Text, 40));
+            list.push(channel("303", "chan-c", ChannelKind::Text, 41));
+            this.channels = list;
+            let mut changes = inlet_state::Changes::default();
+            changes.reset = true;
+            let account = this.account.clone().expect("an account");
+            this.notifications
+                .refresh_badges(account.read(cx), &changes);
+            cx.notify();
+        });
+        // The list is drawn, then the pills are made from where its rows were drawn.
+        for _ in 0..3 {
+            cx.run_until_parked();
+        }
+        let below = cx
+            .debug_bounds("unread-below")
+            .expect("a pill for the unread channels below the view");
+        assert!(cx.debug_bounds("unread-above").is_none());
+        cx.simulate_mouse_move(below.center(), None, gpui::Modifiers::none());
+        cx.simulate_click(below.center(), gpui::Modifiers::none());
+        for _ in 0..3 {
+            cx.run_until_parked();
+        }
+        let scrolled = inlet.read_with(cx, |i, _| f32::from(i.sidebar.scroll.offset().y));
+        assert!(scrolled < 0., "the list scrolled (offset {scrolled})");
+        let facts = inlet.read_with(cx, |i, _| {
+            let h = &i.sidebar.scroll;
+            let n = (0..)
+                .take_while(|ix| h.bounds_for_item(*ix).is_some())
+                .count();
+            format!(
+                "view {:?}, first {:?}, last {:?}, items {n}, offset {:?}",
+                h.bounds(),
+                h.bounds_for_item(0),
+                h.bounds_for_item(n.saturating_sub(1)),
+                h.offset()
+            )
+        });
+        assert!(
+            cx.debug_bounds("unread-below").is_none(),
+            "the channels are in view now ({facts})"
+        );
+    }
+
+    /// Dragging the handle between the channel list and the chat sets the list's width
+    /// (kept between 200 and 480 px); the layout follows.
+    #[gpui::test]
+    fn dragging_the_handle_sets_the_width_of_the_channel_list(cx: &mut TestAppContext) {
+        use gpui::{point, px, Modifiers, MouseButton};
+        let (inlet, cx) = rig(cx);
+        cx.run_until_parked();
+        let width = |inlet: &Entity<Inlet>, cx: &mut VisualTestContext| {
+            inlet.read_with(cx, |i, _| i.sidebar.width)
+        };
+        assert_eq!(width(&inlet, cx), 320, "the default");
+        let handle = cx
+            .debug_bounds("sidebar-resize")
+            .expect("the handle is drawn over the border");
+        let left = crate::ui::rail::RAIL_WIDTH;
+        assert!((f32::from(handle.center().x) - (left + 320.)).abs() < 1.);
+        cx.simulate_mouse_down(handle.center(), MouseButton::Left, Modifiers::none());
+        for x in [left + 340., left + 400.] {
+            cx.simulate_mouse_move(
+                point(px(x), handle.center().y),
+                MouseButton::Left,
+                Modifiers::none(),
+            );
+        }
+        cx.simulate_mouse_up(
+            point(px(left + 400.), handle.center().y),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        assert_eq!(width(&inlet, cx), 400);
+        let sidebar = cx.debug_bounds("sidebar").expect("the channel list");
+        assert_eq!(f32::from(sidebar.size.width), 400.);
+        // Far to the left stops at 200.
+        let handle = cx.debug_bounds("sidebar-resize").expect("the handle");
+        cx.simulate_mouse_down(handle.center(), MouseButton::Left, Modifiers::none());
+        for x in [left + 380., 10.] {
+            cx.simulate_mouse_move(
+                point(px(x), handle.center().y),
+                MouseButton::Left,
+                Modifiers::none(),
+            );
+        }
+        cx.simulate_mouse_up(
+            point(px(10.), handle.center().y),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        assert_eq!(width(&inlet, cx), 200);
+    }
+
+    /// A last place in the direct messages opens once the list has the conversation, and
+    /// a conversation that is gone opens nothing and says nothing.
+    #[gpui::test]
+    fn the_last_direct_message_opens_at_the_next_start(cx: &mut TestAppContext) {
+        use crate::ui::sidebar::history::Visit;
+        let (inlet, cx) = rig(cx);
+        inlet.update(cx, |this, cx| {
+            this.instance = "https://a.example".into();
+            let key = this.nav_account_key(cx).expect("an account key");
+            this.sidebar.remembered.of_mut(&key).unwrap().last_place = Some(Visit {
+                guild: None,
+                channel: "301".into(),
+            });
+            this.sidebar.history.clear();
+            this.selected_guild = None;
+            this.selected_channel = None;
+            this.channels = vec![channel("301", "friend", ChannelKind::Dm, 0)];
+            this.restore_last_place(cx);
+            assert_eq!(this.social.last_dm.as_deref(), Some("301"));
+            assert_eq!(this.chat.pending_channel_jump.as_deref(), Some("301"));
+            // The conversation is not in the list: nothing is asked for.
+            this.chat.pending_channel_jump = None;
+            this.sidebar.history.clear();
+            this.channels = Vec::new();
+            this.restore_last_place(cx);
+            assert_eq!(this.chat.pending_channel_jump, None);
+        });
     }
 }

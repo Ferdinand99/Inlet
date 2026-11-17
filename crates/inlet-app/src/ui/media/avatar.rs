@@ -12,10 +12,6 @@ use crate::app::Inlet;
 use crate::model::{Guild, UserAvatar};
 use crate::theme;
 
-/// Height of the guild banner above the channel list: 16:9 at the sidebar's width
-/// (`GuildBannerCollapse`), and at most 30 % of the window high (the header limits it).
-pub const BANNER_HEIGHT: f32 = 180.;
-
 impl Inlet {
     /// A user's avatar, `size` logical pixels and round. An animated avatar plays while
     /// `animate` is set (the pointer is over the message); until the animated version
@@ -114,8 +110,10 @@ impl Inlet {
         }
     }
 
-    /// The banner of the open guild, `width` logical pixels wide, when it has one.
+    /// The banner of the open guild, `width` logical pixels wide and 16:9 (180 high at
+    /// the default width), when it has one.
     pub(crate) fn guild_banner(&self, width: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let height = width * 9. / 16.;
         let setup = self.media.setup.as_ref()?;
         let guild_id = self.selected_guild.clone()?;
         let hash = self.guild_field(&guild_id, cx, |g| {
@@ -128,13 +126,13 @@ impl Inlet {
             &setup.proxy,
             &guild_id,
             &hash,
-            (width, BANNER_HEIGHT),
+            (width, height),
             self.media.scale,
         )?;
         let shown = self.image(&req, cx);
         Some(super::image::picture_of(
             shown,
-            (width, BANNER_HEIGHT),
+            (width, height),
             0.,
             ObjectFit::Cover,
             &self.media.images.animator(Motion::Gif),

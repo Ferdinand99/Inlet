@@ -111,6 +111,11 @@ impl Switcher {
         self.active.as_ref() == Some(k)
     }
 
+    /// Whether an account switch is on its way to a channel.
+    pub fn has_wanted_channel(&self) -> bool {
+        self.wanted_channel.is_some()
+    }
+
     /// The channel to open in the guild that just loaded, once.
     pub fn take_wanted_channel(&mut self) -> Option<String> {
         self.wanted_channel.take()
@@ -331,6 +336,8 @@ impl Inlet {
         self.channels.clear();
         self.selected_guild = None;
         self.selected_channel = None;
+        // The places viewed belong to the account that was shown.
+        self.sidebar.history.clear();
         self.chat.status.clear();
         self.chat.error = None;
         self.chat.notice = (uploads_stopped > 0).then(|| t!("composer-upload-switched"));

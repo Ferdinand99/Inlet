@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The window's root view: the current screen, the main layout and the overlays.
 
-use gpui::{div, prelude::*, rems, Context, MouseMoveEvent, ScrollEvent, Window};
+use gpui::{div, prelude::*, rems, Context, DragMoveEvent, MouseMoveEvent, ScrollEvent, Window};
 
 use crate::app::{Inlet, Screen};
 use crate::text_input::{FocusNext, FocusPrev};
+use crate::ui::sidebar::resize::ResizeDrag;
 use crate::{about, assets, theme};
 
 impl Render for Inlet {
@@ -74,9 +75,15 @@ impl Inlet {
     /// Signed in: rail, channel list and user panel on the left, the chat on the right.
     fn render_main(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_row()
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<ResizeDrag>, _, cx| {
+                    this.resize_to(event, cx)
+                }),
+            )
             .child(
                 div()
                     .h_full()
@@ -95,5 +102,6 @@ impl Inlet {
                     .child(self.render_user_panel(cx)),
             )
             .child(self.render_center(cx))
+            .child(self.render_resize_handle(cx))
     }
 }

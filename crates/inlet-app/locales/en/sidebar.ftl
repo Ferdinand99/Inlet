@@ -7,3 +7,4 @@ sidebar-quick-switcher = Quick switcher
 sidebar-key-ctrl = Ctrl
 sidebar-key-command = ⌘
 sidebar-key-k = K
+sidebar-new-messages = New messages
