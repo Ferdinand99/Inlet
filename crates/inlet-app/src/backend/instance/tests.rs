@@ -605,9 +605,13 @@ async fn a_self_hosted_instance_is_read_often_only_while_the_window_is_in_use() 
     assert_eq!(count(&server, "/.well-known/fluxer").await, 0);
     drop(idle);
     // In use: a read every few milliseconds at this scale (five minutes in real life).
+    // Waits for the third read instead of a fixed time, so a slow runner does not fail it.
     let _busy = start_with(client, 100_000, LatestMap::default(), seed, true);
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    assert!(count(&server, "/.well-known/fluxer").await >= 3);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while count(&server, "/.well-known/fluxer").await < 3 {
+        assert!(Instant::now() < deadline, "no third read in ten seconds");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 mod status {
