@@ -184,16 +184,15 @@ fn to_reply(v: &serde_json::Value, names: &Names) -> Option<Reply> {
     let snippet = if content.trim().is_empty() {
         t!("reply-no-text")
     } else {
-        // Only what the chat parses of a message (a huge reply target costs no more). A
-        // spoiler that opens before the cut and closes after it is closed here, or its
-        // text would show as plain text.
-        let (mut text, cut) = match content.char_indices().nth(model::DISPLAY_CHARS) {
-            Some((at, _)) => (content[..at].to_string(), true),
-            None => (content.to_string(), false),
+        // Only what the chat parses of a message: the parser gives up on longer text and
+        // would show it as typed, spoilers included. A spoiler open at the cut stays
+        // covered: a lone `||` at the end closes it (the parser decides what is open, so
+        // a `||` in code cannot fool it), and where none is open it is literal text far
+        // past what the preview shows.
+        let text = match content.char_indices().nth(model::DISPLAY_CHARS) {
+            Some((at, _)) => format!("{}||", &content[..at]),
+            None => content.to_string(),
         };
-        if cut && text.matches("||").count() % 2 == 1 {
-            text.push_str("||");
-        }
         let plain = crate::ui::markdown::plain_text(&text, names);
         if plain.trim().is_empty() {
             t!("reply-no-text")
@@ -328,15 +327,35 @@ mod tests {
     }
 
     #[test]
-    fn a_spoiler_cut_by_the_size_cap_stays_covered() {
-        let content = format!(
-            "x ||secret {} still secret||",
-            "y".repeat(model::DISPLAY_CHARS)
-        );
+    fn a_marker_inside_code_does_not_unbalance_a_spoiler_at_the_cut() {
+        // Two `||` before the cut, one of them in code: counting them says "closed".
+        let content = format!("`||` ||secret {} more||", "y".repeat(model::DISPLAY_CHARS));
         let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
         let r = to_reply(&v, &Names::default()).unwrap();
         assert!(!r.snippet.contains("secret"), "{}", r.snippet);
-        assert!(r.snippet.starts_with("x \u{2588}"));
+        assert!(r.snippet.starts_with("|| \u{2588}"), "{}", r.snippet);
+    }
+
+    #[test]
+    fn reply_preview_keeps_emoji_sequences_whole() {
+        let text = "look \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} \u{1F1F3}\u{1F1F4} \u{1F44D}\u{1F3FD} \u{1F469}\u{200D}\u{1F4BB}";
+        let v = serde_json::json!({"author": {"username": "ana"}, "content": text});
+        let r = to_reply(&v, &Names::default()).unwrap();
+        assert_eq!(r.snippet, text);
+    }
+
+    #[test]
+    fn a_spoiler_open_at_the_cut_stays_covered() {
+        // The spoiler opens before the cut and closes after it.
+        let content = format!(
+            "x ||secret {} still secret||",
+            "y".repeat(model::DISPLAY_CHARS + 4_000)
+        );
+        assert!(content.chars().count() > model::DISPLAY_CHARS);
+        let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
+        let r = to_reply(&v, &Names::default()).unwrap();
+        assert!(!r.snippet.contains("secret"), "{}", r.snippet);
+        assert!(r.snippet.starts_with("x \u{2588}"), "{}", r.snippet);
     }
 
     #[test]

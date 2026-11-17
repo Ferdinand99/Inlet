@@ -191,3 +191,95 @@ fn channel_name_keeps_its_width_beside_the_search_column(cx: &mut TestAppContext
         "the status line ends inside the header"
     );
 }
+
+/// The channel with the long name (`c-rules`) beside the search column: the name is
+/// cut with an ellipsis, keeps at least its minimum and stays inside the header, and the
+/// status line keeps its place after it.
+#[gpui::test]
+fn a_long_channel_name_is_cut_inside_the_header(cx: &mut TestAppContext) {
+    let (_probe, cx) = cx.add_window_view(Probe::with_search_open_in("c-rules"));
+    cx.simulate_resize(size(px(WINDOW.0), px(WINDOW.1)));
+    cx.run_until_parked();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let header = bounds(cx, selector::CHAT_HEADER);
+    let title = bounds(cx, selector::CHAT_HEADER_TITLE);
+    let status = bounds(cx, selector::CHAT_HEADER_STATUS);
+    // The minimum of the name group is 96 px, 32 of them for the icon and the gap.
+    assert!(
+        title.size.width >= px(64.),
+        "the name keeps its minimum: {} px",
+        px_f(title.size.width)
+    );
+    assert!(
+        title.origin.x + title.size.width <= status.origin.x,
+        "the name ends before the status line"
+    );
+    assert!(
+        status.origin.x + status.size.width <= header.origin.x + header.size.width,
+        "the status line ends inside the header"
+    );
+    // A 75-character name does not fit: it is cut, not pushed past the header.
+    assert!(
+        title.size.width < px(400.),
+        "the long name is cut: {} px",
+        px_f(title.size.width)
+    );
+}
+
+/// Draws every frame the app asks for, until it asks for none.
+fn settle(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    for _ in 0..20 {
+        if cx.update(|window, app| window.simulate_next_frame(app)) == 0 {
+            return;
+        }
+        cx.run_until_parked();
+    }
+    panic!("the view keeps asking for frames");
+}
+
+/// Media are fitted to the message column of the previous layout. When the search
+/// column opens, the list takes its new width in the very frame that opens it, and the
+/// next frame must fit the media again by itself: an idle window with nothing else to
+/// redraw kept an image as wide as the old column (a flaky screenshot on macOS). The
+/// test opens the search column in one update, draws nothing by hand, and counts the
+/// frames: the one that changes the width and one refit, then none.
+///
+/// The test platform may draw frames the macOS window did not, so the count is
+/// not proven to differ from the old code's; the steady-state part guards the new check
+/// against drawing forever, and the macOS screenshot job guards the stale fit.
+#[gpui::test]
+fn images_fit_the_column_after_the_search_column_opens(cx: &mut TestAppContext) {
+    let (probe, cx) = cx.add_window_view(Probe::new);
+    cx.simulate_resize(size(px(WINDOW.0), px(WINDOW.1)));
+    cx.update(|window, _| window.refresh());
+    settle(cx);
+    // The column is 1280 - 392 (rail and channel list) - 264 (member list) = 624 px;
+    // an attachment is 84 px narrower than it (the avatar column and the padding).
+    assert_px(
+        bounds(cx, selector::ATTACHMENT_IMAGE).size.width,
+        540.,
+        "image beside the member list",
+    );
+    let before = cx.update(|_, app| probe.read(app).draws(app));
+    cx.update(|window, app| probe.update(app, |p, cx| p.open_search(window, cx)));
+    settle(cx);
+    // 1280 - 392 - 420 (search column) = 468; the member list is gone.
+    assert_px(
+        bounds(cx, selector::ATTACHMENT_IMAGE).size.width,
+        384.,
+        "image beside the search column",
+    );
+    let after = cx.update(|_, app| probe.read(app).draws(app));
+    assert_eq!(
+        after - before,
+        2,
+        "frames drawn after the search column opened"
+    );
+    // Nothing changes: no frame is asked for and none is drawn.
+    for _ in 0..10 {
+        assert_eq!(cx.update(|window, app| window.simulate_next_frame(app)), 0);
+    }
+    assert_eq!(cx.update(|_, app| probe.read(app).draws(app)), after);
+}

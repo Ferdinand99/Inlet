@@ -44,6 +44,8 @@ pub mod selector {
     pub const COMPOSER_BOX: &str = "composer-box";
     /// The member list beside the chat.
     pub const MEMBER_LIST: &str = "member-list";
+    /// An image attachment of the open channel.
+    pub const ATTACHMENT_IMAGE: &str = "attachment-image";
 }
 
 /// Corner radius of a channel row. gpui's bounds carry no radius, so the tests read
@@ -65,7 +67,7 @@ impl Probe {
     pub fn in_scene(scene: scenes::Scene, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, scene, window, cx);
+            open_demo(&mut inlet, scene, "c-general", window, cx);
             inlet
         });
         Self { inlet }
@@ -76,15 +78,42 @@ impl Probe {
     pub fn with_search_open(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, scenes::Scene::Default, window, cx);
+            open_demo(&mut inlet, scenes::Scene::Default, "c-general", window, cx);
             inlet.open_search(window, cx);
             inlet
         });
         Self { inlet }
     }
+
+    /// The same with `channel` of `g1` open instead of `#general` and the search column
+    /// open beside it (the channel with the long name is `c-rules`).
+    pub fn with_search_open_in(
+        channel: &'static str,
+    ) -> impl FnOnce(&mut Window, &mut Context<Self>) -> Self {
+        move |window, cx| {
+            let inlet = cx.new(|cx| {
+                let mut inlet = Inlet::detached(window, cx);
+                open_demo(&mut inlet, scenes::Scene::Default, channel, window, cx);
+                inlet.open_search(window, cx);
+                inlet
+            });
+            Self { inlet }
+        }
+    }
 }
 
 impl Probe {
+    /// Opens the search column, as a click on the header's search field does.
+    pub fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.inlet
+            .update(cx, |inlet, cx| inlet.open_search(window, cx));
+    }
+
+    /// Frames the view has drawn so far.
+    pub fn draws(&self, cx: &gpui::App) -> u64 {
+        self.inlet.read(cx).media.draws()
+    }
+
     /// The app view, for tests that look at its state.
     #[cfg(test)]
     pub(crate) fn inlet(&self) -> &Entity<Inlet> {
@@ -103,6 +132,7 @@ impl Render for Probe {
 fn open_demo(
     inlet: &mut Inlet,
     scene: scenes::Scene,
+    channel: &str,
     window: &mut Window,
     cx: &mut Context<Inlet>,
 ) {
@@ -133,7 +163,7 @@ fn open_demo(
     inlet.handle_event(msgs::Ev::Guilds(data.guilds).into(), window, cx);
 
     let guild = snowflake("g1");
-    let channel = snowflake("c-general");
+    let channel = snowflake(channel);
     inlet.select_guild(Some(guild.clone()), cx);
     inlet.demo_channel = Some(channel.clone());
     let channels = data
