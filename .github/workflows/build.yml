@@ -800,6 +800,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # A release ships a complete Norwegian catalogue. Pull requests only get a warning
+      # (the Locales workflow), so they are not held up by missing translations.
+      - name: The Norwegian catalogue covers every English text
+        env:
+          INLET_NB_STRICT: "1"
+        run: python3 scripts/check-locales.py
+
       # Package list follows Zed's script/linux.
       - name: Install system packages for gpui
         timeout-minutes: 15

@@ -1,0 +1,39 @@
+# Meldingssøk (feltet i kanaloverskriften og panelet) og hurtigbytteren
+# (Ctrl+K).
+
+search-placeholder = Søk
+search-options = Søkealternativer
+search-suggestions = Forslag
+search-no-suggestions = Ingenting passer.
+search-option-from = bruker
+search-option-mentions = bruker
+search-option-in = kanal
+search-option-has = link, embed eller file
+search-option-before = bestemt dato
+search-option-after = bestemt dato
+search-option-pinned = true eller false
+search-date-hint = år-måned-dag
+search-problem-user = Ingen med navnet { $name } her.
+search-problem-channel = Ingen kanal med navnet { $name } her.
+search-problem-has = «{ $name }» er ikke noe en melding kan ha.
+search-problem-date = «{ $name }» er ikke en dato (år-måned-dag).
+search-problem-pinned = pinned: tar «true» eller «false», ikke «{ $name }».
+search-searching = Søker…
+search-results-count = Resultater: { $count }
+search-no-results = Vi lette overalt, men fant ingenting.
+search-indexing = Disse meldingene blir fortsatt indeksert. Prøv igjen om litt.
+search-failed = Søket mislyktes.
+search-too-fast = Du søker for raskt. Vent litt og prøv igjen.
+search-sort-newest = Nyeste
+search-sort-oldest = Eldste
+search-sort-relevance = Mest relevant
+search-page = Side { $page }
+search-page-previous = Forrige
+search-page-next = Neste
+search-jump = Gå til
+search-switcher-placeholder = Hvor vil du gå?
+search-switcher-empty = Fant ingenting.
+search-switcher-tip = Start med # for kanaler, @ for direktemeldinger, ! for talekanaler eller * for fellesskap.
+search-switcher-previous = Tidligere kanaler
+search-switcher-mentions = Omtaler
+search-switcher-unread = Uleste kanaler

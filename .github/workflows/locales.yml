@@ -1,0 +1,39 @@
+name: Locales
+
+# Compares every language's text catalogue with English and reports what is missing,
+# left over or using other variables, as warning annotations on the pull request. It
+# never fails: a change that adds an English text is not held up while the translations
+# catch up. The app's own tests fail on texts a language has but English lacks and on
+# variables that differ; INLET_NB_STRICT=1 also makes a missing Norwegian text fail them.
+
+on:
+  pull_request:
+    branches: [v0, main]
+    paths:
+      - "crates/inlet-app/locales/**"
+      - "scripts/check-locales.py"
+      - ".github/workflows/locales.yml"
+  push:
+    branches: [v0]
+    paths:
+      - "crates/inlet-app/locales/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: locales-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  missing-texts:
+    name: Missing texts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare the catalogues with English
+        run: python3 scripts/check-locales.py
