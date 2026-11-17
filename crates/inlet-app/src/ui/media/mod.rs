@@ -403,10 +403,11 @@ pub fn file_size(bytes: u64) -> String {
         v /= 1024.;
         unit += 1;
     }
+    // The decimal separator is the locale's ("1,5 MB" in Norwegian).
     let size = if v >= 100. {
-        format!("{v:.0}")
+        crate::i18n::decimal(v, 0)
     } else {
-        format!("{v:.1}")
+        crate::i18n::decimal(v, 1)
     };
     match unit {
         0 => t!("media-size-kb", size = size),

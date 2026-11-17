@@ -1,0 +1,34 @@
+# Meldingshandlinger: sveveraden, hurtigmenyen, reaksjoner og dialogene deres.
+
+action-add-reaction = Legg til reaksjon
+action-reply = Svar
+action-edit = Rediger melding
+action-forward = Videresend
+action-pin = Fest melding
+action-unpin = Løsne melding
+action-mark-unread = Merk som ulest
+action-save = Lagre melding
+action-unsave = Fjern fra lagrede
+action-copy-text = Kopier tekst
+action-copy-link = Kopier meldingslenke
+action-copy-id = Kopier meldings-ID
+action-hide-embeds = Skjul innebygd innhold
+action-show-embeds = Vis innebygd innhold
+action-delete = Slett melding
+action-delete-title = Slett melding
+action-delete-body = Er du sikker på at du vil slette denne meldingen? Dette kan ikke angres.
+action-delete-shift-tip = Tips: Hold inne Shift når du klikker Slett melding, så slipper du denne bekreftelsen.
+action-forward-title = Videresend melding
+action-forward-nowhere = Det finnes ingen steder du kan videresende denne meldingen til.
+action-forwarded = Meldingen er videresendt.
+action-saved = Meldingen er lagret.
+action-react-failed = Kunne ikke endre reaksjonen: { $reason }
+action-delete-failed = Kunne ikke slette meldingen: { $reason }
+action-pin-failed = Kunne ikke endre festingen: { $reason }
+action-forward-failed = Kunne ikke videresende meldingen: { $reason }
+action-save-failed = Kunne ikke endre den lagrede meldingen: { $reason }
+action-embeds-failed = Kunne ikke endre innebygd innhold: { $reason }
+reactors-loading = Laster inn…
+reactors-none = Ingen ennå.
+reactors-more = Og flere.
+reactors-failed = Kunne ikke laste inn hvem som reagerte: { $reason }

@@ -53,6 +53,8 @@ pub fn run() {
         .filter_module("reqwest", log::LevelFilter::Warn)
         .filter_module("rustls", log::LevelFilter::Warn)
         .init();
+    // The language of the texts, and the `Accept-Language` the connections send.
+    i18n::init();
     // A demo scene file (tests/visual/scenes) sets the demo variables before anything
     // reads them.
     #[cfg(feature = "demo")]
