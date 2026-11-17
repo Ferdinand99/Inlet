@@ -471,11 +471,11 @@ pub fn date(ms: i64) -> String {
         return String::new();
     };
     let t = t.with_timezone(&chrono::Local);
-    let month = u8::try_from(t.month())
-        .ok()
-        .and_then(|m| chrono::Month::try_from(m).ok())
-        .map(|m| m.name().chars().take(3).collect::<String>())
-        .unwrap_or_default();
+    // The first three letters of the month's name in the language of the UI.
+    let month: String = crate::ui::chat::time::month_name(t.month())
+        .chars()
+        .take(3)
+        .collect();
     format!("{} {} {}", t.day(), month, t.year())
 }
 

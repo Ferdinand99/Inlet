@@ -3,12 +3,11 @@
 //! web client follows the browser's locale ("01/10/2026, 23:52" in en-GB, "10/01/2026,
 //! 11:52 PM" in en-US, "01.10.2026, 23:52" in nb-NO).
 //!
-//! Deviation: Fluxer formats with the browser's full CLDR data. Inlet reads the system
-//! locale and covers the common patterns (day, month or year first; `/`, `.` or `-`;
-//! 12- or 24-hour clock) without a locale database. Weekday and month names in date
-//! separators stay English, like the rest of the UI until it is translated.
-
-use std::sync::OnceLock;
+//! Deviation: Fluxer formats with the browser's full CLDR data. Inlet reads the locale
+//! ([`crate::i18n::formatting_locale`]: the language chosen in Inlet, else the system's)
+//! and covers the common patterns (day, month or year first; `/`, `.` or `-`; 12- or
+//! 24-hour clock) without a locale database. Weekday and month names come from the text
+//! catalogue, so they are in the language of the UI.
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, Timelike};
 
@@ -103,10 +102,40 @@ impl LocaleFormat {
     }
 }
 
-/// The system's format, read once.
+/// The format of the current locale: the language chosen in Inlet, else the system's.
 pub fn system() -> LocaleFormat {
-    static FORMAT: OnceLock<LocaleFormat> = OnceLock::new();
-    *FORMAT.get_or_init(|| LocaleFormat::for_locale(&sys_locale::get_locale().unwrap_or_default()))
+    LocaleFormat::for_locale(crate::i18n::formatting_locale())
+}
+
+/// The name of a month, 1 for January, in the language of the UI.
+pub fn month_name(month: u32) -> String {
+    match month {
+        1 => t!("markdown-month-1"),
+        2 => t!("markdown-month-2"),
+        3 => t!("markdown-month-3"),
+        4 => t!("markdown-month-4"),
+        5 => t!("markdown-month-5"),
+        6 => t!("markdown-month-6"),
+        7 => t!("markdown-month-7"),
+        8 => t!("markdown-month-8"),
+        9 => t!("markdown-month-9"),
+        10 => t!("markdown-month-10"),
+        11 => t!("markdown-month-11"),
+        _ => t!("markdown-month-12"),
+    }
+}
+
+/// The name of a weekday, 1 for Monday, in the language of the UI.
+pub fn weekday_name(weekday: u32) -> String {
+    match weekday {
+        1 => t!("markdown-weekday-1"),
+        2 => t!("markdown-weekday-2"),
+        3 => t!("markdown-weekday-3"),
+        4 => t!("markdown-weekday-4"),
+        5 => t!("markdown-weekday-5"),
+        6 => t!("markdown-weekday-6"),
+        _ => t!("markdown-weekday-7"),
+    }
 }
 
 /// Milliseconds since the Unix epoch in local time; `None` for 0 and out-of-range values.

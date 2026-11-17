@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The text catalogue. Every text the app shows comes from Project Fluent files under
-//! `locales/<language>/`, one file per domain; English is the source. Look a text up
-//! with [`t!`]:
+//! `locales/<language>/`, one file per domain; English is the source and Norwegian
+//! Bokmål (`nb`) is the second language. Look a text up with [`t!`]:
 //!
 //! ```ignore
 //! t!("offline-retry-now")
@@ -10,9 +10,18 @@
 //!
 //! `build.rs` joins the `.ftl` files of a language into one, so a task that adds a
 //! domain adds its own file and never edits another. A missing ID shows the ID itself
-//! and is logged; the tests make sure that never ships.
+//! and is logged; the tests make sure that never ships. A text that exists in English
+//! but not yet in the chosen language shows the English text, so a language can lag
+//! behind without showing IDs.
+//!
+//! The language: [`set_language`] wins (a language picker calls it; until there is one,
+//! `INLET_LANG=nb` or `INLET_LANG=en` does, through [`init`]), otherwise the first of the
+//! system's preferred languages that Inlet has, otherwise English. Dates and numbers
+//! follow the same choice ([`formatting_locale`]), and the language is sent to the
+//! instance as `Accept-Language` ([`accept_language`]).
 
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{LazyLock, OnceLock};
 
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource, FluentValue};
@@ -20,34 +29,226 @@ use unic_langid::LanguageIdentifier;
 
 /// Every `.ftl` file of `locales/en`, joined by `build.rs`.
 const EN: &str = include_str!(concat!(env!("OUT_DIR"), "/locales-en.ftl"));
+/// Every `.ftl` file of `locales/nb`.
+const NB: &str = include_str!(concat!(env!("OUT_DIR"), "/locales-nb.ftl"));
 
-/// The English catalogue. Shared by the UI and the backend thread.
-static BUNDLE: LazyLock<FluentBundle<FluentResource>> = LazyLock::new(|| bundle("en", EN));
+/// The English catalogue. Shared by the UI and the backend thread, and the fallback for
+/// texts another language does not have yet.
+static EN_BUNDLE: LazyLock<FluentBundle<FluentResource>> = LazyLock::new(|| bundle("en", EN));
+/// The Norwegian Bokmål catalogue.
+static NB_BUNDLE: LazyLock<FluentBundle<FluentResource>> = LazyLock::new(|| bundle("nb", NB));
+
+/// A language Inlet has a catalogue for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Language {
+    English,
+    NorwegianBokmal,
+}
+
+impl Language {
+    /// Every language.
+    pub const ALL: [Language; 2] = [Language::English, Language::NorwegianBokmal];
+
+    /// The folder under `locales/` and the BCP 47 language tag.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Language::English => "en",
+            Language::NorwegianBokmal => "nb",
+        }
+    }
+
+    /// The locale with its region, for dates and numbers.
+    pub fn region_locale(self) -> &'static str {
+        match self {
+            Language::English => "en-US",
+            Language::NorwegianBokmal => "nb-NO",
+        }
+    }
+
+    /// The language a locale name stands for (`nb-NO`, `no`, `nn_NO.UTF-8`, `en_GB`),
+    /// or `None` when Inlet has no catalogue for it. Nynorsk gets Bokmål, the nearest
+    /// language Inlet has.
+    pub fn from_locale(name: &str) -> Option<Language> {
+        let name = name.split(['.', '@']).next().unwrap_or_default();
+        let lang = name.split(['-', '_']).next().unwrap_or_default();
+        match lang.to_ascii_lowercase().as_str() {
+            "en" => Some(Language::English),
+            "nb" | "nn" | "no" => Some(Language::NorwegianBokmal),
+            _ => None,
+        }
+    }
+
+    /// The first of `locales` (most wanted first) that Inlet has a catalogue for.
+    pub fn negotiate<S: AsRef<str>>(locales: &[S]) -> Option<Language> {
+        locales
+            .iter()
+            .find_map(|l| Language::from_locale(l.as_ref()))
+    }
+
+    fn code(self) -> u8 {
+        match self {
+            Language::English => 1,
+            Language::NorwegianBokmal => 2,
+        }
+    }
+
+    fn from_code(code: u8) -> Option<Language> {
+        Language::ALL.into_iter().find(|l| l.code() == code)
+    }
+}
+
+/// The language set with [`set_language`]; 0 while none is.
+static CHOSEN: AtomicU8 = AtomicU8::new(0);
+
+/// Sets the language, or goes back to following the system with `None`. Texts drawn
+/// after this use the new language; `Accept-Language` follows for connections made after
+/// it.
+pub fn set_language(language: Option<Language>) {
+    CHOSEN.store(language.map_or(0, Language::code), Ordering::Relaxed);
+    push_accept_language();
+}
+
+/// The language the texts are in now.
+pub fn language() -> Language {
+    Language::from_code(CHOSEN.load(Ordering::Relaxed)).unwrap_or_else(system_language)
+}
+
+/// The system's choice, read once. Unit tests always get English, so a developer's own
+/// language never changes what they assert.
+fn system_language() -> Language {
+    static SYSTEM: OnceLock<Language> = OnceLock::new();
+    *SYSTEM.get_or_init(|| {
+        if cfg!(test) {
+            return Language::English;
+        }
+        Language::negotiate(&sys_locale::get_locales().collect::<Vec<_>>())
+            .unwrap_or(Language::English)
+    })
+}
+
+/// The system's own locale name, read once (`nb-NO`, `en_US.UTF-8`; empty when unknown).
+fn system_locale() -> &'static str {
+    static LOCALE: OnceLock<String> = OnceLock::new();
+    LOCALE.get_or_init(|| sys_locale::get_locale().unwrap_or_default())
+}
+
+/// The locale that dates and numbers follow. With a language set by [`set_language`],
+/// the region of that language; otherwise the system's regional format, as before the
+/// UI had a second language.
+pub fn formatting_locale() -> &'static str {
+    match Language::from_code(CHOSEN.load(Ordering::Relaxed)) {
+        Some(language) => language.region_locale(),
+        None => system_locale(),
+    }
+}
+
+/// The `Accept-Language` value for the instance: the language with its region first,
+/// then the bare language, then English as the last resort.
+pub fn accept_language() -> String {
+    accept_language_for(language())
+}
+
+fn accept_language_for(language: Language) -> String {
+    match language {
+        Language::English => "en-US,en;q=0.9".to_string(),
+        language => format!(
+            "{},{};q=0.9,en;q=0.5",
+            language.region_locale(),
+            language.tag()
+        ),
+    }
+}
+
+/// Tells the protocol crate which `Accept-Language` to send.
+fn push_accept_language() {
+    inlet_protocol::instance::set_accept_language(&accept_language());
+}
+
+/// Called once at start-up, before the first connection is made. `INLET_LANG` (for
+/// example `en` or `nb`) pins the language, which screenshots and tests of the real
+/// views use; then the protocol crate learns the `Accept-Language` to send.
+pub fn init() {
+    match std::env::var("INLET_LANG")
+        .ok()
+        .and_then(|tag| Language::from_locale(&tag))
+    {
+        Some(language) => set_language(Some(language)),
+        None => push_accept_language(),
+    }
+}
+
+/// The decimal separator of a locale name: a comma for most of Europe, a point
+/// otherwise.
+pub fn decimal_separator_of(locale: &str) -> char {
+    let lang = locale
+        .split(['-', '_', '.', '@'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match lang.as_str() {
+        "nb" | "nn" | "no" | "da" | "sv" | "fi" | "is" | "de" | "fr" | "es" | "it" | "pt"
+        | "nl" | "pl" | "cs" | "sk" | "sl" | "hr" | "sr" | "bg" | "ru" | "uk" | "be" | "ro"
+        | "hu" | "tr" | "el" | "et" | "lv" | "lt" | "sq" | "mk" | "kk" | "az" | "id" | "vi" => ',',
+        _ => '.',
+    }
+}
+
+/// `value` with `digits` decimals and the decimal separator of [`formatting_locale`].
+pub fn decimal(value: f64, digits: usize) -> String {
+    decimal_in(value, digits, formatting_locale())
+}
+
+fn decimal_in(value: f64, digits: usize, locale: &str) -> String {
+    let text = format!("{value:.digits$}");
+    match decimal_separator_of(locale) {
+        '.' => text,
+        sep => text.replace('.', &sep.to_string()),
+    }
+}
 
 fn bundle(lang: &str, source: &str) -> FluentBundle<FluentResource> {
-    let lang: LanguageIdentifier = lang.parse().expect("a valid language tag");
-    let mut bundle = FluentBundle::new_concurrent(vec![lang]);
+    let id: LanguageIdentifier = lang.parse().expect("a valid language tag");
+    let mut bundle = FluentBundle::new_concurrent(vec![id]);
     // No Unicode isolation marks around arguments: gpui draws them as gaps, and names
     // are already cleaned of direction controls by `model::clean_name`.
     bundle.set_use_isolating(false);
     let resource = FluentResource::try_new(source.to_string()).unwrap_or_else(|(res, errors)| {
-        log::error!("text catalogue has {} syntax errors", errors.len());
+        log::error!("text catalogue {lang} has {} syntax errors", errors.len());
         res
     });
     if let Err(errors) = bundle.add_resource(resource) {
-        log::error!("text catalogue has {} duplicate IDs", errors.len());
+        log::error!("text catalogue {lang} has {} duplicate IDs", errors.len());
     }
     bundle
 }
 
 /// The text `id` with `args`. Use [`t!`] instead of calling this.
 pub fn tr(id: &str, args: Option<&FluentArgs>) -> String {
-    let Some(pattern) = BUNDLE.get_message(id).and_then(|m| m.value()) else {
+    tr_in(language(), id, args)
+}
+
+/// The text `id` in `language`.
+fn tr_in(language: Language, id: &str, args: Option<&FluentArgs>) -> String {
+    let own: &FluentBundle<FluentResource> = match language {
+        Language::English => &EN_BUNDLE,
+        Language::NorwegianBokmal => &NB_BUNDLE,
+    };
+    tr_from(own, id, args)
+}
+
+/// The text `id` from `own`, else from the English catalogue, else the ID itself. A
+/// language can lag behind English without showing IDs.
+fn tr_from(own: &FluentBundle<FluentResource>, id: &str, args: Option<&FluentArgs>) -> String {
+    let en: &FluentBundle<FluentResource> = &EN_BUNDLE;
+    let found = [own, en]
+        .into_iter()
+        .find_map(|b| b.get_message(id).and_then(|m| m.value()).map(|p| (b, p)));
+    let Some((bundle, pattern)) = found else {
         log::warn!("no text with the ID {id}");
         return id.to_string();
     };
     let mut errors = Vec::new();
-    let text = BUNDLE.format_pattern(pattern, args, &mut errors);
+    let text = bundle.format_pattern(pattern, args, &mut errors);
     if !errors.is_empty() {
         log::warn!("text {id}: {errors:?}");
     }
@@ -100,6 +301,9 @@ macro_rules! t {
         $crate::i18n::tr($id, Some(&args))
     }};
 }
+
+#[cfg(test)]
+mod locales_tests;
 
 #[cfg(test)]
 mod tests {
