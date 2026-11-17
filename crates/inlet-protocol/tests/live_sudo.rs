@@ -1,7 +1,9 @@
 //! Sudo mode against the private test instance `fluxer.test` (LAN only, private test CA).
 //! Needs the feature `test-extra-ca` and the variables `scripts/docker-build.sh
-//! fluxer-test` sets. Ignored by default; run with
-//! `scripts/docker-build.sh fluxer-test -p inlet-protocol --test live_sudo`.
+//! fluxer-test` sets. Ignored by default; run with `scripts/docker-build.sh fluxer-test
+//! -p inlet-protocol --features test-extra-ca --test live_sudo -- --ignored --nocapture`.
+//! It takes about a minute: the instance allows six recovery kits a minute, and the
+//! client waits for the limit like any other request.
 //!
 //! The test makes its own throwaway account (random name and password, kept in memory;
 //! registration is open on the test instance) and deletes it at the end. It reads no
@@ -162,7 +164,7 @@ async fn sudo_mode_with_a_password_then_a_code_then_a_backup_code() {
             Method::POST,
             "/users/@me/delete",
             Some(&json!({"immediate": true})),
-            Some(&SudoProof::code(totp(&secret, step.saturating_sub(1)))),
+            Some(&SudoProof::code(totp(&secret, unused_step(step)))),
         )
         .await;
     println!("cleanup: {gone:?}");
@@ -172,7 +174,7 @@ async fn sudo_mode_with_a_password_then_a_code_then_a_backup_code() {
                 &http,
                 &base,
                 "/users/@me/delete",
-                json!({"mfa_method": "totp", "mfa_code": totp(&secret, step + 1)}),
+                json!({"mfa_method": "totp", "mfa_code": totp(&secret, unused_step(step))}),
             )
             .await;
         println!("cleanup (plain request): {status}");
@@ -189,4 +191,14 @@ fn backup_code(enabled: &Value) -> String {
         .or_else(|| first.as_str())
         .expect("a backup code")
         .to_owned()
+}
+
+/// A TOTP step the instance accepts (within one step of now) that the test has not used
+/// yet: the steps `used` and `used + 1` are spent.
+fn unused_step(used: u64) -> u64 {
+    let now = totp_step_now();
+    [now + 1, now, now.saturating_sub(1)]
+        .into_iter()
+        .find(|s| *s != used && *s != used + 1)
+        .expect("a free step")
 }

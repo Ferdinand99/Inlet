@@ -376,12 +376,7 @@ async fn the_confirm_dialog_flow_on_the_test_instance() {
         )
         .unwrap(),
     );
-    let (_, ev) = ask(
-        &client,
-        delete,
-        code(&totp(&secret, step.saturating_sub(1))),
-    )
-    .await;
+    let (_, ev) = ask(&client, delete, code(&totp(&secret, unused_step(step)))).await;
     println!(
         "cleanup: {}",
         if matches!(ev, Ev::Done { .. }) {
@@ -401,4 +396,14 @@ fn with_ticket(ev: Ev, ticket: u64) -> Ev {
         Ev::Done { response, .. } => Ev::Done { ticket, response },
         Ev::Failed { reason, .. } => Ev::Failed { ticket, reason },
     }
+}
+
+/// A TOTP step the instance accepts (within one step of now) that the test has not used
+/// yet: the steps `used` and `used + 1` are spent.
+fn unused_step(used: u64) -> u64 {
+    let now = p::test_support::totp_step_now();
+    [now + 1, now, now.saturating_sub(1)]
+        .into_iter()
+        .find(|s| *s != used && *s != used + 1)
+        .expect("a free step")
 }
