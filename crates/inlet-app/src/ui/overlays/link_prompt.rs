@@ -7,7 +7,7 @@ use gpui::{div, prelude::*, AnyElement, Context, FontWeight};
 
 use super::modal::modal;
 use crate::app::Inlet;
-use crate::backend::platform::links::Prompt;
+use crate::backend::platform::links::{web_invite, Incoming, Prompt};
 use crate::theme;
 use crate::ui::markdown;
 use crate::ui::widgets::button;
@@ -88,21 +88,45 @@ impl Inlet {
                             .into_any_element(),
                     );
                 }
-                children.push(text(t!("link-prompt-invite-body", host = host.as_str())));
-                // Open exactly what was checked, and only http(s).
+                children.push(text(if known_instance {
+                    t!("link-prompt-invite-body-app")
+                } else {
+                    t!("link-prompt-invite-body", host = host.as_str())
+                }));
+                // An invite on this instance is shown in the app first, and joined only
+                // by the button there. One on another instance opens in the browser:
+                // its code is never sent to this instance. Only http(s) is opened.
                 let parsed = markdown::openable(&url);
+                let in_app = known_instance
+                    .then(|| web_invite(&url))
+                    .flatten()
+                    .and_then(|link| match link {
+                        Incoming::WebInvite { code, .. } => Some(code),
+                        Incoming::Deep(_) => None,
+                    });
+                let label = if in_app.is_some() {
+                    t!("link-prompt-invite-show")
+                } else {
+                    t!("link-prompt-invite-open")
+                };
                 buttons = buttons
                     .child(
-                        button("link-prompt-invite", t!("link-prompt-invite-open"), true).on_click(
-                            cx.listener(move |this, _, _, cx| {
+                        button("link-prompt-invite", label, true).on_click(cx.listener(
+                            move |this, _, _, cx| {
                                 this.overlays.link_prompt = None;
-                                if let Some(u) = &parsed {
-                                    cx.open_url(u.as_str());
+                                match &in_app {
+                                    Some(code) => this.open_invite(code.clone(), cx),
+                                    None => {
+                                        if let Some(u) = &parsed {
+                                            cx.open_url(u.as_str());
+                                        }
+                                    }
                                 }
                                 cx.notify();
-                            }),
-                        ),
+                            },
+                        )),
                     )
+                    .children(self.invite_sign_in_button(&url, known_instance, cx))
                     .child(cancel(t!("common-cancel")));
             }
             Prompt::Unavailable => {

@@ -23,7 +23,7 @@ pub mod alerts;
 pub mod badge;
 mod reading;
 pub mod settings;
-mod unread;
+pub(crate) mod unread;
 mod writes;
 
 use gpui::{actions, div, prelude::*, px, AnyElement, App, Context, KeyBinding};
@@ -249,6 +249,20 @@ impl Inlet {
         self.notifications.settings = Some(SettingsWindow {
             guild_id: self.selected_guild.clone(),
             channel_id,
+        });
+        cx.notify();
+    }
+
+    /// Opens the settings window for a server's own settings (from its menu), whether
+    /// or not it is the open one.
+    pub(crate) fn open_guild_notification_settings(
+        &mut self,
+        guild: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.notifications.settings = Some(SettingsWindow {
+            guild_id: Some(guild),
+            channel_id: None,
         });
         cx.notify();
     }

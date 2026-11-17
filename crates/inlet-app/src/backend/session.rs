@@ -111,6 +111,8 @@ pub enum Credential {
     },
     /// A finished browser sign-in.
     SignedIn(p::SignedIn),
+    /// A sign-in the person typed in the app (password, email code, second factor).
+    Entered(p::SignedIn),
     /// A token the person pasted.
     Pasted(p::Token),
 }
@@ -137,7 +139,9 @@ pub async fn connect(instance: p::Instance, credential: Credential) -> Result<Co
         }
         // A pasted token has no pins yet; it is pinned to this instance when saved.
         Credential::Pasted(token) => p::Session::from_token_unpinned(instance, token),
-        Credential::SignedIn(signed_in) => p::Session::from_signed_in(instance, signed_in),
+        Credential::SignedIn(signed_in) | Credential::Entered(signed_in) => {
+            p::Session::from_signed_in(instance, signed_in)
+        }
     };
     with_timeout(async {
         let me = session.client().me().await?;
@@ -223,6 +227,12 @@ pub async fn revoke(session: &p::Session) -> bool {
 }
 
 impl Credential {
+    /// The token was issued to Inlet by a sign-in (the browser or the app's own form), so
+    /// Inlet may end it on the server. A pasted token belongs to another client.
+    pub fn is_issued(&self) -> bool {
+        matches!(self, Credential::SignedIn(_) | Credential::Entered(_))
+    }
+
     /// The token came from the paste field. Inlet may only forget such a token: it
     /// belongs to another client, which must stay signed in.
     pub fn is_pasted(&self) -> bool {
