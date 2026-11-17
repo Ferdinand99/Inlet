@@ -233,6 +233,7 @@ pub fn load_scene_file() {
     set("INLET_DEMO_GUILD", file.guild.as_deref());
     set("INLET_DEMO_CHANNEL", file.channel.as_deref());
     set("INLET_DEMO_SETTINGS", file.settings.as_deref());
+    set("INLET_DEMO_UPDATE", file.update.as_deref());
     set("INLET_DEMO_DEEP_LINK", file.deep_link.as_deref());
     set("INLET_DEMO_ACCENT", file.accent.as_deref());
     set("INLET_DEMO_THEME", Some(file.theme.as_str()));
