@@ -171,6 +171,49 @@ fn solver_slot() -> Arc<tokio::sync::Semaphore> {
         .clone()
 }
 
+tokio::task_local! {
+    static SOLVE_CANCEL: SolveCancel;
+}
+
+/// A way to stop the CAPTCHA solves of one piece of work, for example one sign-in the
+/// person leaves. Clone it freely; every clone cancels the same work.
+#[derive(Clone, Default)]
+pub struct SolveCancel(Arc<(AtomicBool, tokio::sync::Notify)>);
+
+impl SolveCancel {
+    /// A new, not yet cancelled handle.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stops a solve that is running under this handle (its workers stop at their next
+    /// attempt and the CPU is free again) and makes later ones fail at once.
+    pub fn cancel(&self) {
+        self.0 .0.store(true, Ordering::SeqCst);
+        self.0 .1.notify_one();
+    }
+
+    /// Whether [`SolveCancel::cancel`] was called.
+    pub fn is_cancelled(&self) -> bool {
+        self.0 .0.load(Ordering::SeqCst)
+    }
+
+    async fn cancelled(&self) {
+        loop {
+            if self.is_cancelled() {
+                return;
+            }
+            self.0 .1.notified().await;
+        }
+    }
+}
+
+/// Runs `work`; every [`solve`] inside it (the CAPTCHA of a sign-in request) ends with
+/// [`Error::Cancelled`] as soon as `cancel` is cancelled.
+pub async fn with_solve_cancel<F: std::future::Future>(cancel: SolveCancel, work: F) -> F::Output {
+    SOLVE_CANCEL.scope(cancel, work).await
+}
+
 /// Async wrapper around [`solve_blocking`], with a hard deadline.
 ///
 /// - Only one solve runs at a time in the process; waiting for it counts
@@ -180,6 +223,22 @@ fn solver_slot() -> Arc<tokio::sync::Semaphore> {
 ///   future is dropped, and the slot is only freed once they have stopped
 ///   (one attempt at the highest accepted cost can take a few seconds).
 pub async fn solve(challenge: Value, timeout: Duration) -> Result<String> {
+    match SOLVE_CANCEL.try_with(Clone::clone) {
+        Ok(cancel) => {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            // Dropping the solve stops its workers, and frees the one solver slot.
+            tokio::select! {
+                result = solve_timed(challenge, timeout) => result,
+                () = cancel.cancelled() => Err(Error::Cancelled),
+            }
+        }
+        Err(_) => solve_timed(challenge, timeout).await,
+    }
+}
+
+async fn solve_timed(challenge: Value, timeout: Duration) -> Result<String> {
     let started = tokio::time::Instant::now();
     let permit = tokio::time::timeout(timeout, solver_slot().acquire_owned())
         .await

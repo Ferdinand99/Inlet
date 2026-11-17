@@ -1,0 +1,9 @@
+# The wait for the new-network email: where the email went and the resend button.
+name = "sign-in-ip"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "sign-in-ip"
+guild = "g1"
+channel = "c-general"

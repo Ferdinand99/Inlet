@@ -237,7 +237,9 @@ impl Inlet {
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_mention_filter(false, cx)))
                 .into_any_element(),
         ];
-        let items = self.inbox.mentions.list.items.clone();
+        let mut items = self.inbox.mentions.list.items.clone();
+        // Mentions in a channel behind a content warning stay out of the list.
+        items.retain(|i| !self.channel_gated(&i.message.channel_id, cx));
         let mut cards = Vec::with_capacity(items.len());
         for item in &items {
             let id = item.message.id.clone();

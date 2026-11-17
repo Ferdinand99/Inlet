@@ -70,7 +70,9 @@ pub enum Prompt {
     },
     /// A channel this account cannot see (or that is not loaded). Nothing to open.
     UnknownChannel,
-    /// An invite. "Open invite" shows its page in the browser; joining is a step there.
+    /// An invite. "Show invite" shows the server in the app (an invite on this instance);
+    /// "Open invite" shows its page in the browser (one on another instance). Joining is
+    /// a step of its own in either.
     Invite {
         url: String,
         /// The host the invite is on, as shown.
@@ -110,8 +112,9 @@ fn host_of(origin: &str) -> String {
 
 /// What to ask before following `link`. There is no answer that acts at once.
 // Deviation: Fluxer opens a channel link at once and shows invites in the app. Inlet
-// asks first for every link that comes from outside the window, and opens invites in
-// the browser until it has an invite view of its own.
+// asks first for every link that comes from outside the window; an invite on this
+// instance is then shown in the app (and joined only by its button), one on another
+// instance opens in the browser.
 pub fn decide(link: &Incoming, lookup: &dyn Lookup) -> Prompt {
     let Some(instance) = lookup.instance() else {
         return Prompt::SignInFirst;

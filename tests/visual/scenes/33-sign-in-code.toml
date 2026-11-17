@@ -1,0 +1,9 @@
+# The emailed-code step: the address the code went to, the code field and the quiet links (a new code, a different email).
+name = "sign-in-code"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "sign-in-code"
+guild = "g1"
+channel = "c-general"

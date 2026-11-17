@@ -5,8 +5,8 @@ mod common;
 use std::time::Duration;
 
 use inlet_protocol::{
-    altcha, sign_in_password, Client, ClientInfo, Discovery, Error, Handoff, Instance, Session,
-    SignInResult, Token,
+    altcha, sign_in_password, Client, ClientInfo, Discovery, Error, Handoff, Instance, Secret,
+    Session, SignInResult, Token,
 };
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
@@ -98,7 +98,7 @@ async fn redirects_are_not_followed_with_secrets() {
         .expect(0)
         .mount(&elsewhere)
         .await;
-    let err = sign_in_password(&instance, "ana@example.org", "correct horse")
+    let err = sign_in_password(&instance, "ana@example.org", &Secret::new("correct horse"))
         .await
         .unwrap_err();
     assert!(matches!(err, Error::Decode(_)), "{err:?}");
@@ -301,7 +301,7 @@ async fn unsolvable_captcha_is_a_captcha_result() {
         .expect(1)
         .mount(&server)
         .await;
-    let result = sign_in_password(&instance, "ana@example.org", "correct horse")
+    let result = sign_in_password(&instance, "ana@example.org", &Secret::new("correct horse"))
         .await
         .unwrap();
     assert!(matches!(result, SignInResult::Captcha), "{result:?}");

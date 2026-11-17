@@ -1,0 +1,9 @@
+# An invite shown before it is joined: the server, its size and who invited.
+name = "invite-accept"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "invite-accept"
+guild = "g1"
+channel = "c-general"
