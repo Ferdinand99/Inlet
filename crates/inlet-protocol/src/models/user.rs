@@ -185,6 +185,11 @@ impl UserSettings {
 /// Changes for `PATCH /users/@me/settings`. Fields left `None` keep their value.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct UserSettingsUpdate {
+    /// The guild order and folders (replaces the list). Not serialised here:
+    /// [`crate::Client::update_user_settings`] checks every folder and writes it in the
+    /// form the server takes, in the same request as the other fields.
+    #[serde(skip)]
+    pub guild_folders: Option<Vec<GuildFolder>>,
     /// Status (not `offline`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,

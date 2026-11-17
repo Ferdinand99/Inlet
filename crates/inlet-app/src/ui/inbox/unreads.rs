@@ -101,7 +101,13 @@ impl Inlet {
             (None, None) => std::rc::Rc::new(Vec::new()),
         };
         let mut items = Vec::with_capacity(rows.len());
-        for row in rows.iter().cloned() {
+        // Channels behind a content warning stay out of the list.
+        let visible: Vec<UnreadRow> = rows
+            .iter()
+            .filter(|r| !self.channel_gated(&r.channel.to_string(), cx))
+            .cloned()
+            .collect();
+        for row in visible {
             let (channel, guild) = self.channel_and_guild_names(&row.channel.to_string(), cx);
             let check = {
                 let row = row.clone();

@@ -60,9 +60,14 @@ pub struct Probe {
 
 impl Probe {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::in_scene(scenes::Scene::Default, window, cx)
+    }
+
+    /// The same, with a demo scene's data.
+    pub fn in_scene(scene: scenes::Scene, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, "c-general", window, cx);
+            open_demo(&mut inlet, scene, "c-general", window, cx);
             inlet
         });
         Self { inlet }
@@ -73,7 +78,7 @@ impl Probe {
     pub fn with_search_open(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let inlet = cx.new(|cx| {
             let mut inlet = Inlet::detached(window, cx);
-            open_demo(&mut inlet, "c-general", window, cx);
+            open_demo(&mut inlet, scenes::Scene::Default, "c-general", window, cx);
             inlet.open_search(window, cx);
             inlet
         });
@@ -88,7 +93,7 @@ impl Probe {
         move |window, cx| {
             let inlet = cx.new(|cx| {
                 let mut inlet = Inlet::detached(window, cx);
-                open_demo(&mut inlet, channel, window, cx);
+                open_demo(&mut inlet, scenes::Scene::Default, channel, window, cx);
                 inlet.open_search(window, cx);
                 inlet
             });
@@ -113,8 +118,14 @@ impl Render for Probe {
 
 /// What the demo backend sends after sign-in, then the guild and channel the
 /// screenshots open, then that channel's newest page.
-fn open_demo(inlet: &mut Inlet, channel: &str, window: &mut Window, cx: &mut Context<Inlet>) {
-    let data = scenes::data(scenes::Scene::Default);
+fn open_demo(
+    inlet: &mut Inlet,
+    scene: scenes::Scene,
+    channel: &str,
+    window: &mut Window,
+    cx: &mut Context<Inlet>,
+) {
+    let data = scenes::data(scene);
     let names = Arc::new(Mutex::new(demo::demo_names(&data.channels)));
     // As the demo backend: the account list, which account it is, then its READY.
     let main = demo::accounts::list().into_iter().take(1).collect();

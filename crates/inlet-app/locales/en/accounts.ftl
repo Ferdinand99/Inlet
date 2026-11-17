@@ -100,3 +100,67 @@ notice-keychain-unreadable = The system keychain could not be read, so Inlet onl
 notice-account-list-unreadable = The list of accounts could not be read. It was kept as accounts.json.bad and is not written over; sign in again to use Inlet now.
 notice-old-session-dropped = A session saved by an older Inlet could not be used safely and was removed. Sign in again, and end the old session under Devices in Fluxer's settings.
 notice-account-list-moved = The list of accounts could not be read. It was moved to accounts.json.bad, where the accounts it names can still be found; sign in again to add them.
+
+## Signing in inside the app
+
+sign-in-mode-password = Sign in
+sign-in-continue = Continue
+sign-in-password-hint = Sign in with your account on the instance. Inlet talks to the instance directly; nothing goes through a browser.
+sign-in-invite-note = Sign in to { $host } to open the invite.
+link-prompt-invite-sign-in = Sign in on { $host }
+entry-on-instance = On { $host }
+entry-change-instance = Change instance
+entry-use-browser = Sign in with the browser instead
+entry-still-working = Still working on it…
+entry-sso-enforced = This instance asks everyone to sign in with single sign-on, which Inlet cannot do yet. Use the browser sign-in.
+entry-title-sign-in = Sign in
+entry-title-welcome = Welcome back
+entry-title-password = Enter your password
+entry-title-code = Check your email
+entry-title-mfa = Two-factor authentication
+entry-title-ip = Check your email
+entry-title-ip-lost = Connection lost
+entry-label-email = Email
+entry-label-username = Username
+entry-label-password = Password
+entry-label-code = Verification code
+entry-code-placeholder = 6-digit code
+entry-label-authenticator = Authenticator code
+entry-label-backup = Backup code
+entry-code-sent-to = Enter the code we sent to { $email }.
+entry-mfa-text = Enter the 6-digit code from your authenticator app, or one of your backup codes.
+entry-mfa-backup-only = Enter one of your backup codes.
+entry-mfa-passkey-only = This account needs a passkey or security key, which Inlet cannot use yet. Sign in with the browser instead.
+entry-send-new-code = Send a new code
+entry-send-new-code-in = Send a new code in { $seconds } s
+entry-different-email = Use a different email
+entry-different-username = Use a different username
+entry-back-to-sign-in = Back to sign in
+entry-ip-text = Check your inbox at { $email } for the authorization link.
+entry-ip-text-no-address = Check your inbox for the authorization link.
+entry-ip-lost-text = Lost connection while waiting for authorization. Try again.
+entry-ip-resend = Resend email
+entry-ip-resend-in = Resend email ({ $seconds } s)
+entry-ip-resent = Resent
+entry-try-again = Try again
+entry-no-account = No account was found for this. Creating an account in Inlet is not possible yet.
+entry-no-account-closed = No account was found for this, and this instance is not taking new accounts right now.
+
+## Why a sign-in step failed
+
+entry-error-credentials-email = The email address or the password is wrong.
+entry-error-credentials-username = The username or the password is wrong.
+entry-error-code-wrong = That code is not right.
+entry-error-code-expired = That code has expired. Ask for a new one.
+entry-error-timed-out = This sign-in timed out. Start again.
+entry-error-no-codes = This instance cannot send sign-in codes.
+entry-error-sso-required = This instance asks everyone to sign in with single sign-on, which Inlet cannot do yet. Use the browser sign-in.
+entry-error-feature-off = This instance does not use this way of signing in.
+entry-error-network-blocked = The instance blocks this network.
+entry-error-ip-resent-already = The email was already sent again. Check your inbox.
+entry-error-resend-soon = Wait a moment before asking again.
+entry-error-captcha = The instance asked for a check that Inlet could not pass. Try again, or sign in with the browser instead.
+entry-error-rate-limited-now = Too many attempts. Wait a moment and try again.
+entry-error-rate-limited-seconds = Too many attempts. Try again in { $seconds } s.
+entry-error-rate-limited-minutes = Too many attempts. Try again in { $minutes } min.
+entry-error-unknown-step = The instance asked for a step Inlet does not know yet. Sign in with the browser instead.

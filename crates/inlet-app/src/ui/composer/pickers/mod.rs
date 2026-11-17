@@ -634,7 +634,7 @@ impl Inlet {
     }
 
     /// Sends a preference edit (shown at once). Too many edits waiting: dropped.
-    fn edit_prefs(&mut self, edit: PrefEdit) {
+    pub(crate) fn edit_prefs(&mut self, edit: PrefEdit) {
         if let Some(cmd) = self.composer.pickers.prefs.edit(edit) {
             self.backend.send(ComposerCmd::Pickers(cmd));
         }

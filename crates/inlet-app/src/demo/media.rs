@@ -187,7 +187,9 @@ fn serve(path: &str, query: &str) -> Option<Vec<u8>> {
             };
             png_of(128, 128, emblem(128, bg, fg))
         }
-        "banners" => png_of(640, 256, landscape(640, 256, 1.3)),
+        // 16:9, like the box it is shown in (320 x 180): it scales by exactly one half, so
+        // its edge rows never land on a fraction of a pixel.
+        "banners" => png_of(640, 360, landscape(640, 360, 1.3)),
         "attachments" => {
             if query.contains("hm=expired") {
                 return None;

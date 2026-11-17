@@ -244,6 +244,40 @@
     "204": {}
    }
   },
+  "DELETE /users/@me/guilds/{}": {
+   "documentedPath": "/users/@me/guilds/{guild_id}",
+   "operationId": "leave_guild",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "guild_id",
+     "required": true,
+     "schema": {
+      "$ref": "SnowflakeType"
+     }
+    },
+    {
+     "in": "query",
+     "name": "delete_messages",
+     "required": false,
+     "schema": {
+      "default": "false",
+      "type": "string"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "SudoVerificationSchema"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "204": {}
+   }
+  },
   "DELETE /users/@me/memes/{}": {
    "documentedPath": "/users/@me/memes/{meme_id}",
    "operationId": "delete_favorite_meme",
@@ -1714,6 +1748,46 @@
     }
    }
   },
+  "POST /auth/email-code/send": {
+   "documentedPath": "/auth/email-code/send",
+   "operationId": "send_email_code",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "EmailCodeSendRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "EmailCodeSendResponse"
+     }
+    }
+   }
+  },
+  "POST /auth/email-code/verify": {
+   "documentedPath": "/auth/email-code/verify",
+   "operationId": "verify_email_code",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "EmailCodeVerifyRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "EmailCodeVerifyResponse"
+     }
+    }
+   }
+  },
   "POST /auth/handoff/initiate": {
    "documentedPath": "/auth/handoff/initiate",
    "operationId": "initiate_handoff",
@@ -1761,6 +1835,42 @@
       "$ref": "HandoffStatusResponse"
      }
     }
+   }
+  },
+  "POST /auth/identify": {
+   "documentedPath": "/auth/identify",
+   "operationId": "identify_account",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "IdentifyRequest"
+     }
+    },
+    "required": false
+   },
+   "responses": {
+    "200": {
+     "application/json": {
+      "$ref": "IdentifyResponse"
+     }
+    }
+   }
+  },
+  "POST /auth/ip-authorization/resend": {
+   "documentedPath": "/auth/ip-authorization/resend",
+   "operationId": "resend_ip_authorization",
+   "parameters": [],
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "$ref": "MfaTicketRequest"
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "204": {}
    }
   },
   "POST /auth/login": {
@@ -2599,6 +2709,56 @@
      "type": "object"
     }
    ]
+  },
+  "AuthRegisterSuccessResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "device_proof": {
+     "type": "string"
+    },
+    "entry": {
+     "anyOf": [
+      {
+       "$ref": "GuildEntryResult"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "token": {
+     "type": "string"
+    },
+    "user": {
+     "$ref": "UserPartialResponse"
+    },
+    "user_id": {
+     "$ref": "SnowflakeStringType"
+    }
+   },
+   "required": [
+    "token",
+    "user",
+    "user_id"
+   ],
+   "type": "object"
+  },
+  "AuthRegistrationPendingApprovalResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "registration_pending_approval": {
+     "const": true,
+     "type": "boolean"
+    },
+    "user_id": {
+     "$ref": "SnowflakeStringType"
+    }
+   },
+   "required": [
+    "registration_pending_approval",
+    "user_id"
+   ],
+   "type": "object"
   },
   "AuthTokenWithUserIdResponse": {
    "additionalProperties": false,
@@ -5512,6 +5672,134 @@
     "string"
    ]
   },
+  "EmailCodeSendRequest": {
+   "properties": {
+    "registration_url_code": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "ticket": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "ticket"
+   ],
+   "type": "object"
+  },
+  "EmailCodeSendResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "code_expires_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    },
+    "purpose": {
+     "enum": [
+      "sign_in",
+      "sign_up"
+     ],
+     "type": "string"
+    },
+    "resend_available_at": {
+     "format": "date-time",
+     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+     "type": "string"
+    }
+   },
+   "required": [
+    "code_expires_at",
+    "purpose",
+    "resend_available_at"
+   ],
+   "type": "object"
+  },
+  "EmailCodeVerifyRequest": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "consent": {
+     "type": "boolean"
+    },
+    "global_name": {
+     "type": "string"
+    },
+    "invite_code": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "registration_url_code": {
+     "type": [
+      "null",
+      "string"
+     ]
+    },
+    "ticket": {
+     "type": "string"
+    },
+    "username": {
+     "$ref": "UsernameType"
+    }
+   },
+   "required": [
+    "code",
+    "ticket"
+   ],
+   "type": "object"
+  },
+  "EmailCodeVerifyResponse": {
+   "anyOf": [
+    {
+     "$ref": "AuthRegisterSuccessResponse"
+    },
+    {
+     "$ref": "AuthRegistrationPendingApprovalResponse"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "allowed_methods": {
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 10,
+       "type": "array"
+      },
+      "backup_codes": {
+       "type": "boolean"
+      },
+      "mfa": {
+       "const": true,
+       "type": "boolean"
+      },
+      "ticket": {
+       "type": "string"
+      },
+      "totp": {
+       "type": "boolean"
+      },
+      "webauthn": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "allowed_methods",
+      "backup_codes",
+      "mfa",
+      "ticket",
+      "totp",
+      "webauthn"
+     ],
+     "type": "object"
+    }
+   ]
+  },
   "EmailType": {
    "type": "string"
   },
@@ -6676,6 +6964,26 @@
    ],
    "type": "object"
   },
+  "GuildEntryResult": {
+   "additionalProperties": false,
+   "properties": {
+    "guild_id": {
+     "$ref": "SnowflakeStringType"
+    },
+    "mode": {
+     "enum": [
+      "member",
+      "visit"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "guild_id",
+    "mode"
+   ],
+   "type": "object"
+  },
   "GuildExplicitContentFilter": {
    "enum": [
     0,
@@ -7808,6 +8116,97 @@
    "maxItems": 1008,
    "type": "array"
   },
+  "IdentifyRequest": {
+   "properties": {
+    "device_proof": {
+     "type": "string"
+    },
+    "email": {
+     "$ref": "EmailType"
+    },
+    "login": {
+     "$ref": "UsernameType"
+    },
+    "registration_url_code": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "IdentifyResponse": {
+   "additionalProperties": false,
+   "properties": {
+    "account": {
+     "enum": [
+      "existing",
+      "new"
+     ],
+     "type": "string"
+    },
+    "registration": {
+     "anyOf": [
+      {
+       "additionalProperties": false,
+       "properties": {
+        "consent_required": {
+         "type": "boolean"
+        },
+        "instant_account_availability": {
+         "$ref": "InstantAccountAvailabilitySchema"
+        },
+        "mode": {
+         "enum": [
+          "approval",
+          "closed",
+          "open"
+         ],
+         "type": "string"
+        },
+        "requires_password": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "consent_required",
+        "mode",
+        "requires_password"
+       ],
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "sign_in_method": {
+     "anyOf": [
+      {
+       "enum": [
+        "code",
+        "password"
+       ],
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "ticket": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "account",
+    "registration",
+    "sign_in_method",
+    "ticket"
+   ],
+   "type": "object"
+  },
   "IncomingCallFlags": {
    "format": "int32",
    "maximum": 2147483647,
@@ -7838,6 +8237,33 @@
      "name": "SILENT_EVERYONE",
      "value": "32"
     }
+   ]
+  },
+  "InstantAccountAvailabilitySchema": {
+   "enum": [
+    "approval_required",
+    "available",
+    "captcha_off",
+    "disabled",
+    "email_domains_restricted",
+    "registration_closed"
+   ],
+   "type": "string",
+   "x-enumDescriptions": [
+    "Accounts can be created from a display name",
+    "Instant accounts are turned off",
+    "Instant accounts need the captcha, which is off",
+    "New accounts need approval, so they need credentials to sign in once approved",
+    "Public registration is closed",
+    "Public sign-ups must use an email address on an allowed domain"
+   ],
+   "x-enumNames": [
+    "APPROVAL_REQUIRED",
+    "AVAILABLE",
+    "CAPTCHA_OFF",
+    "DISABLED",
+    "EMAIL_DOMAINS_RESTRICTED",
+    "REGISTRATION_CLOSED"
    ]
   },
   "Int32Type": {
@@ -10160,6 +10586,17 @@
      "type": "array"
     }
    },
+   "type": "object"
+  },
+  "MfaTicketRequest": {
+   "properties": {
+    "ticket": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "ticket"
+   ],
    "type": "object"
   },
   "MfaTotpRequest": {

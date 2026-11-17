@@ -12,10 +12,9 @@ use crate::app::Inlet;
 use crate::model::{Guild, UserAvatar};
 use crate::theme;
 
-/// Height of the guild banner above the channel list.
-// Deviation: Fluxer's banner is 16:9 (at most 30 % of the window) with the name over it
-// on a gradient; here it is a fixed 120 px strip with the name below.
-pub const BANNER_HEIGHT: f32 = 120.;
+/// Height of the guild banner above the channel list: 16:9 at the sidebar's width
+/// (`GuildBannerCollapse`), and at most 30 % of the window high (the header limits it).
+pub const BANNER_HEIGHT: f32 = 180.;
 
 impl Inlet {
     /// A user's avatar, `size` logical pixels and round. An animated avatar plays while
@@ -66,9 +65,21 @@ impl Inlet {
         size: f32,
         cx: &mut Context<Self>,
     ) -> Option<Img> {
-        let setup = self.media.setup.as_ref()?;
         let hash = self.guild_field(guild_id, cx, |g| g.icon.clone())?;
-        let req = requests::guild_icon(&setup.proxy, guild_id, &hash, size, self.media.scale)?;
+        self.guild_icon_for(guild_id, &hash, size, cx)
+    }
+
+    /// A guild's icon from its ID and icon hash, as an image once it has loaded. For a
+    /// guild the account may not be in yet (an invite's preview).
+    pub(crate) fn guild_icon_for(
+        &self,
+        guild_id: &str,
+        hash: &str,
+        size: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<Img> {
+        let setup = self.media.setup.as_ref()?;
+        let req = requests::guild_icon(&setup.proxy, guild_id, hash, size, self.media.scale)?;
         match self.image(&req, cx) {
             Shown::Ready(image) => Some(
                 img(image)
