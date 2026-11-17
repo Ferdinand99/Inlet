@@ -9,7 +9,7 @@
 // input system (IME, accessibility): it reports mask characters and takes no
 // composition.
 
-use std::ops::Range;
+use std::ops::{Deref, Range};
 
 use gpui::{
     actions, div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context,
@@ -19,6 +19,7 @@ use gpui::{
     TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::UnicodeSegmentation;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::theme;
 
@@ -75,13 +76,57 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// The text of an input, edited in place in one buffer that is wiped when it is cleared
+/// or dropped. A secret field reserves room for its longest text up front, so typing
+/// never moves the text to a new allocation and leaves a copy behind.
+struct Content(Zeroizing<String>);
+
+impl Content {
+    fn new() -> Self {
+        Self(Zeroizing::new(String::new()))
+    }
+
+    /// Room for at least `bytes` bytes in the one buffer (while it is still empty).
+    fn reserve_total(&mut self, bytes: usize) {
+        let len = self.0.len();
+        if self.0.capacity() < bytes {
+            self.0.reserve_exact(bytes - len);
+        }
+    }
+
+    /// Replaces everything: the old text is wiped first.
+    fn set(&mut self, text: &str) {
+        self.0.zeroize();
+        self.0.push_str(text);
+    }
+
+    fn replace(&mut self, range: Range<usize>, text: &str) {
+        self.0.replace_range(range, text);
+    }
+
+    fn wipe(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl Deref for Content {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
 pub enum InputEvent {
     Submit,
 }
 
+/// The text of an input changed by typing or pasting. A separate event from
+/// [`InputEvent`], whose subscribers treat every event as a submit.
+pub struct InputChanged;
+
 pub struct TextInput {
     focus_handle: FocusHandle,
-    content: SharedString,
+    content: Content,
     placeholder: SharedString,
     masked: bool,
     max_chars: usize,
@@ -96,12 +141,13 @@ pub struct TextInput {
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
+impl EventEmitter<InputChanged> for TextInput {}
 
 impl TextInput {
     pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle().tab_stop(true),
-            content: SharedString::default(),
+            content: Content::new(),
             placeholder: placeholder.into(),
             masked: false,
             max_chars: 4_000,
@@ -117,12 +163,22 @@ impl TextInput {
 
     pub fn masked(mut self) -> Self {
         self.masked = true;
+        self.reserve_secret();
         self
     }
 
     pub fn max_chars(mut self, max: usize) -> Self {
         self.max_chars = max;
+        self.reserve_secret();
         self
+    }
+
+    /// A masked field keeps its text in one buffer big enough for the longest text it
+    /// takes (4 bytes a character), so typing never reallocates.
+    fn reserve_secret(&mut self) {
+        if self.masked {
+            self.content.reserve_total(self.max_chars.saturating_mul(4));
+        }
     }
 
     /// Also limits the content to `max` UTF-16 units (a character outside the Basic
@@ -146,7 +202,7 @@ impl TextInput {
     }
 
     pub fn with_text(mut self, text: impl Into<SharedString>) -> Self {
-        self.content = text.into();
+        self.content.set(&text.into());
         self.selected_range = self.content.len()..self.content.len();
         self
     }
@@ -156,17 +212,17 @@ impl TextInput {
     }
 
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.content = text.into();
+        self.content.set(&text.into());
         self.selected_range = self.content.len()..self.content.len();
         self.selection_reversed = false;
         self.marked_range = None;
         cx.notify();
     }
 
-    /// Clears the content. Used after sending a message and after sign-in, so a
-    /// password does not stay in memory longer than needed.
+    /// Clears the content and wipes the buffer that held it. Used after sending a message
+    /// and after sign-in, so a password does not stay in memory.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.content = SharedString::default();
+        self.content.wipe();
         self.selected_range = 0..0;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -335,7 +391,7 @@ impl TextInput {
         if self.masked {
             MASK.repeat(self.content.chars().count()).into()
         } else {
-            self.content.clone()
+            SharedString::from(self.content.to_string())
         }
     }
 
@@ -494,12 +550,11 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
         let new_text = self.limit(&range, new_text);
-        self.content =
-            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
-                .into();
+        self.content.replace(range.clone(), new_text);
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.selection_reversed = false;
         self.marked_range.take();
+        cx.emit(InputChanged);
         cx.notify();
     }
 
@@ -522,9 +577,7 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
         let new_text = self.limit(&range, new_text);
-        self.content =
-            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
-                .into();
+        self.content.replace(range.clone(), new_text);
         if !new_text.is_empty() {
             self.marked_range = Some(range.start..range.start + new_text.len());
         } else {
@@ -826,7 +879,43 @@ impl Focusable for TextInput {
 
 #[cfg(test)]
 mod tests {
-    use super::fit;
+    use super::{fit, Content};
+
+    #[test]
+    fn typing_up_to_the_limit_never_moves_a_secret_field_s_buffer() {
+        let max_chars = 256;
+        let mut content = Content::new();
+        content.reserve_total(max_chars * 4);
+        let (ptr, capacity) = (content.0.as_ptr(), content.0.capacity());
+        for i in 0..max_chars {
+            let at = content.len();
+            // A mix of one-byte and four-byte characters, typed at the end and, now and
+            // then, at the start.
+            let ch = if i % 3 == 0 { "\u{1F600}" } else { "p" };
+            content.replace(at..at, ch);
+            if i % 7 == 0 {
+                content.replace(0..0, "x");
+            }
+            content.replace(0..0, "");
+            assert_eq!(content.0.as_ptr(), ptr, "moved at character {i}");
+            assert_eq!(content.0.capacity(), capacity);
+        }
+    }
+
+    #[test]
+    fn clearing_wipes_the_whole_buffer() {
+        let mut content = Content::new();
+        content.reserve_total(64);
+        content.set("hunter2 hunter2");
+        content.replace(0..1, "");
+        let (ptr, capacity) = (content.0.as_ptr(), content.0.capacity());
+        content.wipe();
+        assert!(content.is_empty());
+        // The buffer is still the same one, and every byte of it is zero.
+        assert_eq!(content.0.as_ptr(), ptr);
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, capacity) };
+        assert!(bytes.iter().all(|b| *b == 0));
+    }
 
     #[test]
     fn characters_are_cut_at_the_room_left() {

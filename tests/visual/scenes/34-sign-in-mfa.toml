@@ -1,0 +1,9 @@
+# The second-factor step: an authenticator or backup code.
+name = "sign-in-mfa"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "sign-in-mfa"
+guild = "g1"
+channel = "c-general"

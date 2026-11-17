@@ -237,6 +237,11 @@ Run-Demo "103-terms" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_D
 Run-Demo "80-header-search-long-name" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "search-results"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-rules" } 10
 # The list of keyboard shortcuts (Ctrl+/).
 Run-Demo "70-keybind-help" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "keybind-help"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+# The sign-in steps of the app's own form: identifier, the classic form, a wrong password,
+# the emailed code, the second factor, the new-IP wait.
+foreach ($step in "identifier", "classic", "password", "code", "mfa", "ip") {
+    Run-Demo "90-sign-in-$step" @{ INLET_DEMO = "1"; INLET_DEMO_LIVE_SECS = "3600"; INLET_DEMO_SCENE = "sign-in-$step"; INLET_DEMO_GUILD = "g1"; INLET_DEMO_CHANNEL = "c-general" } 10
+}
 
 # The settings tabs of the account (My profile, Appearance on coal, Messages and media,
 # Privacy, Advanced, Accounts), and the chat in the light and coal themes.

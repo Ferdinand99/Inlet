@@ -212,6 +212,11 @@ INLET_DEMO_THEME=coal scene 67-chat-coal chat-cozy c-general
 # The channel header with the search column open at 1280 px: a long channel name keeps
 # its place, the topic and the status line give way first.
 scene 80-header-search-long-name search-results c-rules
+# The sign-in steps of the app's own form: identifier, the classic form, a wrong password,
+# the emailed code, the second factor, the new-IP wait.
+for step in identifier classic password code mfa ip; do
+  scene "90-sign-in-$step" "sign-in-$step" c-general
+done
 
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
