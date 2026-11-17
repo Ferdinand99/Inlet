@@ -185,6 +185,11 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# The rail with folders, the banner with voice participants, the server menu, an invite.
+scene 50-rail-folders rail-folders c-general
+scene 51-guild-banner guild-banner c-general
+scene 52-guild-menu guild-menu c-general
+scene 53-invite-accept invite-accept c-general
 # 11b. The settings tabs of the account (My profile, Appearance on coal, Messages and
 #      media, Privacy, Advanced, Accounts), and the chat in the light and coal themes.
 settings_tab() {
@@ -206,6 +211,11 @@ INLET_DEMO_THEME=coal scene 67-chat-coal chat-cozy c-general
 # The channel header with the search column open at 1280 px: a long channel name keeps
 # its place, the topic and the status line give way first.
 scene 80-header-search-long-name search-results c-rules
+# The sign-in steps of the app's own form: identifier, the classic form, a wrong password,
+# the emailed code, the second factor, the new-IP wait.
+for step in identifier classic password code mfa ip; do
+  scene "90-sign-in-$step" "sign-in-$step" c-general
+done
 
 # Inlet's own title bar, and the Neko cat (idle in the lower right corner).
 INLET_DEMO_TITLEBAR=1 scene 140-titlebar default c-general

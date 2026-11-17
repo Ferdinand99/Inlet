@@ -14,7 +14,7 @@
 pub(crate) mod animation_budget;
 mod attachment;
 mod audio_file;
-mod avatar;
+pub(crate) mod avatar;
 pub(crate) mod embed;
 pub(crate) mod emoji;
 mod failed;

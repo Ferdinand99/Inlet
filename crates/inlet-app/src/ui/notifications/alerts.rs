@@ -207,6 +207,12 @@ impl Inlet {
             Some(k) => self.switcher.is_active(k),
             None => true,
         };
+        // A message of a channel behind an unanswered content warning is not announced.
+        if let Some(channel) = inlet_state::ChannelId::parse(&m.channel_id) {
+            if self.account_channel_gated(on_screen, state.read(cx), channel, cx) {
+                return;
+            }
+        }
         // The open channel and the thread in the side panel count as watched only on
         // screen, with the window in focus.
         let mut focused = Vec::new();

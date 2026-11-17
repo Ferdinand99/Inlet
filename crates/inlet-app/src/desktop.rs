@@ -575,6 +575,9 @@ pub fn attach(
         // Waits for the demo account, as a link Inlet was started with does.
         let _ = handle.update(cx, |this, _, cx| this.offer_deep_link(link, cx));
     }
+    // The soak and the first-frame measurement (demo builds, when asked for).
+    #[cfg(feature = "demo")]
+    crate::demo::soak::attach(handle, cx);
 }
 
 /// Whether Inlet draws its own title bar this run: Windows, macOS and Linux, unless the
@@ -1232,6 +1235,7 @@ impl Inlet {
             dm_menu: main && self.social.dm_menu.is_some(),
             group_dm: main && self.social.group_dm.is_some(),
             add_friend: main && self.social.add_friend.is_some(),
+            nav: main && self.nav_open(),
             user_menu: self.profile.menu.is_some(),
             profile_popout: self.profile.popout.is_some(),
             profile_modal: self.profile.full.is_some(),
@@ -1275,6 +1279,7 @@ impl Inlet {
             let handle = match top {
                 Layer::Picker => self.composer.pickers.search_focus(cx).unwrap_or(layer),
                 Layer::AddFriend | Layer::GroupDm => self.social_field(cx).unwrap_or(layer),
+                Layer::Nav => self.nav_field(cx).unwrap_or(layer),
                 _ => layer,
             };
             // One rule, from this frame's state only: a text field keeps the keyboard
@@ -1348,6 +1353,7 @@ impl Inlet {
             Some(Layer::DmMenu) => self.social.dm_menu = None,
             Some(Layer::GroupDm) => self.social.group_dm = None,
             Some(Layer::AddFriend) => self.social.add_friend = None,
+            Some(Layer::Nav) => self.nav.dialog = None,
             Some(Layer::UserMenu) => self.profile.menu = None,
             Some(Layer::ProfilePopout) => self.profile.popout = None,
             Some(Layer::ProfileModal) => self.profile.full = None,
@@ -1429,6 +1435,9 @@ impl Inlet {
         if self.status_picker_field_focused(window, cx) {
             return Some(Layer::StatusPicker);
         }
+        if self.nav_field_focused(window, cx) {
+            return Some(Layer::Nav);
+        }
         if self.profile_note_focused(window, cx) {
             return Some(if self.profile.full.is_some() {
                 Layer::ProfileModal
@@ -1464,6 +1473,9 @@ pub(crate) enum Layer {
     GroupDm,
     /// The add-friend window.
     AddFriend,
+    /// The windows of the rail and the channel list (server menu, folder settings,
+    /// invite, content warning).
+    Nav,
     /// The user menu (right click on a member).
     UserMenu,
     /// The profile popout beside the member list.
@@ -1500,6 +1512,7 @@ pub(crate) struct OpenLayers {
     pub dm_menu: bool,
     pub group_dm: bool,
     pub add_friend: bool,
+    pub nav: bool,
     pub user_menu: bool,
     pub profile_popout: bool,
     pub profile_modal: bool,
@@ -1530,6 +1543,8 @@ impl OpenLayers {
             Some(Layer::GroupDm)
         } else if self.add_friend {
             Some(Layer::AddFriend)
+        } else if self.nav {
+            Some(Layer::Nav)
         } else if self.status_picker {
             Some(Layer::StatusPicker)
         } else if self.user_menu {
@@ -1570,6 +1585,7 @@ impl OpenLayers {
             Some(Layer::DmMenu) => self.dm_menu = false,
             Some(Layer::GroupDm) => self.group_dm = false,
             Some(Layer::AddFriend) => self.add_friend = false,
+            Some(Layer::Nav) => self.nav = false,
             Some(Layer::Search) => self.search = false,
             Some(Layer::UserMenu) => self.user_menu = false,
             Some(Layer::ProfilePopout) => self.profile_popout = false,
@@ -1949,6 +1965,7 @@ mod tests {
             dm_menu: true,
             group_dm: true,
             add_friend: true,
+            nav: true,
             user_menu: true,
             profile_popout: true,
             profile_modal: true,
@@ -1977,6 +1994,7 @@ mod tests {
                 Layer::DmMenu,
                 Layer::GroupDm,
                 Layer::AddFriend,
+                Layer::Nav,
                 Layer::StatusPicker,
                 Layer::UserMenu,
                 Layer::ProfilePopout,

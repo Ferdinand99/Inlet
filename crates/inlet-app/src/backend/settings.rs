@@ -29,22 +29,41 @@
 //! that is not the active one is dropped by the backend.
 
 pub mod account;
+pub mod guilds;
 pub mod profile;
 pub mod sounds;
 pub mod write;
 
+use std::sync::{Arc, Mutex};
+
 use super::{Backend, Command, Event};
+
+/// What one account keeps for joining and leaving servers: the invite request gates and
+/// the leaves in flight (see [`guilds`]). The guild order and folders are written with
+/// the account settings ([`account::Cmd::SaveGuildFolders`]).
+#[derive(Debug, Default)]
+pub struct Ops {
+    pub invites: guilds::InviteGate,
+    pub accepts: guilds::InviteGate,
+    pub leaving: guilds::LeaveGate,
+}
+
+/// The shared handle of an account's [`Ops`].
+pub type SharedOps = Arc<Mutex<Ops>>;
 
 /// Commands of this domain, by part: the account's own settings and profile, and (later)
 /// the guild order and folders, each with its own `Cmd`.
 pub enum Cmd {
     Account(account::Cmd),
+    /// Look at an invite, join through it, leave a server.
+    Guild(guilds::Cmd),
     Sounds(sounds::Cmd),
 }
 
 /// Events of this domain, by part.
 pub enum Ev {
     Account(account::Ev),
+    Guild(guilds::Ev),
 }
 
 impl From<account::Cmd> for Command {
@@ -65,9 +84,22 @@ impl From<account::Ev> for Event {
     }
 }
 
+impl From<guilds::Cmd> for Command {
+    fn from(cmd: guilds::Cmd) -> Self {
+        Command::Settings(Cmd::Guild(cmd))
+    }
+}
+
+impl From<guilds::Ev> for Event {
+    fn from(ev: guilds::Ev) -> Self {
+        Event::Settings(Ev::Guild(ev))
+    }
+}
+
 pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     match cmd {
         Cmd::Account(cmd) => account::handle(backend, cmd),
+        Cmd::Guild(cmd) => guilds::handle(backend, cmd),
         Cmd::Sounds(cmd) => sounds::handle(backend, cmd),
     }
 }

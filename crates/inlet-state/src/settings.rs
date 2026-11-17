@@ -12,6 +12,37 @@ use serde_json::Map;
 
 use crate::Changes;
 
+/// Folders kept (Fluxer stores at most 100).
+pub const MAX_FOLDERS: usize = 200;
+/// Guild IDs kept in one folder entry.
+pub const MAX_GUILDS_PER_FOLDER: usize = crate::limits::MAX_GUILDS;
+/// Longest folder name kept, in characters.
+const MAX_FOLDER_NAME_CHARS: usize = 100;
+
+/// A folder with its size limits applied: IDs that are not snowflakes go, names and
+/// icon names are cut.
+fn capped_folder(mut f: GuildFolder) -> GuildFolder {
+    f.guild_ids.retain(|id| crate::GuildId::parse(id).is_some());
+    f.guild_ids.truncate(MAX_GUILDS_PER_FOLDER);
+    if let Some(name) = &mut f.name {
+        if name.chars().count() > MAX_FOLDER_NAME_CHARS {
+            *name = name.chars().take(MAX_FOLDER_NAME_CHARS).collect();
+        }
+    }
+    if f.icon.len() > 32 {
+        f.icon = String::new();
+    }
+    f
+}
+
+fn capped_folders(list: &[GuildFolder]) -> Vec<GuildFolder> {
+    list.iter()
+        .take(MAX_FOLDERS)
+        .cloned()
+        .map(capped_folder)
+        .collect()
+}
+
 /// The keys of `UserSettings::extra` the app reads. Everything else is dropped:
 /// `synced_preferences` alone can be hundreds of KiB, and the preference pickers keep
 /// their own copy of it ([`Display`] holds the two values of it the settings show).
@@ -86,8 +117,8 @@ pub struct Settings {
     display: Display,
     /// The sound settings of the synced preferences, as the server holds them.
     sound: Option<SoundSettings>,
-    /// The guild order and folders. Kept apart from the user settings above: the server
-    /// list fills this in (it is empty here).
+    /// The guild order and folders, from the same whole snapshots as the user settings
+    /// (`trimmed` leaves them out of `user`: the rail reads them here, bounded).
     guild_folders: Vec<GuildFolder>,
 }
 
@@ -120,14 +151,18 @@ impl Settings {
         Settings {
             display,
             sound,
+            guild_folders: user
+                .as_ref()
+                .map(|u| capped_folders(&u.guild_folders))
+                .unwrap_or_default(),
             user: user.as_ref().map(trimmed),
-            guild_folders: Vec::new(),
         }
     }
 
     /// Applies an event: a USER_SETTINGS_UPDATE that is a whole snapshot replaces the
     /// one held. A partial update changes nothing here.
     pub fn apply(&mut self, event: &Dispatch) -> Changes {
+        let mut changes = Changes::default();
         if let Dispatch::UserSettingsUpdate(update) = event {
             if is_full(update) {
                 if let Some((display, sound)) = read_preferences(update) {
@@ -135,9 +170,16 @@ impl Settings {
                     self.sound = sound;
                 }
                 self.user = Some(trimmed(update));
+                // The folders only from a whole snapshot: a partial update has none and
+                // would read as an account without folders.
+                let folders = capped_folders(&update.guild_folders);
+                if folders != self.guild_folders {
+                    self.guild_folders = folders;
+                    changes.folders = true;
+                }
             }
         }
-        Changes::default()
+        changes
     }
 
     /// The newest full snapshot, trimmed: `theme`, the media and message switches,
@@ -183,6 +225,41 @@ mod tests {
             "incoming_call_flags": 8, "group_dm_add_permission_flags": 8,
             "guild_folders": [], "afk_timeout": 600, "time_format": 0
         }))
+    }
+
+    #[test]
+    fn folders_follow_the_settings_and_are_bounded() {
+        let with = |folders: serde_json::Value| {
+            let mut s = fluxer("dark", 0);
+            s.guild_folders = serde_json::from_value(folders).unwrap();
+            Dispatch::UserSettingsUpdate(s)
+        };
+        let mut s = Settings::default();
+        let list = json!([
+            {"id": 3, "name": "Games", "color": 255, "flags": 1, "icon": "star", "guild_ids": ["11", "12", "x"]},
+            {"id": -1, "name": null, "icon": "folder", "guild_ids": ["10"]}
+        ]);
+        let c = s.apply(&with(list.clone()));
+        assert!(c.folders);
+        assert_eq!(s.guild_folders().len(), 2);
+        // An ID that is not a snowflake is dropped.
+        assert_eq!(s.guild_folders()[0].guild_ids, ["11", "12"]);
+        // The same settings again change nothing.
+        assert!(!s.apply(&with(list)).folders);
+        // A partial update (no theme) leaves the folders alone.
+        let partial: UserSettings = serde_json::from_value(json!({"status": "online"})).unwrap();
+        assert!(
+            !s.apply(&Dispatch::UserSettingsUpdate(Box::new(partial)))
+                .folders
+        );
+        assert_eq!(s.guild_folders().len(), 2);
+        // Very long names and too many entries are cut.
+        let many: Vec<_> = (0..300)
+            .map(|i| json!({"id": i, "name": "n".repeat(500), "guild_ids": []}))
+            .collect();
+        s.apply(&with(json!(many)));
+        assert_eq!(s.guild_folders().len(), MAX_FOLDERS);
+        assert_eq!(s.guild_folders()[0].name.as_deref().unwrap().len(), 100);
     }
 
     #[test]

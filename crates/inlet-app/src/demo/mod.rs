@@ -23,10 +23,13 @@ mod markdown;
 pub mod media;
 mod members;
 mod messages;
+pub mod nav;
 pub mod pickers;
 pub mod scene_file;
 pub mod scenes;
 pub mod search;
+pub mod signin;
+pub mod soak;
 mod social;
 pub mod threads;
 mod unread;
@@ -56,6 +59,8 @@ pub struct MockSession {
     open_channel: Arc<Mutex<Option<String>>>,
     next_seq: u64,
     ticker: tokio::task::JoinHandle<()>,
+    /// The soak's replay, when it runs (see `soak`).
+    soak: Option<soak::Running>,
     /// The demo account's READY and guilds, to show them again after a switch.
     ready: Box<p::Ready>,
     guilds: Vec<Guild>,
@@ -312,13 +317,17 @@ pub(crate) fn rendered_page(
 impl MockSession {
     pub fn start(events: Ui) -> Self {
         let scene = scenes::current();
+        let soak_cfg = soak::Config::from_env();
         let scenes::Data {
             guilds,
             channels,
             messages,
             ready,
             outgoing,
-        } = scenes::data(scene);
+        } = match &soak_cfg {
+            Some(_) => soak::data(),
+            None => scenes::data(scene),
+        };
         let names: SharedNames = Arc::new(Mutex::new(demo_names(&channels)));
         let messages = Arc::new(Mutex::new(messages));
         let open_channel: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -370,6 +379,8 @@ impl MockSession {
             scenes::Scene::Accounts | scenes::Scene::AccountsAdd | scenes::Scene::QuickSwitcher
         ) {
             accounts::start_background(&events);
+        } else if soak_cfg.is_some() {
+            let _ = events.unbounded_send(acc::Ev::Accounts(accounts::list()));
         } else {
             let main = accounts::list().into_iter().take(1).collect();
             let _ = events.unbounded_send(acc::Ev::Accounts(main));
@@ -390,6 +401,10 @@ impl MockSession {
         }
         social::start_typing(&events);
         let _ = events.unbounded_send(acc::Ev::Status("Demo mode".into()));
+        // After the account is announced: its gateways and the recording start.
+        let soak = soak_cfg
+            .as_ref()
+            .map(|cfg| soak::start(cfg, &events, &names, &channels, &guilds));
 
         Self {
             events,
@@ -399,6 +414,7 @@ impl MockSession {
             open_channel,
             next_seq: 100,
             ticker,
+            soak,
             ready: Box::new(ready),
             guilds,
         }
@@ -432,6 +448,11 @@ impl MockSession {
         let _ = self.events.unbounded_send(msgs::Ev::Guilds(guilds));
     }
 
+    /// Invite and leave commands: there is no server, so the answers come from `nav`.
+    pub fn guild_command(&self, cmd: crate::backend::settings::guilds::Cmd) {
+        nav::answer(&self.events, cmd);
+    }
+
     pub fn open_guild(&mut self, guild_id: Option<String>) {
         let channels = self.channels.get(&guild_id).cloned().unwrap_or_default();
         let _ = self
@@ -440,6 +461,10 @@ impl MockSession {
     }
 
     fn page(&self, channel_id: &str, before: Option<MessageId>) -> (MessagesPage, Vec<Message>) {
+        if let Some(soak) = &self.soak {
+            let list = soak.server.candidates(channel_id, before);
+            return rendered_page(&list, before, &self.names);
+        }
         rendered_page(
             self.messages
                 .lock()
