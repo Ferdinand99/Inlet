@@ -12,7 +12,8 @@
 # the icons and the licence files, validates the metadata, and runs flatpak-builder on
 # the staged folder. The GNOME runtime and SDK come from Flathub.
 #
-# Needs bash, awk, git, flatpak, flatpak-builder, appstreamcli and, optionally,
+# Needs bash, awk, git, flatpak, flatpak-builder, appstreamcli (with the SVG pixbuf loader,
+# librsvg2-common, which its icon check uses) and, optionally,
 # desktop-file-validate. On a runner whose kernel restricts unprivileged user namespaces
 # (Ubuntu 24.04), flatpak's sandbox needs the AppArmor restriction lifted first; the
 # workflow does that.
