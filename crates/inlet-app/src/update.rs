@@ -872,7 +872,7 @@ fn demo_state(cx: &mut App) {
     let release = Release {
         version: "0.2.0".into(),
         notes: clean_notes(
-            "### Features\n\n* **chat:** reply previews as plain text ([abc1234](https://example.test))\n* **settings:** a Desktop tab with updates\n\n### Bug Fixes\n\n* **media:** GIFs always end as a picture, a still or an error tile\n",
+            "### Features\n* **chat:** reply previews as plain text ([abc1234](https://example.test))\n### Bug Fixes\n* **media:** GIFs always end as a picture\n",
         ),
     };
     let mut updater = Updater::new(false);

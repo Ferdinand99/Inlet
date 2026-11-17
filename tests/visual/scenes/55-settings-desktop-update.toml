@@ -1,7 +1,7 @@
 # The Updates section at the end of the Desktop settings tab: an update is downloaded and
 # waits for a restart, with its changelog.
 name = "settings-desktop-update"
-window = [1280, 1000]
+window = [1280, 860]
 scale = 1.0
 theme = "dark"
 ignore = []
