@@ -97,7 +97,8 @@ run() { # <name> <args...>
 }
 feed_of() { # <out dir> <feed dir>: the folder a fake release would hold
   mkdir -p "$2"
-  cp "$1"/*-full.nupkg "$1"/releases."$CHANNEL".json "$2/"
+  # The names release.yml collects (no.opland.inlet-*-<channel>-full.nupkg, releases.<channel>.json).
+  cp "$1"/no.opland.inlet-*-"$CHANNEL"-full.nupkg "$1"/releases."$CHANNEL".json "$2/"
 }
 
 feed="$work/feed"
