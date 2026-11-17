@@ -226,3 +226,38 @@ fn a_long_channel_name_is_cut_inside_the_header(cx: &mut TestAppContext) {
         px_f(title.size.width)
     );
 }
+
+/// Media are fitted to the message column of the previous layout. When the column
+/// narrows (the search column opens beside the chat and the member list goes) the
+/// next frame must fit them again by itself: a window with nothing else to redraw kept
+/// an image as wide as the old column (a flaky screenshot on macOS).
+#[gpui::test]
+fn images_fit_the_column_after_it_narrows(cx: &mut TestAppContext) {
+    let (probe, cx) = cx.add_window_view(Probe::new);
+    cx.simulate_resize(size(px(WINDOW.0), px(WINDOW.1)));
+    cx.run_until_parked();
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    // The column is 1280 - 392 (rail and channel list) - 264 (member list) = 624 px;
+    // an attachment is 84 px narrower than it (the avatar column and the padding).
+    assert_px(
+        bounds(cx, selector::ATTACHMENT_IMAGE).size.width,
+        540.,
+        "image beside the member list",
+    );
+    // Open the search column; draw nothing by hand, only what the app asks for.
+    cx.update(|window, app| probe.update(app, |p, cx| p.open_search(window, cx)));
+    cx.run_until_parked();
+    for _ in 0..10 {
+        if cx.update(|window, app| window.simulate_next_frame(app)) == 0 {
+            break;
+        }
+        cx.run_until_parked();
+    }
+    // 1280 - 392 - 420 (search column) = 468; the member list is gone.
+    assert_px(
+        bounds(cx, selector::ATTACHMENT_IMAGE).size.width,
+        384.,
+        "image beside the search column",
+    );
+}

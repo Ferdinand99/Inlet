@@ -203,12 +203,20 @@ impl Inlet {
         self.media.viewport = window.viewport_size();
         // Here, not while rows are drawn: the list holds its state borrowed then.
         let width = self.chat.message_list.viewport_bounds().size.width.as_f32();
-        if width != self.media.column_width {
-            // The bounds are from the last layout: draw once more so media fit the
-            // new width without waiting for something else to redraw.
-            self.media.column_width = width;
-            window.request_animation_frame();
-        }
+        self.media.column_width = width;
+        // This frame fits media to `width`, the list's width at the end of the last
+        // frame. The list can take a new width in this very frame (the search column
+        // opens, the member list goes): its rows were then fitted to the old one, and
+        // nothing else need ask for another frame, so they would stay that way. After
+        // the frame, compare the width the list has now with the one used, and draw once
+        // more when they differ. Without a change nothing is drawn.
+        let list = self.chat.message_list.clone();
+        let view = cx.entity_id();
+        window.on_next_frame(move |_, cx| {
+            if list.viewport_bounds().size.width.as_f32() != width {
+                cx.notify(view);
+            }
+        });
         #[cfg(feature = "demo")]
         self.media.demo_note_frame(window.is_window_active());
         let stage = Stage {

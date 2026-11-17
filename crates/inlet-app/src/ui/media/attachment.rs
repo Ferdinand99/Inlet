@@ -407,6 +407,7 @@ impl Inlet {
         };
         div()
             .id(SharedString::from(format!("att-img-{key}")))
+            .debug_selector(|| "attachment-image".into())
             .group(group)
             .relative()
             .flex_none()
