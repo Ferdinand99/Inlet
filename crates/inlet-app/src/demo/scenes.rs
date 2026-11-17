@@ -60,6 +60,9 @@
 //!   `accounts` (their channels with mentions and unread messages).
 //! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
 //!   chat.
+//! - `sudo-confirm`, `sudo-confirm-code`: for `#general`, the "Confirm it's you" dialog open
+//!   over the chat, in the password way after a wrong password, or in the code way after a
+//!   wrong code (see `ui/overlays/sudo_confirm.rs`).
 //!
 //! `INLET_DEMO_SCENE` may also name a scene file of the visual checks
 //! (`tests/visual/scenes/*.toml`, see `scene_file.rs`): it then sets the scene, the guild,
@@ -123,6 +126,8 @@ pub enum Scene {
     SearchResults,
     QuickSwitcher,
     KeybindHelp,
+    SudoConfirm,
+    SudoConfirmCode,
 }
 
 impl Scene {
@@ -168,6 +173,8 @@ impl Scene {
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
             "keybind-help" => Scene::KeybindHelp,
+            "sudo-confirm" => Scene::SudoConfirm,
+            "sudo-confirm-code" => Scene::SudoConfirmCode,
             _ => return None,
         })
     }

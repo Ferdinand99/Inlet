@@ -1,0 +1,9 @@
+# The Confirm it is you dialog after a wrong password, over #general.
+name = "sudo-confirm"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "sudo-confirm"
+guild = "g1"
+channel = "c-general"

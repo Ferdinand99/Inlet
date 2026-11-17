@@ -931,6 +931,7 @@ impl Inlet {
         // The friend and DM windows show over the main screen only.
         let main = self.screen == Screen::Main;
         OpenLayers {
+            sudo_confirm: self.sudo_open(),
             link_prompt: self.overlays.link_prompt.is_some(),
             link_confirm: self.overlays.pending_link.is_some(),
             quick_switcher: self.quick_switcher_open(),
@@ -980,6 +981,7 @@ impl Inlet {
             // the layer), else the layer itself.
             let handle = match top {
                 Layer::Picker => self.composer.pickers.search_focus(cx).unwrap_or(layer),
+                Layer::SudoConfirm => self.sudo_focus(cx).unwrap_or(layer),
                 Layer::AddFriend | Layer::GroupDm => self.social_field(cx).unwrap_or(layer),
                 _ => layer,
             };
@@ -1047,6 +1049,7 @@ impl Inlet {
     /// Escape on a layer: it closes the topmost one (see [`OpenLayers::topmost`]).
     pub(crate) fn close_top_layer(&mut self, cx: &mut Context<Self>) {
         match self.open_layers().topmost() {
+            Some(Layer::SudoConfirm) => self.sudo_cancel(cx),
             Some(Layer::LinkPrompt) => self.overlays.link_prompt = None,
             Some(Layer::LinkConfirm) => self.overlays.pending_link = None,
             Some(layer @ (Layer::QuickSwitcher | Layer::Search)) => self.close_search_layer(layer),
@@ -1132,6 +1135,9 @@ impl Inlet {
         {
             return Some(Layer::Picker);
         }
+        if self.sudo_field_focused(window, cx) {
+            return Some(Layer::SudoConfirm);
+        }
         if self.status_picker_field_focused(window, cx) {
             return Some(Layer::StatusPicker);
         }
@@ -1158,6 +1164,8 @@ impl Inlet {
 /// A layer drawn over the chat that takes the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Layer {
+    /// The "Confirm it's you" dialog.
+    SudoConfirm,
     LinkPrompt,
     LinkConfirm,
     /// The quick switcher (Ctrl+K).
@@ -1199,6 +1207,7 @@ pub(crate) enum Layer {
 /// `ui/overlays`), and the topmost one has the keyboard: Escape closes it first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OpenLayers {
+    pub sudo_confirm: bool,
     pub link_prompt: bool,
     pub link_confirm: bool,
     pub quick_switcher: bool,
@@ -1222,7 +1231,9 @@ pub(crate) struct OpenLayers {
 
 impl OpenLayers {
     pub fn topmost(self) -> Option<Layer> {
-        if self.link_prompt {
+        if self.sudo_confirm {
+            Some(Layer::SudoConfirm)
+        } else if self.link_prompt {
             Some(Layer::LinkPrompt)
         } else if self.link_confirm {
             Some(Layer::LinkConfirm)
@@ -1269,6 +1280,7 @@ impl OpenLayers {
     #[cfg(test)]
     fn after_escape(mut self) -> OpenLayers {
         match self.topmost() {
+            Some(Layer::SudoConfirm) => self.sudo_confirm = false,
             Some(Layer::LinkPrompt) => self.link_prompt = false,
             Some(Layer::LinkConfirm) => self.link_confirm = false,
             Some(Layer::QuickSwitcher) => self.quick_switcher = false,
@@ -1648,6 +1660,7 @@ mod tests {
     #[test]
     fn layers_close_from_the_top_down() {
         let mut layers = OpenLayers {
+            sudo_confirm: true,
             link_prompt: true,
             link_confirm: true,
             quick_switcher: true,
@@ -1676,6 +1689,7 @@ mod tests {
         assert_eq!(
             order,
             [
+                Layer::SudoConfirm,
                 Layer::LinkPrompt,
                 Layer::LinkConfirm,
                 Layer::QuickSwitcher,

@@ -807,6 +807,8 @@ impl Inlet {
         self.keys_frame(window, cx);
         #[cfg(feature = "demo")]
         self.demo_keybind_help(window, cx);
+        #[cfg(feature = "demo")]
+        self.demo_sudo_confirm(window, cx);
         el.on_action(
             cx.listener(|this, _: &PreviousChannel, window, cx| {
                 this.step_channel(false, window, cx)

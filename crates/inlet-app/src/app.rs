@@ -292,6 +292,7 @@ impl Inlet {
         self.overlays.pending_link = None;
         self.overlays.link_prompt = None;
         self.overlays.link_channel = None;
+        self.sudo_reset();
         self.guilds.clear();
         self.channels.clear();
         self.selected_guild = None;

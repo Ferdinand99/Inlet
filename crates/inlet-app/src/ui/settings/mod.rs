@@ -187,7 +187,15 @@ impl Inlet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let SettingsEv::Account(event) = event;
+        let event = match event {
+            SettingsEv::Account(event) => event,
+            // "Confirm it's you" (see `ui/overlays/sudo_confirm`).
+            SettingsEv::Sudo(ev) => {
+                self.on_sudo_event(ev, window, cx);
+                cx.notify();
+                return;
+            }
+        };
         match event {
             Ev::AccountSaved { through, settings } => {
                 store::answer_settings(cx, &settings, through);

@@ -267,6 +267,20 @@ impl BackendHandle {
             account: Arc::default(),
         }
     }
+
+    /// A handle whose commands land in the receiver, for tests that check what the UI
+    /// sent (no backend thread runs).
+    #[cfg(test)]
+    pub fn recording() -> (Self, UnboundedReceiver<(Option<AccountKey>, Command)>) {
+        let (tx, rx) = unbounded_channel();
+        (
+            Self {
+                tx,
+                account: Arc::default(),
+            },
+            rx,
+        )
+    }
 }
 
 /// Starts the backend thread. Events arrive on `events`. When the thread ends (a panic in

@@ -30,6 +30,7 @@
 
 pub mod account;
 pub mod profile;
+pub mod sudo;
 pub mod write;
 
 use super::{Backend, Command, Event};
@@ -38,11 +39,14 @@ use super::{Backend, Command, Event};
 /// the guild order and folders, each with its own `Cmd`.
 pub enum Cmd {
     Account(account::Cmd),
+    /// Sudo mode: an action Fluxer protects, and the proof for it.
+    Sudo(sudo::Cmd),
 }
 
 /// Events of this domain, by part.
 pub enum Ev {
     Account(account::Ev),
+    Sudo(sudo::Ev),
 }
 
 impl From<account::Cmd> for Command {
@@ -57,9 +61,22 @@ impl From<account::Ev> for Event {
     }
 }
 
+impl From<sudo::Cmd> for Command {
+    fn from(cmd: sudo::Cmd) -> Self {
+        Command::Settings(Cmd::Sudo(cmd))
+    }
+}
+
+impl From<sudo::Ev> for Event {
+    fn from(ev: sudo::Ev) -> Self {
+        Event::Settings(Ev::Sudo(ev))
+    }
+}
+
 pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
     match cmd {
         Cmd::Account(cmd) => account::handle(backend, cmd),
+        Cmd::Sudo(cmd) => sudo::handle(backend, cmd),
     }
 }
 
