@@ -457,6 +457,32 @@ pub fn timestamp(rfc3339: &str) -> (i64, String) {
     }
 }
 
+/// The badge a server shows beside its name (Fluxer's `GuildBadge`): partnered, verified
+/// or discoverable. The server's `features` say which.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommunityBadge {
+    Partnered,
+    Verified,
+    Discoverable,
+}
+
+impl CommunityBadge {
+    /// The badge the features give, if any: partnered first, then verified, then
+    /// discoverable.
+    pub fn of(features: &[String]) -> Option<CommunityBadge> {
+        let has = |name: &str| features.iter().any(|f| f == name);
+        if has("PARTNERED") {
+            Some(CommunityBadge::Partnered)
+        } else if has("VERIFIED") {
+            Some(CommunityBadge::Verified)
+        } else if has("DISCOVERABLE") {
+            Some(CommunityBadge::Discoverable)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,5 +607,25 @@ mod tests {
         plain.content = format!("||{hidden}||");
         plain.parse();
         assert!(plain.spoiler_links.is_empty());
+    }
+
+    #[test]
+    fn a_server_shows_one_badge_and_partnered_wins() {
+        let features =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|n| n.to_string()).collect() };
+        assert_eq!(CommunityBadge::of(&features(&[])), None);
+        assert_eq!(CommunityBadge::of(&features(&["INVITES_DISABLED"])), None);
+        assert_eq!(
+            CommunityBadge::of(&features(&["DISCOVERABLE"])),
+            Some(CommunityBadge::Discoverable)
+        );
+        assert_eq!(
+            CommunityBadge::of(&features(&["DISCOVERABLE", "VERIFIED"])),
+            Some(CommunityBadge::Verified)
+        );
+        assert_eq!(
+            CommunityBadge::of(&features(&["VERIFIED", "PARTNERED", "DISCOVERABLE"])),
+            Some(CommunityBadge::Partnered)
+        );
     }
 }

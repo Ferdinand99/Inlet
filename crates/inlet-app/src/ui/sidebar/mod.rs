@@ -3,10 +3,14 @@
 
 mod category;
 pub mod channel_list;
+pub mod community_badge;
 pub mod dm_list;
 pub mod favorites;
+pub mod floating;
 pub mod guild_header;
+pub mod history;
 mod remembered;
+pub mod resize;
 mod user_panel;
 
 pub use remembered::Remembered;
@@ -18,19 +22,36 @@ use crate::backend::messages;
 use crate::model::{self, Channel, Guild};
 use crate::theme;
 
-/// Channel list / DM list width.
-pub const SIDEBAR_WIDTH: f32 = 320.;
+/// Channel list / DM list width before it is set (see `resize`).
+pub const SIDEBAR_WIDTH: f32 = resize::DEFAULT_WIDTH as f32;
 
 pub struct SidebarState {
     /// What is remembered between runs: the categories folded away in the channel list,
     /// the folders open in the rail and the content warnings accepted.
     pub remembered: Remembered,
+    /// Where the person has been: the history the keys walk, the last channel of each
+    /// server.
+    pub history: history::History,
+    /// The list's width in pixels.
+    pub width: u32,
+    /// The write of the width that waits for the drag to stop.
+    pub width_saver: Option<gpui::Task<()>>,
+    /// The scroll of the channel list, which the floating unread indicators read.
+    pub scroll: gpui::ScrollHandle,
+    /// The rows and view height the indicators were last made for (see `floating`).
+    pub shown: (Vec<(usize, floating::Severity)>, i32),
 }
 
 impl Default for SidebarState {
     fn default() -> Self {
+        let remembered = Remembered::current();
         SidebarState {
-            remembered: Remembered::current(),
+            width: remembered.sidebar_width(),
+            remembered,
+            history: history::History::default(),
+            width_saver: None,
+            scroll: gpui::ScrollHandle::new(),
+            shown: (Vec::new(), 0),
         }
     }
 }
@@ -46,6 +67,8 @@ impl Inlet {
         }
         // A server the person just joined opens as soon as the list has it.
         self.nav_on_guilds(cx);
+        // The first time: the place the account was at when the app last ran.
+        self.restore_last_place(cx);
     }
 
     pub(crate) fn on_channels(
@@ -101,11 +124,15 @@ impl Inlet {
                     .last_dm
                     .clone()
                     .filter(|id| self.channels.iter().any(|c| &c.id == id));
-                // A guild opens its first channel that asks no content warning.
-                let first = self
-                    .channels
-                    .iter()
-                    .find(|c| c.is_messageable() && self.gate_for(&c.id, cx).is_none())
+                // A guild opens the channel that was open in it last, else its first
+                // channel that asks no content warning.
+                let wanted = guild_id
+                    .as_deref()
+                    .and_then(|g| self.remembered_channel_of(g));
+                let opens = |c: &&Channel| c.is_messageable() && self.gate_for(&c.id, cx).is_none();
+                let first = wanted
+                    .and_then(|w| self.channels.iter().find(|c| c.id == w && opens(c)))
+                    .or_else(|| self.channels.iter().find(opens))
                     .cloned();
                 match first {
                     Some(first) if guild_id.is_some() => self.select_channel(first.id, window, cx),
@@ -144,6 +171,7 @@ impl Inlet {
             self.social.last_dm = Some(channel_id.clone());
         }
         self.note_channel_visit(&channel_id);
+        self.record_visit(&channel_id, cx);
         // A forum opens the forum view; any other channel closes it.
         if self.open_forum(&channel_id, window, cx) {
             cx.notify();
@@ -155,14 +183,17 @@ impl Inlet {
     }
 
     pub(crate) fn render_channel_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows: Vec<AnyElement> = if self.rail.favorites {
-            self.favorite_rows(cx)
-        } else {
-            match self.selected_guild {
-                None => self.dm_rows(cx),
-                Some(_) => self.channel_rows(cx),
-            }
-        };
+        // Only a server's channel list has the floating unread indicators.
+        let (rows, unread): (Vec<AnyElement>, Vec<(usize, floating::Severity)>) =
+            if self.rail.favorites {
+                (self.favorite_rows(cx), Vec::new())
+            } else {
+                match self.selected_guild {
+                    None => (self.dm_rows(cx), Vec::new()),
+                    Some(_) => self.channel_rows(cx),
+                }
+            };
+        let pills = self.floating_unread(&unread, cx);
         let header = if self.rail.favorites {
             self.render_favorites_header()
         } else {
@@ -170,7 +201,7 @@ impl Inlet {
         };
         div()
             .debug_selector(|| "sidebar".into())
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(self.sidebar_width()))
             .h_full()
             .flex_none()
             .flex()
@@ -179,16 +210,24 @@ impl Inlet {
             .child(header)
             .child(
                 div()
-                    .id("channels")
+                    .relative()
                     .flex_1()
-                    .overflow_y_scroll()
-                    .pt_2()
-                    .pr_2()
-                    .pb_2()
-                    .flex()
-                    .flex_col()
-                    .gap(px(1.))
-                    .children(rows),
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("channels")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.sidebar.scroll)
+                            .pt_2()
+                            .pr_2()
+                            .pb_2()
+                            .flex()
+                            .flex_col()
+                            .gap(px(1.))
+                            .children(rows),
+                    )
+                    .children(pills),
             )
     }
 }

@@ -199,7 +199,7 @@ impl Inlet {
             .unwrap_or_default()
     }
 
-    fn rail_organized(&self, cx: &gpui::App) -> Vec<Organized> {
+    pub(crate) fn rail_organized(&self, cx: &gpui::App) -> Vec<Organized> {
         let guilds: Vec<(String, String)> = self
             .guilds
             .iter()
@@ -681,6 +681,12 @@ impl Inlet {
             .children(instance.add().then(|| {
                 self.rail_button("rail-add", Icon::Plus, "rail-extra")
                     .on_click(cx.listener(|this, _, window, cx| this.open_add_server(window, cx)))
+            }))
+            // The help centre opens in the browser (after the usual link prompt). An
+            // instance that hosts itself has none, so it has no button.
+            .children(instance.help_url.clone().map(|url| {
+                self.rail_button("rail-help", Icon::Question, "rail-extra")
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_link(&url, false, cx)))
             }))
     }
 }

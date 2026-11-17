@@ -26,7 +26,7 @@ impl Inlet {
                 .map(|g| g.name.clone())
                 .unwrap_or_default(),
         };
-        let banner = self.guild_banner(super::SIDEBAR_WIDTH, cx);
+        let banner = self.guild_banner(self.sidebar_width(), cx);
         let with_banner = banner.is_some();
         // The name, a button for the server menu. Over a banner it lies on the picture,
         // on a shade that fades out downwards; the text stays white.
@@ -57,6 +57,11 @@ impl Inlet {
                     gpui::linear_color_stop(gpui::black().opacity(0.), 1.),
                 ))
             })
+            .children(
+                self.selected_guild
+                    .as_deref()
+                    .and_then(|id| self.community_badge_icon(id, cx)),
+            )
             .child(
                 div()
                     .flex_1()
@@ -78,7 +83,7 @@ impl Inlet {
                 .relative()
                 .flex_none()
                 .w_full()
-                .h(px(crate::ui::media::avatar::BANNER_HEIGHT))
+                .h(px(self.sidebar_width() * 9. / 16.))
                 .max_h(gpui::relative(0.3))
                 .overflow_hidden()
                 .border_b_1()

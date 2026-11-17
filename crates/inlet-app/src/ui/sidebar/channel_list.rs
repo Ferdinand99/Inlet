@@ -4,6 +4,7 @@
 use gpui::{div, prelude::*, px, AnyElement, Context, FontWeight, SharedString, Window};
 use inlet_state::{ChannelId, GuildId};
 
+use super::floating::Severity;
 use crate::app::Inlet;
 use crate::assets::Icon;
 use crate::model::{Channel, ChannelKind};
@@ -39,10 +40,15 @@ pub fn channel_label(c: &Channel) -> String {
 impl Inlet {
     /// The rows of a guild's channel list: the "Members" row, then the categories with
     /// their channels (and who is in each voice channel).
-    pub(super) fn channel_rows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn channel_rows(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, Vec<(usize, Severity)>) {
         let selected = self.selected_channel.clone();
         let mut previous_was_channel = false;
         let mut rows: Vec<AnyElement> = Vec::new();
+        // The rows of channels with something unread, for the floating indicators.
+        let mut unread: Vec<(usize, Severity)> = Vec::new();
         rows.extend(self.members_row(cx));
         let folded = self.folded_categories(cx);
         let hide_muted = self.open_guild_hides_muted(cx);
@@ -83,12 +89,18 @@ impl Inlet {
             }
             previous_was_channel = true;
             let active = selected.as_deref() == Some(c.id.as_str());
+            let badge = self.badge(&c.id);
+            if badge.mentions > 0 {
+                unread.push((rows.len(), Severity::Mention));
+            } else if RowMarks::of(badge, active).pill {
+                unread.push((rows.len(), Severity::Unread));
+            }
             rows.push(self.channel_row(c, active, cx));
             if c.kind == ChannelKind::Voice {
                 rows.extend(self.voice_rows(c, cx));
             }
         }
-        rows
+        (rows, unread)
     }
 
     /// The "Members" row at the top of a server's list: it shows or hides the member

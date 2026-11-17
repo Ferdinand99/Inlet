@@ -63,6 +63,10 @@ pub struct InstanceNav {
     pub stock_guild: Option<String>,
     /// Discovery is on (unless the instance says it is not).
     pub discovery_off: bool,
+    /// The help centre's page: the instance's marketing site and `/help`. An instance
+    /// that hosts itself has none (Fluxer's `Routes.help()`), so the rail has no help
+    /// button there.
+    pub help_url: Option<String>,
 }
 
 impl InstanceNav {
@@ -70,6 +74,7 @@ impl InstanceNav {
     pub fn of(
         community: Option<&serde_json::Value>,
         features: &serde_json::Map<String, serde_json::Value>,
+        marketing: Option<&str>,
     ) -> Self {
         let single = community
             .and_then(|c| c.get("single_community"))
@@ -85,6 +90,10 @@ impl InstanceNav {
             stock_guild: stock,
             discovery_off: features.get("discovery_enabled").and_then(|v| v.as_bool())
                 == Some(false),
+            help_url: help_url(
+                marketing,
+                features.get("self_hosted").and_then(|v| v.as_bool()) == Some(true),
+            ),
         }
     }
 
@@ -104,10 +113,29 @@ impl InstanceNav {
     }
 }
 
+/// The help centre's address: the marketing site's `/help` page, unless the instance
+/// hosts itself or the address is not a plain `https` one.
+pub fn help_url(marketing: Option<&str>, self_hosted: bool) -> Option<String> {
+    if self_hosted {
+        return None;
+    }
+    let base = url::Url::parse(marketing?).ok()?;
+    if base.scheme() != "https" || !base.username().is_empty() || base.password().is_some() {
+        return None;
+    }
+    let mut help = base;
+    help.set_query(None);
+    help.set_fragment(None);
+    let path = format!("{}/help", help.path().trim_end_matches('/'));
+    help.set_path(&path);
+    Some(help.to_string())
+}
+
 /// Tells the UI what the signed-in instance's configuration says about the rail.
 pub(in crate::backend) fn instance_known(backend: &Backend, session: &p::Session) {
     let d = session.instance().discovery();
-    let nav = InstanceNav::of(d.extra.get("community"), &d.features);
+    let marketing = d.endpoints.extra.get("marketing").and_then(|v| v.as_str());
+    let nav = InstanceNav::of(d.extra.get("community"), &d.features, marketing);
     let _ = backend
         .events
         .unbounded_send(SettingsEv::Guild(Ev::Instance(Box::new(nav))));
@@ -380,6 +408,38 @@ pub(super) fn handle(backend: &mut Backend, cmd: Cmd) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_help_button_shows_only_with_a_marketing_site() {
+        let features = |self_hosted: bool| {
+            json!({"self_hosted": self_hosted})
+                .as_object()
+                .cloned()
+                .unwrap()
+        };
+        let nav = |self_hosted, marketing| InstanceNav::of(None, &features(self_hosted), marketing);
+        assert_eq!(
+            nav(false, Some("https://fluxer.app")).help_url.as_deref(),
+            Some("https://fluxer.app/help")
+        );
+        // A trailing slash and a path are kept apart; a query goes.
+        assert_eq!(
+            help_url(Some("https://example.com/site/?x=1"), false).as_deref(),
+            Some("https://example.com/site/help")
+        );
+        // An instance that hosts itself, no marketing site, or one that is not https.
+        assert_eq!(nav(true, Some("https://fluxer.app")).help_url, None);
+        assert_eq!(nav(false, None).help_url, None);
+        assert_eq!(nav(false, Some("http://fluxer.app")).help_url, None);
+        assert_eq!(
+            nav(false, Some("https://user:pw@fluxer.app")).help_url,
+            None
+        );
+        assert_eq!(nav(false, Some("not a url")).help_url, None);
+        // No feature at all counts as not self-hosted.
+        let bare = InstanceNav::of(None, &serde_json::Map::new(), Some("https://fluxer.app"));
+        assert!(bare.help_url.is_some());
+    }
 
     #[test]
     fn invite_requests_are_one_a_second() {
