@@ -114,7 +114,7 @@ if ! flatpak-builder --user --force-clean --disable-rofiles-fuse \
   id >&2 || true
   ls -lAR "$build/files/share" >&2 || true
   appstreamcli compose --verbose --prefix=/ --origin=flatpak \
-    --components="$app_id,$app_id.desktop" --data-dir="$work/diag/xmls" \
+    --print-report=full --components="$app_id,$app_id.desktop" --data-dir="$work/diag/xmls" \
     --icons-dir="$work/diag/icons" --result-root="$work/diag" "$build/files" >&2 || true
   exit 1
 fi

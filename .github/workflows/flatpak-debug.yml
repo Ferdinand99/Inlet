@@ -1,0 +1,33 @@
+name: Flatpak debug
+on:
+  pull_request:
+    paths:
+      - .github/workflows/flatpak-debug.yml
+      - packaging/linux/**
+permissions:
+  contents: read
+  actions: read
+jobs:
+  flatpak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream desktop-file-utils xauth
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          dpkg -l | grep -E "appstream|gdk-pixbuf|librsvg|libappstream" | awk '{print $2, $3}'
+      - name: Get the binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44044038823 -R "$GITHUB_REPOSITORY" -n inlet-linux-x86_64 -D art
+          mkdir dist
+          tar -xzf art/inlet-*-linux-x86_64.tar.gz -C dist
+          ls -l dist
+      - name: Build
+        run: packaging/linux/flatpak/build-flatpak.sh dist/inlet packages
