@@ -108,9 +108,13 @@ pub fn render(id: &str, reply: &ReplyRow, compact: bool, cx: &mut Context<Inlet>
         .when(target.is_some(), |d| d.cursor_pointer())
         .child(lead)
         .child(content.flex_1())
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_click(cx.listener(move |this, _, window, cx| {
             if let Some(target) = target {
-                this.jump_to_message(target, cx);
+                // Through the jump that loads the page around the message when it is not in
+                // the list (the list holds 50 to 200 messages, and the buffer is not on screen).
+                if let Some(channel) = this.selected_channel.clone() {
+                    this.jump_to(&channel, &target.to_string(), window, cx);
+                }
             }
         }))
         .into_any_element()

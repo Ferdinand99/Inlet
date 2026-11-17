@@ -1342,6 +1342,9 @@ fn loads_are_never_refused_and_end_by_page_timeout_or_ready() {
 #[test]
 fn a_window_scrolled_back_applies_reactions_at_once() {
     let mut s = state();
+    // The reader is away from the bottom, so live messages do not cut the rows being read.
+    s.set_open_channel(Some(ch(GENERAL)));
+    s.set_view_scrolled(true);
     let page: Vec<_> = (0..50)
         .rev()
         .map(|i| message(mid(100 + i, 0), GENERAL, OTHER))

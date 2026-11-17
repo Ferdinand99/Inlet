@@ -82,9 +82,9 @@ pub mod limits {
     /// What a window is cut to when its channel is shown again (`MAX_MESSAGES_PER_CHANNEL` in
     /// Fluxer's client, one page).
     pub const MAX_REOPEN_MESSAGES: usize = 50;
-    /// Approximate bytes kept per channel window; the oldest messages go
-    /// first. The estimate undercounts `serde_json`'s real heap use by about
-    /// half, so the real cap is somewhat higher.
+    /// Approximate bytes kept per channel window, the list and its two buffers together:
+    /// the buffers are shed first, then the oldest messages. The estimate tracks the heap
+    /// to within 20 % (`tests/window_heap.rs`).
     pub const MAX_WINDOW_BYTES: usize = 4 * 1024 * 1024;
     /// A message larger than this (approximately) is kept as a stub without
     /// content. Fluxer's own limits keep real messages far below it.
@@ -97,7 +97,9 @@ pub mod limits {
     /// Reaction events buffered while a window waits for its newest page.
     pub const MAX_PENDING_REACTIONS: usize = 500;
     /// Messages a window keeps while its channel is not on screen (and not the thread
-    /// panel's): Fluxer's client cuts a loaded list of more than 200 down to 100.
+    /// panel's), with no buffer.
+    // Deviation: Fluxer's client has no such cut (it keeps up to 50 channel caches whole and
+    // only trims the channel on screen); Inlet keeps memory small for the 30 windows.
     pub const MAX_BACKGROUND_MESSAGES: usize = 100;
     /// Channels with a message window; the least recently used is evicted.
     pub const MAX_MESSAGE_WINDOWS: usize = 30;

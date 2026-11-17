@@ -2,7 +2,7 @@
 //! What a message costs in a window, in heap bytes counted by an allocator that wraps the
 //! system's: for a plain message, one with an attachment and one with an embed, next to
 //! the `approx_bytes` the account state budgets with. A full set of windows (30 channels
-//! of 500 messages) is the largest part of the memory the app holds, so this is the
+//! of up to 200 messages and their buffers) is the largest part of the memory the app holds, so this is the
 //! number that says whether the budget is honest.
 //!
 //!     INLET_PASS_ENV=CARGO_PROFILE_CI_OPT_LEVEL CARGO_PROFILE_CI_OPT_LEVEL=3 \

@@ -8,7 +8,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use inlet_protocol::{Dispatch, Message, Ready};
-use inlet_state::limits::{MAX_BACKGROUND_MESSAGES, MAX_MESSAGES_PER_CHANNEL, MAX_MESSAGE_WINDOWS};
+use inlet_state::limits::{
+    MAX_BACKGROUND_MESSAGES, MAX_MESSAGES_PER_CHANNEL, MAX_MESSAGE_WINDOWS, MAX_TRUNCATED_VIEW,
+};
 use inlet_state::{AccountState, ChannelId, MessagesPage};
 use serde_json::{json, Value};
 
@@ -91,7 +93,7 @@ fn message(channel: u64, n: u64) -> Message {
 /// 30 channels, each opened in turn and filled with live messages past the cap; with
 /// `track` the app says which one is on screen. Returns the heap of the state, the total
 /// of the windows' budgets, and the number of messages in each window.
-fn run(track: bool) -> (isize, usize, Vec<usize>) {
+fn run(track: bool) -> (isize, usize, Vec<(usize, usize)>) {
     let mut s = AccountState::from_ready_at(&ready(), 0);
     let before = live();
     for c in 0..MAX_MESSAGE_WINDOWS as u64 {
@@ -111,26 +113,27 @@ fn run(track: bool) -> (isize, usize, Vec<usize>) {
     let heap = live() - before;
     let w = s.message_windows();
     let budget: usize = w.channels().map(|c| w.get(c).unwrap().approx_bytes()).sum();
-    let lens: Vec<usize> = w.channels().map(|c| w.get(c).unwrap().len()).collect();
+    let lens: Vec<(usize, usize)> = w
+        .channels()
+        .map(|c| {
+            let win = w.get(c).unwrap();
+            (win.len(), win.buffered().0)
+        })
+        .collect();
     (heap, budget, lens)
 }
 
 #[test]
 fn thirty_windows_weigh_one_open_window_and_twenty_nine_small_ones() {
     let (full, full_budget, lens) = run(false);
-    assert!(lens
-        .iter()
-        .all(|n| (100..=MAX_MESSAGES_PER_CHANNEL).contains(n)));
+    // Every window holds its list of 100 (the reader is at the bottom) and a buffer.
+    assert!(lens.iter().all(|(n, b)| *n == MAX_TRUNCATED_VIEW && *b > 0));
     let (cut, cut_budget, lens) = run(true);
-    // The window on screen holds its list (past 100, up to 200) and the buffer; the others
-    // are at 100 and hold nothing else.
-    let open = lens
-        .iter()
-        .filter(|n| **n > MAX_BACKGROUND_MESSAGES)
-        .count();
+    // The window on screen keeps its buffer; the others hold 100 and nothing else.
+    let open = lens.iter().filter(|(_, b)| *b > 0).count();
     let small = lens
         .iter()
-        .filter(|n| **n == MAX_BACKGROUND_MESSAGES)
+        .filter(|(n, b)| *n == MAX_BACKGROUND_MESSAGES && *b == 0)
         .count();
     assert_eq!((open, small), (1, MAX_MESSAGE_WINDOWS - 1), "{lens:?}");
     println!(

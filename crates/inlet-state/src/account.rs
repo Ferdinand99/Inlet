@@ -704,6 +704,10 @@ impl AccountState {
     /// [`crate::limits::MAX_BACKGROUND_MESSAGES`] messages; scrolling back in it later loads
     /// the older ones again through the history paging. Never cuts the channel shown, nor
     /// the thread panel's ([`AccountState::set_open_thread`]).
+    ///
+    /// Deviation: Fluxer's client has no cut for channels that are not shown, nor for leaving
+    /// to no channel (it keeps up to 50 channel caches whole). Inlet cuts them to keep the
+    /// memory of 30 windows small.
     pub fn set_open_channel(&mut self, ch: Option<ChannelId>) -> Changes {
         self.set_open(0, ch)
     }
@@ -719,6 +723,13 @@ impl AccountState {
             c.message(trimmed);
         }
         c
+    }
+
+    /// The reader of the open channel is away from the bottom of the list (`true`) or at it.
+    /// Live messages cut the oldest messages of a list at the bottom, and the newest side of a
+    /// list over 200 when the reader is away, so the rows being read stay.
+    pub fn set_view_scrolled(&mut self, scrolled: bool) {
+        self.windows.set_scrolled_back(scrolled);
     }
 
     /// Takes up to `limit` messages of the older buffer of `ch` into its window, as scrolling

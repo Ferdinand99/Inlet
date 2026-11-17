@@ -450,8 +450,8 @@ pub struct Plan {
     pub seed: u64,
     /// Virtual length of the recording.
     pub duration_ms: u64,
-    /// How busy it is, 1 for a lively day. The message windows (500 messages each) take
-    /// days to fill at 1; 24 fills them in hours, which shows what a full set weighs.
+    /// How busy it is, 1 for a lively day. The message windows (up to 200 messages each,
+    /// with their buffers) take days to fill at 1; 24 fills them in hours, which shows what a full set weighs.
     pub rate: f64,
 }
 

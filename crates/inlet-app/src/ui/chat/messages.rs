@@ -1623,17 +1623,31 @@ impl Inlet {
         self.refresh_rows(cx);
     }
 
+    /// Scrolling down to a list that lost its newest messages: newer messages cut from the
+    /// list earlier wait in the window's buffer, a page at a time. Whether there were any.
+    fn drain_newer_buffer(&mut self, cx: &mut Context<Self>) -> bool {
+        let (Some(ch), Some(account)) = (self.open_channel_id(), self.account.clone()) else {
+            return false;
+        };
+        let drained = account.update(cx, |s, _| s.drain_newer(ch, DRAIN_PAGE));
+        let Some(changes) = drained else {
+            return false;
+        };
+        self.after_changes(changes, false, cx);
+        self.refresh_rows(cx);
+        true
+    }
+
+    /// Tells the account state where the reader is: away from the bottom of the list, or at
+    /// it. Live messages cut the list by it (Fluxer's `channelPinnedToEnd`).
+    fn note_reader_position(&mut self, scrolled: bool, cx: &mut Context<Self>) {
+        if let Some(account) = self.account.clone() {
+            account.update(cx, |s, _| s.set_view_scrolled(scrolled));
+        }
+    }
+
     /// Loads the newest page again when the person asks for it, at most once a second.
     fn reload_newest(&mut self, cx: &mut Context<Self>) {
-        // Newer messages cut from the list wait in the window's buffer too.
-        if let (Some(ch), Some(account)) = (self.open_channel_id(), self.account.clone()) {
-            let drained = account.update(cx, |s, _| s.drain_newer(ch, DRAIN_PAGE));
-            if let Some(changes) = drained {
-                self.after_changes(changes, false, cx);
-                self.refresh_rows(cx);
-                return;
-            }
-        }
         let now = now_ms();
         let view = &mut self.chat.view;
         if view
@@ -1713,16 +1727,29 @@ impl Inlet {
                 let at_top = range.start <= 1;
                 let at_bottom = range.end >= count;
                 // Inside the list's borrow: plain fields of the view only.
-                let _ = weak.update(cx, |this, cx| {
-                    let view = &mut this.chat.view;
-                    view.divider_above = view
-                        .rows
-                        .iter()
-                        .position(|r| matches!(r, Row::Unread | Row::Day { new: true, .. }))
-                        .is_some_and(|ix| ix < range.start);
-                    view.scrolled_away = !following && range.end < count;
-                    cx.notify();
-                });
+                let moved = weak
+                    .update(cx, |this, cx| {
+                        let view = &mut this.chat.view;
+                        view.divider_above = view
+                            .rows
+                            .iter()
+                            .position(|r| matches!(r, Row::Unread | Row::Day { new: true, .. }))
+                            .is_some_and(|ix| ix < range.start);
+                        let was = view.scrolled_away;
+                        view.scrolled_away = !following && range.end < count;
+                        cx.notify();
+                        was != view.scrolled_away
+                    })
+                    .unwrap_or(false);
+                if moved {
+                    // The reader left the bottom or came back: the account state cuts live
+                    // messages by it. After the scroll, with the list free again.
+                    let scrolled = !following && range.end < count;
+                    let weak = weak.clone();
+                    cx.defer(move |cx| {
+                        let _ = weak.update(cx, |this, cx| this.note_reader_position(scrolled, cx));
+                    });
+                }
                 if !at_top && !at_bottom {
                     return;
                 }
@@ -1732,7 +1759,7 @@ impl Inlet {
                     let _ = weak.update(cx, |this, cx| {
                         if at_top {
                             this.load_older(cx);
-                        } else if this.chat.view.detached {
+                        } else if this.chat.view.detached && !this.drain_newer_buffer(cx) {
                             // Deviation: Fluxer loads `?after=` pages below a window
                             // that lost its newest messages (after a jump); Inlet loads
                             // the newest page, which replaces the window.
