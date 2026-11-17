@@ -222,6 +222,18 @@ impl Wish {
         Wish { update, through }
     }
 
+    /// A wish for the guild order and folders: the whole list, which replaces the
+    /// account's. It shares the request, the gathering and the gap of the other account
+    /// settings, so the folders cost nothing extra in the `PATCH /users/@me/settings`
+    /// budget.
+    pub fn guild_folders(through: u64, folders: Vec<inlet_protocol::models::GuildFolder>) -> Wish {
+        let update = p::UserSettingsUpdate {
+            guild_folders: Some(folders),
+            ..Default::default()
+        };
+        Wish { update, through }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.update == p::UserSettingsUpdate::default()
     }
@@ -263,7 +275,8 @@ impl Wish {
             sensitive_content_friend_dm_filter,
             sensitive_content_non_friend_dm_filter,
             sensitive_content_guild_filter,
-            friend_source_flags
+            friend_source_flags,
+            guild_folders
         );
         self.through = self.through.max(newer.through);
     }

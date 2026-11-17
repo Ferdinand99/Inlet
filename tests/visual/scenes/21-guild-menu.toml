@@ -1,0 +1,9 @@
+# The server menu under the server name.
+name = "guild-menu"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "guild-menu"
+guild = "g1"
+channel = "c-general"

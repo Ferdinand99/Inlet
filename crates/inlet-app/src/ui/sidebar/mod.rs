@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The column next to the guild rail: guild header, channel or DM list, user panel.
 
+mod category;
 pub mod channel_list;
 pub mod dm_list;
 pub mod favorites;
-mod guild_header;
+pub mod guild_header;
+mod remembered;
 mod user_panel;
 
-use std::collections::HashSet;
+pub use remembered::Remembered;
 
 use gpui::{div, prelude::*, px, AnyElement, Context, Window};
 
@@ -19,10 +21,18 @@ use crate::theme;
 /// Channel list / DM list width.
 pub const SIDEBAR_WIDTH: f32 = 320.;
 
-#[derive(Default)]
 pub struct SidebarState {
-    /// Categories the person folded away in the channel list.
-    pub collapsed: HashSet<String>,
+    /// What is remembered between runs: the categories folded away in the channel list,
+    /// the folders open in the rail and the content warnings accepted.
+    pub remembered: Remembered,
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        SidebarState {
+            remembered: Remembered::current(),
+        }
+    }
 }
 
 impl Inlet {
@@ -34,6 +44,8 @@ impl Inlet {
                 self.select_guild(None, cx);
             }
         }
+        // A server the person just joined opens as soon as the list has it.
+        self.nav_on_guilds(cx);
     }
 
     pub(crate) fn on_channels(
@@ -89,7 +101,13 @@ impl Inlet {
                     .last_dm
                     .clone()
                     .filter(|id| self.channels.iter().any(|c| &c.id == id));
-                match self.channels.iter().find(|c| c.is_messageable()).cloned() {
+                // A guild opens its first channel that asks no content warning.
+                let first = self
+                    .channels
+                    .iter()
+                    .find(|c| c.is_messageable() && self.gate_for(&c.id, cx).is_none())
+                    .cloned();
+                match first {
                     Some(first) if guild_id.is_some() => self.select_channel(first.id, window, cx),
                     _ => match last_dm {
                         Some(id) if guild_id.is_none() => self.select_channel(id, window, cx),
@@ -116,6 +134,11 @@ impl Inlet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // An age-restricted channel asks first, whichever way it is opened.
+        if let Some(gate) = self.gate_for(&channel_id, cx) {
+            self.show_gate(gate, cx);
+            return;
+        }
         self.selected_channel = Some(channel_id.clone());
         if self.selected_guild.is_none() {
             self.social.last_dm = Some(channel_id.clone());
@@ -132,9 +155,18 @@ impl Inlet {
     }
 
     pub(crate) fn render_channel_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows: Vec<AnyElement> = match self.selected_guild {
-            None => self.dm_rows(cx),
-            Some(_) => self.channel_rows(cx),
+        let rows: Vec<AnyElement> = if self.rail.favorites {
+            self.favorite_rows(cx)
+        } else {
+            match self.selected_guild {
+                None => self.dm_rows(cx),
+                Some(_) => self.channel_rows(cx),
+            }
+        };
+        let header = if self.rail.favorites {
+            self.render_favorites_header()
+        } else {
+            self.render_guild_header(cx).into_any_element()
         };
         div()
             .debug_selector(|| "sidebar".into())
@@ -144,7 +176,7 @@ impl Inlet {
             .flex()
             .flex_col()
             .bg(theme::bg_app())
-            .child(self.render_guild_header(cx))
+            .child(header)
             .child(
                 div()
                     .id("channels")
