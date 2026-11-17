@@ -419,8 +419,8 @@ pub fn sidebar_order(channels: &[Channel]) -> Vec<Channel> {
 /// "Thursday, 1 October 2026" for a date separator; the weekday and month names are in
 /// the language of the UI ("torsdag 1. oktober 2026").
 pub fn day_label(day: chrono::NaiveDate) -> String {
-    use chrono::Datelike;
     use crate::ui::chat::time::{month_name, weekday_name};
+    use chrono::Datelike;
     t!(
         "markdown-weekday-and-date",
         weekday = weekday_name(day.weekday().number_from_monday()),

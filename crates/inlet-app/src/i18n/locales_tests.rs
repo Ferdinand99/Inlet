@@ -187,9 +187,8 @@ fn args(pairs: &[(&'static str, i64)]) -> FluentArgs<'static> {
 
 #[test]
 fn plurals_dates_and_counts_read_naturally_in_norwegian() {
-    let nb = |id: &str, a: &[(&'static str, i64)]| {
-        tr_in(Language::NorwegianBokmal, id, Some(&args(a)))
-    };
+    let nb =
+        |id: &str, a: &[(&'static str, i64)]| tr_in(Language::NorwegianBokmal, id, Some(&args(a)));
     assert_eq!(nb("social-wait-seconds", &[("count", 1)]), "1 sekund");
     assert_eq!(nb("social-wait-seconds", &[("count", 30)]), "30 sekunder");
     assert_eq!(nb("social-wait-minutes", &[("count", 1)]), "1 minutt");
@@ -215,13 +214,21 @@ fn plurals_dates_and_counts_read_naturally_in_norwegian() {
     a.set("month", month);
     a.set("day", 1);
     a.set("year", 2026);
-    let long = tr_in(Language::NorwegianBokmal, "markdown-date-long-dmy", Some(&a));
+    let long = tr_in(
+        Language::NorwegianBokmal,
+        "markdown-date-long-dmy",
+        Some(&a),
+    );
     assert_eq!(long, "1. oktober 2026");
     let mut a = FluentArgs::new();
     a.set("weekday", weekday);
     a.set("date", long);
     assert_eq!(
-        tr_in(Language::NorwegianBokmal, "markdown-weekday-and-date", Some(&a)),
+        tr_in(
+            Language::NorwegianBokmal,
+            "markdown-weekday-and-date",
+            Some(&a)
+        ),
         "torsdag 1. oktober 2026"
     );
 }
@@ -247,10 +254,19 @@ fn english_and_norwegian_differ_where_they_should() {
 
 #[test]
 fn locales_map_onto_the_languages_inlet_has() {
-    assert_eq!(Language::from_locale("nb-NO"), Some(Language::NorwegianBokmal));
-    assert_eq!(Language::from_locale("nb_NO.UTF-8"), Some(Language::NorwegianBokmal));
+    assert_eq!(
+        Language::from_locale("nb-NO"),
+        Some(Language::NorwegianBokmal)
+    );
+    assert_eq!(
+        Language::from_locale("nb_NO.UTF-8"),
+        Some(Language::NorwegianBokmal)
+    );
     assert_eq!(Language::from_locale("no"), Some(Language::NorwegianBokmal));
-    assert_eq!(Language::from_locale("NN-no"), Some(Language::NorwegianBokmal));
+    assert_eq!(
+        Language::from_locale("NN-no"),
+        Some(Language::NorwegianBokmal)
+    );
     assert_eq!(Language::from_locale("en_GB@euro"), Some(Language::English));
     assert_eq!(Language::from_locale("en"), Some(Language::English));
     assert_eq!(Language::from_locale("de-DE"), None);
