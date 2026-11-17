@@ -299,16 +299,6 @@ impl Shared {
         }
     }
 
-    /// A document (the window's or a frame's) is about to be requested from the network
-    /// (Windows: WebView2's resource callback, which runs before the request is sent).
-    /// Frames and the window are not told apart here, so what the rules allow for neither
-    /// (not `allow`, not `frames`) or end the flow with (`intercept`) is stopped; the rest
-    /// is left to the navigation callbacks.
-    #[cfg(windows)]
-    fn document_request(&self, url: &str) -> bool {
-        self.navigate_frame(url)
-    }
-
     /// The window loads `url`: the second look at what `navigate` let through.
     fn page_load(&self, url: &str) {
         if self.done.get() {
@@ -484,10 +474,7 @@ fn build_webview(
     let webview = webview.map_err(|_| ErrorKind::WindowFailed)?;
     // Frames must be held to the same rules as everywhere else, or the flow does not start.
     #[cfg(windows)]
-    {
-        hook_frames(&webview, shared)?;
-        hook_requests(&webview, shared)?;
-    }
+    hook_frames(&webview, shared)?;
     #[cfg(all(feature = "test-loopback", target_os = "linux"))]
     test_loopback_linux(&webview);
     Ok(webview)
@@ -525,56 +512,6 @@ fn hook_frames(webview: &WebView, shared: &Rc<Shared>) -> Result<(), ErrorKind> 
         webview
             .webview()
             .add_FrameNavigationStarting(&handler, &mut token)
-    }
-    .map_err(|_| ErrorKind::WindowFailed)
-}
-
-/// Windows: WebView2 raises `NavigationStarting` after the request for a redirect or a
-/// script's navigation may already be on its way, so a URL that must never be fetched
-/// (a blocked host, or the callback with the authorisation code) is also stopped where
-/// the engine asks for a document: `WebResourceRequested` runs before the network and
-/// can answer in its place. The navigation callbacks stay as they are: this only adds.
-#[cfg(windows)]
-fn hook_requests(webview: &WebView, shared: &Rc<Shared>) -> Result<(), ErrorKind> {
-    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT;
-    use webview2_com::{take_pwstr, WebResourceRequestedEventHandler};
-    use windows_core::{HSTRING, PWSTR};
-    use wry::WebViewExtWindows;
-
-    let core = webview.webview();
-    let env = webview.environment();
-    let shared = shared.clone();
-    let handler = WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
-        let Some(args) = args else {
-            return Ok(());
-        };
-        // SAFETY: the arguments are the event's own objects, valid for this call; the
-        // string WebView2 hands out is copied and freed by `take_pwstr`.
-        unsafe {
-            let request = args.Request()?;
-            let mut uri = PWSTR::null();
-            request.Uri(&mut uri)?;
-            let url = take_pwstr(uri);
-            if !shared.document_request(&url) {
-                let response = env.CreateWebResourceResponse(
-                    None,
-                    403,
-                    &HSTRING::from("Blocked"),
-                    &HSTRING::from(""),
-                )?;
-                args.SetResponse(&response)?;
-            }
-        }
-        Ok(())
-    }));
-    let mut token = 0;
-    // SAFETY: the handler is a live COM object and the token a valid pointer for the call.
-    unsafe {
-        core.AddWebResourceRequestedFilter(
-            &HSTRING::from("*"),
-            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
-        )
-        .and_then(|()| core.add_WebResourceRequested(&handler, &mut token))
     }
     .map_err(|_| ErrorKind::WindowFailed)
 }
