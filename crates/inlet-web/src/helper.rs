@@ -485,12 +485,12 @@ fn build_webview(
 /// the flow does not start: frames would be open.
 #[cfg(windows)]
 fn hook_frames(webview: &WebView, shared: &Rc<Shared>) -> Result<(), ErrorKind> {
-    use webview2_com::{take_pwstr, FrameNavigationStartingEventHandler};
+    use webview2_com::{take_pwstr, NavigationStartingEventHandler};
     use windows_core::PWSTR;
     use wry::WebViewExtWindows;
 
     let shared = shared.clone();
-    let handler = FrameNavigationStartingEventHandler::create(Box::new(move |_, args| {
+    let handler = NavigationStartingEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else {
             return Ok(());
         };
