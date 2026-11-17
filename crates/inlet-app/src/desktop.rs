@@ -582,7 +582,9 @@ pub fn attach(
 /// the system's buttons). Demo runs keep the system's, so the screenshots of the other
 /// scenes do not change; `INLET_DEMO_TITLEBAR` turns it on for the ones that show it.
 fn uses_own_title_bar(prefs: &DesktopPrefs) -> bool {
-    if demo_mode() {
+    // A scene file runs a demo build whether or not it has a demo account.
+    let scene = std::env::var_os("INLET_DEMO_SCENE").is_some();
+    if demo_mode() || (cfg!(feature = "demo") && scene) {
         return cfg!(feature = "demo") && std::env::var_os("INLET_DEMO_TITLEBAR").is_some();
     }
     cfg!(target_os = "macos") || !prefs.use_system_title_bar
