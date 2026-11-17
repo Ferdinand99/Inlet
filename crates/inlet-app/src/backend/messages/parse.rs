@@ -184,12 +184,16 @@ fn to_reply(v: &serde_json::Value, names: &Names) -> Option<Reply> {
     let snippet = if content.trim().is_empty() {
         t!("reply-no-text")
     } else {
-        // The whole text up to the size a message keeps, not only the first screenful:
-        // cutting the text before parsing could split a spoiler in two, and what is cut
-        // after parsing cannot. The preview itself is cut by `snippet`.
-        let end = model::floor_char_boundary(content, model::MAX_CONTENT_BYTES);
-        let text = &content[..end];
-        let plain = crate::ui::markdown::plain_text(text, names);
+        // Only what the chat parses of a message: the parser gives up on longer text and
+        // would show it as typed, spoilers included. A spoiler open at the cut stays
+        // covered: a lone `||` at the end closes it (the parser decides what is open, so
+        // a `||` in code cannot fool it), and where none is open it is literal text far
+        // past what the preview shows.
+        let text = match content.char_indices().nth(model::DISPLAY_CHARS) {
+            Some((at, _)) => format!("{}||", &content[..at]),
+            None => content.to_string(),
+        };
+        let plain = crate::ui::markdown::plain_text(&text, names);
         if plain.trim().is_empty() {
             t!("reply-no-text")
         } else {
@@ -323,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_inside_code_does_not_unbalance_a_cut_spoiler() {
+    fn a_marker_inside_code_does_not_unbalance_a_spoiler_at_the_cut() {
         // Two `||` before the cut, one of them in code: counting them says "closed".
         let content = format!("`||` ||secret {} more||", "y".repeat(model::DISPLAY_CHARS));
         let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
@@ -341,15 +345,17 @@ mod tests {
     }
 
     #[test]
-    fn a_spoiler_cut_by_the_size_cap_stays_covered() {
+    fn a_spoiler_open_at_the_cut_stays_covered() {
+        // The spoiler opens before the cut and closes after it.
         let content = format!(
             "x ||secret {} still secret||",
-            "y".repeat(model::DISPLAY_CHARS)
+            "y".repeat(model::DISPLAY_CHARS + 4_000)
         );
+        assert!(content.chars().count() > model::DISPLAY_CHARS);
         let v = serde_json::json!({"author": {"username": "ana"}, "content": content});
         let r = to_reply(&v, &Names::default()).unwrap();
         assert!(!r.snippet.contains("secret"), "{}", r.snippet);
-        assert!(r.snippet.starts_with("x \u{2588}"));
+        assert!(r.snippet.starts_with("x \u{2588}"), "{}", r.snippet);
     }
 
     #[test]

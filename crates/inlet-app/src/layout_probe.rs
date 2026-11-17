@@ -44,7 +44,7 @@ pub mod selector {
     pub const COMPOSER_BOX: &str = "composer-box";
     /// The member list beside the chat.
     pub const MEMBER_LIST: &str = "member-list";
-    /// The first image attachment of the open channel.
+    /// An image attachment of the open channel.
     pub const ATTACHMENT_IMAGE: &str = "attachment-image";
 }
 
@@ -103,6 +103,17 @@ impl Probe {
 }
 
 impl Probe {
+    /// Opens the search column, as a click on the header's search field does.
+    pub fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.inlet
+            .update(cx, |inlet, cx| inlet.open_search(window, cx));
+    }
+
+    /// Frames the view has drawn so far.
+    pub fn draws(&self, cx: &gpui::App) -> u64 {
+        self.inlet.read(cx).media.draws()
+    }
+
     /// The app view, for tests that look at its state.
     #[cfg(test)]
     pub(crate) fn inlet(&self) -> &Entity<Inlet> {

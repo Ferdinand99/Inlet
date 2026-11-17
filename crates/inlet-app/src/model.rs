@@ -345,7 +345,7 @@ impl Message {
     }
 }
 
-pub(crate) fn floor_char_boundary(s: &str, mut ix: usize) -> usize {
+fn floor_char_boundary(s: &str, mut ix: usize) -> usize {
     while ix > 0 && !s.is_char_boundary(ix) {
         ix -= 1;
     }
@@ -423,10 +423,12 @@ pub fn day_label(day: chrono::NaiveDate) -> String {
     day.format("%A, %-d %B %Y").to_string()
 }
 
-/// The first `max` characters of `text` on one line, with "…" when cut. Cleaned like
-/// [`clean_name`], except that the joiners of an emoji sequence (a family, a flag, a
-/// skin tone, a profession) stay, so it is not drawn as separate people.
+/// The first `max` grapheme clusters of `text` on one line, with "…" when cut. Cleaned
+/// like [`clean_name`], except that the joiners of an emoji sequence (a family, a flag,
+/// a skin tone, a profession) stay, so it is not drawn as separate people. The cut falls
+/// between clusters, so it never splits an emoji sequence or a letter from its marks.
 pub fn snippet(text: &str, max: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
     let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     // Only joiners between two visible characters survive this step; the rest of the
     // hidden and control characters go in the filter below, as in `clean_name`.
@@ -434,58 +436,17 @@ pub fn snippet(text: &str, max: usize) -> String {
     let cleaned: String = joined
         .chars()
         .filter(|c| matches!(*c, '\u{200C}' | '\u{200D}') || !is_hidden_or_control(*c))
-        .take(MAX_NAME_CHARS)
         .collect();
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
         return "(no name)".into();
     }
-    let chars: Vec<char> = cleaned.chars().collect();
-    if chars.len() <= max {
+    let mut clusters = cleaned.graphemes(true);
+    let head: String = clusters.by_ref().take(max).collect();
+    if clusters.next().is_none() {
         return cleaned.to_string();
     }
-    let head: String = chars[..sequence_boundary(&chars, max)].iter().collect();
-    format!(
-        "{}\u{2026}",
-        head.trim_end_matches(['\u{200C}', '\u{200D}'])
-    )
-}
-
-/// Where to cut `chars` after at most `max` of them without splitting an emoji
-/// sequence: a cut before a joiner, a variation selector, a skin tone, a keycap mark
-/// or a tag, after a joiner, or between the two halves of a flag moves back to the
-/// start of that sequence. A sequence longer than the whole line is cut as asked.
-fn sequence_boundary(chars: &[char], max: usize) -> usize {
-    let continues = |c: char| {
-        matches!(c,
-            '\u{200C}' | '\u{200D}' | '\u{FE0E}' | '\u{FE0F}' | '\u{20E3}'
-            | '\u{1F3FB}'..='\u{1F3FF}' | '\u{E0020}'..='\u{E007F}')
-    };
-    // The cut is between the two halves of a flag: an odd run of regional indicators
-    // lies before it and another one follows.
-    let inside_flag = |end: usize| {
-        let regional = |c: char| matches!(c, '\u{1F1E6}'..='\u{1F1FF}');
-        let run = chars[..end]
-            .iter()
-            .rev()
-            .take_while(|c| regional(**c))
-            .count();
-        regional(chars[end]) && run % 2 == 1
-    };
-    let mut end = max;
-    while end > 0
-        && end < chars.len()
-        && (continues(chars[end])
-            || matches!(chars[end - 1], '\u{200C}' | '\u{200D}')
-            || inside_flag(end))
-    {
-        end -= 1;
-    }
-    if end == 0 {
-        max
-    } else {
-        end
-    }
+    format!("{head}\u{2026}")
 }
 
 /// Parses an RFC 3339 timestamp into (milliseconds since epoch, local display text in
@@ -600,30 +561,54 @@ mod tests {
         // Stray joiners and direction marks still go.
         assert_eq!(snippet("\u{200D}ab \u{200D}c\u{202E}\u{200D}", 90), "ab c");
         assert_eq!(snippet("\u{200D}\u{200B}", 90), "(no name)");
-        // A cut never leaves a joiner hanging before the ellipsis, and never splits a
-        // sequence: a family, a flag and a skin tone are left out whole.
-        assert_eq!(
-            snippet("\u{1F468}\u{200D}\u{1F469}", 2),
-            "\u{1F468}\u{2026}",
-            "a sequence longer than the line is cut as asked"
-        );
-        assert_eq!(
-            snippet("ab\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", 4),
-            "ab\u{2026}"
-        );
-        assert_eq!(snippet("ab\u{1F1F3}\u{1F1F4}", 3), "ab\u{2026}");
-        assert_eq!(snippet("a\u{1F44D}\u{1F3FD}", 2), "a\u{2026}");
-        assert_eq!(snippet("ab\u{2764}\u{FE0F}", 3), "ab\u{2026}");
-        assert_eq!(
-            snippet("ab\u{1F1F3}\u{1F1F4}\u{1F1F8}\u{1F1EA}", 4),
-            "ab\u{1F1F3}\u{1F1F4}\u{2026}"
-        );
-        // Line breaks are one space; the length limit still applies.
+        // Line breaks are one space.
         assert_eq!(snippet("a\n\tb", 90), "a b");
+    }
+
+    #[test]
+    fn snippet_cuts_between_grapheme_clusters() {
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let flag = "\u{1F1F3}\u{1F1F4}";
+        let keycap = "1\u{FE0F}\u{20E3}";
+        let fire = "\u{2764}\u{FE0F}\u{200D}\u{1F525}";
+        let tone = "\u{1F44D}\u{1F3FD}";
+        // The limit counts clusters: a sequence is one, and fits whole.
+        assert_eq!(snippet(&format!("ab{family}"), 3), format!("ab{family}"));
         assert_eq!(
-            snippet(&"x".repeat(500), 1000).chars().count(),
-            MAX_NAME_CHARS
+            snippet(&format!("ab{family}cd"), 3),
+            format!("ab{family}\u{2026}")
         );
+        // Over the limit it is left out whole, never cut in the middle.
+        for (sequence, text) in [
+            ("family", family),
+            ("flag", flag),
+            ("keycap", keycap),
+            ("heart on fire", fire),
+            ("skin tone", tone),
+        ] {
+            assert_eq!(snippet(&format!("ab{text}"), 2), "ab\u{2026}", "{sequence}");
+            assert_eq!(
+                snippet(&format!("ab{text}"), 3),
+                format!("ab{text}"),
+                "{sequence}"
+            );
+        }
+        // Two flags in a row are two clusters.
+        assert_eq!(
+            snippet("\u{1F1F3}\u{1F1F4}\u{1F1F8}\u{1F1EA}", 1),
+            "\u{1F1F3}\u{1F1F4}\u{2026}"
+        );
+        // A letter with its combining mark is one cluster.
+        assert_eq!(snippet("ae\u{301}x", 2), "ae\u{301}\u{2026}");
+        // The cut is the caller's limit, not a hidden 100 characters first.
+        let long = format!("{}{flag}", "x".repeat(99));
+        assert_eq!(snippet(&long, 160), long);
+        assert_eq!(snippet(&long, 99), format!("{}\u{2026}", "x".repeat(99)));
+        assert_eq!(
+            snippet(&format!("{}{family}", "x".repeat(299)), 300),
+            format!("{}{family}", "x".repeat(299))
+        );
+        assert_eq!(snippet(&"x".repeat(500), 300).chars().count(), 301);
     }
 
     #[test]

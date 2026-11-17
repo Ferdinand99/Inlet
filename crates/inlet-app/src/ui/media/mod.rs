@@ -101,6 +101,9 @@ pub struct State {
     /// animations moved (the CPU measurement of the screenshot runs reads it).
     #[cfg(feature = "demo")]
     demo_frames: (Option<std::time::Instant>, u32, usize),
+    /// Demo builds: frames drawn so far, never reset (the layout tests count them).
+    #[cfg(feature = "demo")]
+    demo_draws: u64,
 }
 
 impl Default for State {
@@ -124,6 +127,8 @@ impl Default for State {
             demo_viewer_done: false,
             #[cfg(feature = "demo")]
             demo_frames: (None, 0, 0),
+            #[cfg(feature = "demo")]
+            demo_draws: 0,
         }
     }
 }
@@ -141,6 +146,7 @@ impl State {
     /// counts every five seconds.
     #[cfg(feature = "demo")]
     fn demo_note_frame(&mut self, active: bool) {
+        self.demo_draws += 1;
         let now = std::time::Instant::now();
         let moving = self.images.animations().borrow().playing();
         let (since, frames, most) = &mut self.demo_frames;
@@ -155,6 +161,12 @@ impl State {
             );
             self.demo_frames = (Some(now), 0, 0);
         }
+    }
+
+    /// Frames drawn so far (demo builds, for the layout tests).
+    #[cfg(feature = "demo")]
+    pub fn draws(&self) -> u64 {
+        self.demo_draws
     }
 
     /// Whether the spoiler or explicit item `key` was revealed.
