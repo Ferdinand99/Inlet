@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! "Translate" and "Search the web" on a message (Fluxer's `TranslateMenuItems` and
-//! `WebSearchMenuItems`): the message's text goes into a search address and the browser
-//! opens it. Nothing is sent from Inlet itself; the text leaves the app only through the
+//! "Translate" on a message (Fluxer's `TranslateMenuItems`): the message's text goes into the
+//! translator's address and the browser opens it. Nothing is sent from Inlet itself; the text leaves the app only through the
 //! link the person chose to open, to the search site they chose it for.
 //!
-//! Deviation: Fluxer lets the reader pick an engine, add their own and works on selected
-//! text. Inlet uses Fluxer's default engines (Google and Google Translate) for the whole
-//! message text; messages cannot be selected in part yet.
+//! "Search the web" is not offered: Fluxer shows it only for selected text, and messages
+//! cannot be selected in part yet. Translate falls back to the whole message, as in Fluxer.
+//!
+//! Deviation: Fluxer lets the reader pick a translator and add their own; Inlet uses Fluxer's
+//! default, Google Translate.
 
 /// What the menu item searches for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Search {
     /// A translation of the text.
     Translate,
-    /// A web search for the text.
-    Web,
 }
 
 /// Most characters of a message that go into the address.
@@ -26,7 +25,6 @@ impl Search {
             Search::Translate => {
                 "https://translate.google.com/?sl=auto&tl=auto&text={query}&op=translate"
             }
-            Search::Web => "https://www.google.com/search?q={query}",
         }
     }
 }
@@ -67,18 +65,26 @@ pub fn search_url(kind: Search, text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn text_of(url: &str) -> String {
+        url::Url::parse(url)
+            .unwrap()
+            .query_pairs()
+            .find(|(k, _)| k == "text")
+            .unwrap()
+            .1
+            .into_owned()
+    }
+
     #[test]
     fn the_text_becomes_one_encoded_parameter() {
-        let url = search_url(Search::Web, "cats & dogs=1 #x\nsecond  line").unwrap();
-        assert_eq!(
-            url,
-            "https://www.google.com/search?q=cats%20%26%20dogs%3D1%20%23x%20second%20line"
-        );
-        // It parses as exactly one `q` value that is the cleaned text.
+        let url = search_url(Search::Translate, "cats & dogs=1 #x\nsecond  line").unwrap();
+        assert!(url.contains("text=cats%20%26%20dogs%3D1%20%23x%20second%20line&op=translate"));
+        // The text cannot add a parameter or end the address: it parses as the one `text`
+        // value, cleaned.
+        assert_eq!(text_of(&url), "cats & dogs=1 #x second line");
         let parsed = url::Url::parse(&url).unwrap();
-        let pairs: Vec<_> = parsed.query_pairs().collect();
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].1, "cats & dogs=1 #x second line");
+        assert_eq!(parsed.query_pairs().filter(|(k, _)| k == "text").count(), 1);
+        assert_eq!(parsed.fragment(), None);
     }
 
     #[test]
@@ -86,40 +92,30 @@ mod tests {
         let url = search_url(Search::Translate, "bonjour & merci").unwrap();
         let parsed = url::Url::parse(&url).unwrap();
         assert_eq!(parsed.host_str(), Some("translate.google.com"));
-        let text: Vec<_> = parsed.query_pairs().filter(|(k, _)| k == "text").collect();
-        assert_eq!(text[0].1, "bonjour & merci");
+        assert_eq!(text_of(&url), "bonjour & merci");
         assert!(parsed
             .query_pairs()
             .any(|(k, v)| k == "op" && v == "translate"));
     }
 
     #[test]
-    fn nothing_to_search_for_gives_no_address() {
-        assert_eq!(search_url(Search::Web, ""), None);
-        assert_eq!(search_url(Search::Web, " \n\t\u{0} "), None);
+    fn nothing_to_translate_gives_no_address() {
+        assert_eq!(search_url(Search::Translate, ""), None);
+        assert_eq!(search_url(Search::Translate, " \n\t\u{0} "), None);
     }
 
     #[test]
     fn a_long_text_is_cut() {
-        let url = search_url(Search::Web, &"a".repeat(5_000)).unwrap();
-        assert!(url.len() < 1_100, "{}", url.len());
-        let url = search_url(Search::Web, &"\u{e5}".repeat(5_000)).unwrap();
-        let q = url::Url::parse(&url)
-            .unwrap()
-            .query_pairs()
-            .next()
-            .unwrap()
-            .1
-            .into_owned();
-        assert_eq!(q.chars().count(), MAX_QUERY_CHARS);
+        let url = search_url(Search::Translate, &"a".repeat(5_000)).unwrap();
+        assert!(url.len() < 1_200, "{}", url.len());
+        let url = search_url(Search::Translate, &"\u{e5}".repeat(5_000)).unwrap();
+        assert_eq!(text_of(&url).chars().count(), MAX_QUERY_CHARS);
     }
 
     #[test]
-    fn only_https_addresses_on_the_engines_hosts_come_out() {
-        for kind in [Search::Web, Search::Translate] {
-            let url = url::Url::parse(&search_url(kind, "x").unwrap()).unwrap();
-            assert_eq!(url.scheme(), "https");
-            assert!(url.username().is_empty());
-        }
+    fn only_an_https_address_without_user_info_comes_out() {
+        let url = url::Url::parse(&search_url(Search::Translate, "x").unwrap()).unwrap();
+        assert_eq!(url.scheme(), "https");
+        assert!(url.username().is_empty());
     }
 }

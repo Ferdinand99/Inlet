@@ -60,6 +60,8 @@ pub(crate) enum Status {
     Failed(String),
     /// The instance has no GIF service.
     NoGifs,
+    /// `/gif` with no text: nothing is searched for yet.
+    TypeToSearch,
 }
 
 /// The lists' state for the shown account.
@@ -306,15 +308,10 @@ impl Inlet {
         }
         let text = query.trim();
         if text.is_empty() {
-            // Nothing typed yet: what is trending.
+            // Nothing typed yet: Fluxer offers nothing and asks for nothing.
             self.composer.pickers.commands.timer = None;
             self.composer.pickers.commands.gifs.cancel_search();
-            self.gif_trending_needed();
-            return match self.composer.pickers.gifs.trending_result() {
-                Some(Ok(g)) => (gif_items(g), Status::Done),
-                Some(Err(e)) => (Vec::new(), Status::Failed(e.clone())),
-                None => (Vec::new(), Status::Loading),
-            };
+            return (Vec::new(), Status::TypeToSearch);
         }
         if typed {
             let list = &mut self.composer.pickers.commands;
@@ -396,6 +393,7 @@ impl Inlet {
                 Status::Loading => t!("media-list-loading"),
                 Status::Failed(e) => t!("media-list-failed", error = e.as_str()),
                 Status::NoGifs => t!("media-list-gifs-off"),
+                Status::TypeToSearch => t!("media-list-type-gif"),
                 Status::Done => match kind {
                     MediaCommand::Gif => t!("media-list-none-gifs"),
                     MediaCommand::Sticker => t!("media-list-none-stickers"),
@@ -541,6 +539,28 @@ impl Inlet {
                 )
             }
         }
+    }
+}
+
+#[cfg(feature = "demo")]
+impl Inlet {
+    /// Demo scene `gif-command`: types `/gif cat` into the composer once the GIF setup is
+    /// known; the demo's search answers fill the list.
+    pub(crate) fn demo_gif_command(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if self.composer.pickers.demo_done
+            || self.account.is_none()
+            || self.selected_channel.is_none()
+        {
+            return;
+        }
+        self.pickers_follow_account(cx);
+        self.pickers_setup(cx);
+        if self.composer.pickers.setup.is_none() {
+            return;
+        }
+        self.composer.pickers.demo_done = true;
+        let view = self.composer.view.clone();
+        view.update(cx, |v, cx| v.demo_type("/gif cat", window, cx));
     }
 }
 

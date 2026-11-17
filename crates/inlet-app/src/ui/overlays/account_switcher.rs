@@ -352,6 +352,7 @@ impl Inlet {
             self.start_ticker(cx);
             // The settings of this account (theme, display mode) take over.
             self.settings_account_changed(cx);
+            self.links_account_changed(cx);
             let mut changes = Changes::default();
             changes.reset = true;
             self.after_changes(changes, false, cx);

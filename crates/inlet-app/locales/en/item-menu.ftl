@@ -25,3 +25,5 @@ item-menu-remove-meme = Remove from saved media
 item-meme-saved = Saved to your saved media
 item-meme-removed = Removed from your saved media
 item-meme-failed = Could not update your saved media: { $error }
+item-menu-slots-full-emoji = Emoji slots full
+item-menu-slots-full-sticker = Sticker slots full

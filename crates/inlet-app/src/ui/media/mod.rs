@@ -238,6 +238,8 @@ impl Inlet {
         emoji::release_twemoji(window, cx);
         #[cfg(feature = "demo")]
         self.demo_open_viewer(cx);
+        #[cfg(feature = "demo")]
+        self.demo_media_tools(window, cx);
     }
 
     /// Keyboard or mouse input in the window: animations that stopped for lack of

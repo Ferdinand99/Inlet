@@ -189,8 +189,6 @@ pub enum Action {
     CopyText,
     /// Opens a translation of the text in the browser (see `web_actions`).
     Translate,
-    /// Opens a web search for the text in the browser.
-    WebSearch,
     CopyLink,
     CopyId,
     HideEmbeds,
@@ -211,7 +209,7 @@ impl Action {
             Action::CopyText => ActionIcon::Copy,
             Action::CopyLink => ActionIcon::Link,
             Action::CopyId => ActionIcon::Id,
-            Action::Translate | Action::WebSearch => ActionIcon::Search,
+            Action::Translate => ActionIcon::Search,
             Action::HideEmbeds => ActionIcon::EyeSlash,
             Action::ShowEmbeds => ActionIcon::Eye,
             Action::Delete => ActionIcon::Trash,
@@ -231,7 +229,6 @@ impl Action {
             Action::Unsave => t!("action-unsave"),
             Action::CopyText => t!("action-copy-text"),
             Action::Translate => t!("action-translate"),
-            Action::WebSearch => t!("action-web-search"),
             Action::CopyLink => t!("action-copy-link"),
             Action::CopyId => t!("action-copy-id"),
             Action::HideEmbeds => t!("action-hide-embeds"),
@@ -296,7 +293,6 @@ pub fn menu_actions(f: &Facts) -> Vec<Action> {
     if f.has_text {
         out.push(Action::CopyText);
         out.push(Action::Translate);
-        out.push(Action::WebSearch);
     }
     out.push(Action::CopyLink);
     if f.developer {
@@ -314,11 +310,7 @@ pub fn group_of(a: Action) -> u8 {
         Action::AddReaction | Action::Edit | Action::Reply | Action::Forward => 0,
         Action::Pin | Action::Unpin | Action::MarkUnread | Action::Save | Action::Unsave => 1,
         Action::HideEmbeds | Action::ShowEmbeds => 2,
-        Action::CopyText
-        | Action::Translate
-        | Action::WebSearch
-        | Action::CopyLink
-        | Action::CopyId => 3,
+        Action::CopyText | Action::Translate | Action::CopyLink | Action::CopyId => 3,
         Action::Delete => 4,
     }
 }
@@ -567,20 +559,16 @@ impl Inlet {
                 self.close_overlay(window, cx);
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(message_id));
             }
-            Action::Translate | Action::WebSearch => {
+            Action::Translate => {
                 self.close_overlay(window, cx);
                 let text = self
                     .account
                     .as_ref()
                     .and_then(|a| Some(a.read(cx).messages(ch)?.get(id)?.content.clone()));
-                let kind = if action == Action::Translate {
-                    super::web_actions::Search::Translate
-                } else {
-                    super::web_actions::Search::Web
-                };
+                let kind = super::web_actions::Search::Translate;
                 // The browser opens the search the person asked for, and nothing else.
                 if let Some(url) = text.and_then(|t| super::web_actions::search_url(kind, &t)) {
-                    self.open_link(&url, false, cx);
+                    self.open_built_link(&url, cx);
                 }
             }
             Action::CopyLink => {
@@ -789,7 +777,6 @@ mod tests {
             vec![
                 Action::CopyText,
                 Action::Translate,
-                Action::WebSearch,
                 Action::CopyLink,
                 Action::CopyId
             ]

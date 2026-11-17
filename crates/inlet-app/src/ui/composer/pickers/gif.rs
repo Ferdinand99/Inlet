@@ -166,11 +166,6 @@ impl GifState {
             .map(|(_, r)| r)
     }
 
-    /// The trending answer, once there is one.
-    pub(super) fn trending_result(&self) -> Option<&Result<Vec<p::Gif>, String>> {
-        self.trending.as_ref()
-    }
-
     /// Whether a search with this nonce is the one waited for.
     pub(super) fn waits_for(&self, nonce: u64) -> bool {
         matches!(&self.search_waiting, Some((n, _)) if *n == nonce)

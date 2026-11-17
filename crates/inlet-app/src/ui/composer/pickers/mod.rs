@@ -58,6 +58,8 @@ use crate::theme;
 
 #[cfg(test)]
 pub(crate) use self::gif::SearchDebounce;
+#[cfg(test)]
+pub(crate) use self::item_menu::ClickGuard;
 use self::prefs::PickerPrefs;
 
 actions!(
@@ -233,6 +235,8 @@ pub struct PickersState {
     commands: commands::MediaList,
     /// The menu of a picker item (right click), when one is open.
     menu: Option<item_menu::ItemMenu>,
+    /// Keeps a click from sending the same clone or save twice.
+    guard: item_menu::ClickGuard,
     /// The emoji and sticker grids, built again only when what they show changes.
     emoji_rows: Cached<emoji::GridKey, (Vec<emoji::Row>, Vec<usize>)>,
     sticker_rows: Cached<sticker::GridKey, (Vec<sticker::Row>, bool)>,
@@ -470,7 +474,7 @@ impl Inlet {
     }
 
     /// Drops the pickers' state when another account is shown (or none).
-    fn pickers_follow_account(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pickers_follow_account(&mut self, cx: &mut Context<Self>) {
         if self.composer.pickers.account != self.switcher.active {
             let account = self.switcher.active.clone();
             self.composer.pickers.reset(account);

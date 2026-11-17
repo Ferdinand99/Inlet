@@ -11,3 +11,4 @@ media-text-rows = { $count } { $count ->
     [one] row
    *[other] rows
 }
+media-text-show = Show preview

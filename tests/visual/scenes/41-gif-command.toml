@@ -1,0 +1,10 @@
+# `/gif cat` typed in the composer, with the list of results above the box (the demo's GIF
+# pictures are stills in a scene file).
+name = "gif-command"
+window = [1280, 860]
+scale = 1.0
+theme = "dark"
+ignore = []
+scene = "gif-command"
+guild = "g1"
+channel = "c-general"

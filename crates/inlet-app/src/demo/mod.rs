@@ -21,6 +21,7 @@ mod guilds;
 pub mod inbox;
 mod markdown;
 pub mod media;
+mod media_tools;
 mod members;
 mod messages;
 pub mod pickers;

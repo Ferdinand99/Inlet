@@ -58,6 +58,11 @@
 //!   the guild (see `search.rs`).
 //! - `quick-switcher`: for `#general`, the quick switcher open over the accounts of
 //!   `accounts` (their channels with mentions and unread messages).
+//! - `downloads-panel`: for `#general`, the downloads panel open under the header
+//!   button, with a download on its way (a bar and a percentage), a finished one and a
+//!   failed one (see `media_tools.rs`).
+//! - `gif-command`: for `#general`, `/gif cat` typed in the composer and the list of
+//!   results above it (see `media_tools.rs`).
 //! - `keybind-help`: for `#general`, the list of keyboard shortcuts (Ctrl+/) open over the
 //!   chat.
 //!
@@ -123,6 +128,8 @@ pub enum Scene {
     SearchResults,
     QuickSwitcher,
     KeybindHelp,
+    DownloadsPanel,
+    GifCommand,
 }
 
 impl Scene {
@@ -168,6 +175,8 @@ impl Scene {
             "search-results" => Scene::SearchResults,
             "quick-switcher" => Scene::QuickSwitcher,
             "keybind-help" => Scene::KeybindHelp,
+            "downloads-panel" => Scene::DownloadsPanel,
+            "gif-command" => Scene::GifCommand,
             _ => return None,
         })
     }
@@ -581,6 +590,8 @@ mod tests {
             "profile-popout",
             "search-results",
             "quick-switcher",
+            "downloads-panel",
+            "gif-command",
         ] {
             let scene = Scene::from_name(name).expect(name);
             let data = data(scene);

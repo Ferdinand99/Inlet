@@ -80,12 +80,16 @@ impl Downloads {
                 missing: false,
             },
         );
+        // Only a finished entry goes: a running download always keeps its place, so it can
+        // still be cancelled (the list grows past the limit only by running ones).
         while self.entries.len() > MAX_ENTRIES {
-            let at = self
+            let Some(at) = self
                 .entries
                 .iter()
                 .rposition(|e| e.status != Status::Active)
-                .unwrap_or(self.entries.len() - 1);
+            else {
+                break;
+            };
             self.entries.remove(at);
         }
         id
@@ -132,6 +136,39 @@ impl Downloads {
 
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Demo scenes: three made-up downloads (one on its way, one done, one failed) and the
+    /// panel open. Once.
+    #[cfg(feature = "demo")]
+    pub fn demo_fill(&mut self) {
+        if !self.entries.is_empty() {
+            return;
+        }
+        let progress = |received: u64, total: u64| {
+            let p = Arc::new(SaveProgress::default());
+            p.received.store(received, Ordering::Relaxed);
+            p.total.store(total, Ordering::Relaxed);
+            p
+        };
+        let failed = self.begin(
+            "broken-archive.7z",
+            PathBuf::from("broken-archive.7z"),
+            progress(0, 0),
+        );
+        let done = self.begin(
+            "meeting-notes.pdf",
+            PathBuf::from("meeting-notes.pdf"),
+            progress(1, 1),
+        );
+        let _running = self.begin(
+            "holiday-photos.zip",
+            PathBuf::from("holiday-photos.zip"),
+            progress(3_500_000, 8_400_000),
+        );
+        self.finish(failed, Status::Failed("the connection was reset".into()));
+        self.finish(done, Status::Done);
+        self.open = true;
     }
 
     fn mark_missing(&mut self) {
@@ -555,6 +592,12 @@ mod tests {
             d.entries().iter().any(|e| e.id == running),
             "a running one stays"
         );
+        // A list of only running downloads is never cut: each can still be cancelled.
+        let mut busy = Downloads::default();
+        for i in 0..MAX_ENTRIES + 5 {
+            start(&mut busy, &format!("r{i}"));
+        }
+        assert_eq!(busy.active(), MAX_ENTRIES + 5);
         // The newest is on top.
         assert_eq!(d.entries()[0].name, format!("f{}", MAX_ENTRIES - 1));
     }

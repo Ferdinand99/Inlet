@@ -31,8 +31,34 @@ use crate::theme;
 
 /// Width of the menu.
 const MENU_WIDTH: f32 = 240.;
-/// Communities the clone list shows.
-const MAX_TARGETS: usize = 25;
+/// Communities the clone list shows at most.
+const MAX_TARGETS: usize = 100;
+
+/// Keeps a click from sending the same request twice (Fluxer's `expressionCloneGuard`): a
+/// key that began is refused for [`HOLD`], so a reopened menu and a second click do not make
+/// a second copy or a second save.
+#[derive(Default)]
+pub struct ClickGuard {
+    began: std::collections::HashMap<String, std::time::Instant>,
+}
+
+/// How long a request key is refused after it began.
+pub const HOLD: std::time::Duration = std::time::Duration::from_secs(5);
+/// Keys remembered at most.
+const MAX_KEYS: usize = 64;
+
+impl ClickGuard {
+    /// Whether the request may go out now; the key is held from here on.
+    pub fn begin(&mut self, key: &str, now: std::time::Instant) -> bool {
+        self.began
+            .retain(|_, at| now.saturating_duration_since(*at) < HOLD);
+        if self.began.contains_key(key) || self.began.len() >= MAX_KEYS {
+            return false;
+        }
+        self.began.insert(key.to_owned(), now);
+        true
+    }
+}
 
 /// What the menu is about.
 #[derive(Clone, Debug)]
@@ -85,6 +111,21 @@ pub struct Community {
     pub name: String,
     /// The account may manage expressions there.
     pub manage: bool,
+    /// Emoji and stickers the community has.
+    pub emojis: usize,
+    pub stickers: usize,
+}
+
+/// Most emoji or stickers a community holds by default (Fluxer's `MAX_GUILD_EMOJIS` and
+/// `MAX_GUILD_STICKERS`); a community with more room through features or the instance's
+/// rules is shown as full too early, and the server still decides.
+pub const DEFAULT_SLOTS: usize = 500;
+
+impl Community {
+    /// No room for another emoji (`sticker` false) or sticker.
+    pub fn slots_full(&self, sticker: bool) -> bool {
+        (if sticker { self.stickers } else { self.emojis }) >= DEFAULT_SLOTS
+    }
 }
 
 /// The communities an expression of `source` may be cloned into: not the source itself,
@@ -141,6 +182,8 @@ impl Inlet {
                 manage: state
                     .guild_permissions(g.id)
                     .has(p::permissions::MANAGE_EXPRESSIONS),
+                emojis: g.emojis.len(),
+                stickers: g.stickers.len(),
             })
             .collect()
     }
@@ -319,10 +362,18 @@ impl Inlet {
                         t!("item-menu-save-gif"),
                         cx,
                         move |this, _| {
-                            this.backend.send(ComposerCmd::Pickers(Cmd::SaveGifAsMeme {
-                                gif: gif.clone(),
-                            }));
                             this.close_menu();
+                            let key = format!("save-gif:{}", gif.id);
+                            if this
+                                .composer
+                                .pickers
+                                .guard
+                                .begin(&key, std::time::Instant::now())
+                            {
+                                this.backend.send(ComposerCmd::Pickers(Cmd::SaveGifAsMeme {
+                                    gif: gif.clone(),
+                                }));
+                            }
                         },
                     ));
                 }
@@ -334,10 +385,18 @@ impl Inlet {
                     t!("item-menu-remove-meme"),
                     cx,
                     move |this, _| {
-                        this.backend.send(ComposerCmd::Pickers(Cmd::DeleteMeme {
-                            meme_id: id.clone(),
-                        }));
                         this.close_menu();
+                        let key = format!("delete-meme:{id}");
+                        if this
+                            .composer
+                            .pickers
+                            .guard
+                            .begin(&key, std::time::Instant::now())
+                        {
+                            this.backend.send(ComposerCmd::Pickers(Cmd::DeleteMeme {
+                                meme_id: id.clone(),
+                            }));
+                        }
                     },
                 ));
             }
@@ -371,7 +430,10 @@ impl Inlet {
                 },
             ));
             let allowed = self.community_has(&guild, clone_feature(sticker), cx);
-            if !clone_targets(&self.communities(cx), &guild, allowed).is_empty() {
+            // Fluxer's experimental switch (off by default) decides whether the entry shows.
+            if crate::desktop::expression_clone_shortcuts(cx)
+                && !clone_targets(&self.communities(cx), &guild, allowed).is_empty()
+            {
                 items.push(self.menu_item(
                     "item-menu-clone",
                     word(t!("item-menu-clone-emoji"), t!("item-menu-clone-sticker")),
@@ -432,7 +494,8 @@ impl Inlet {
             } => (true, id.clone(), name.clone(), guild.clone()),
             _ => return Vec::new(),
         };
-        let allowed = self.community_has(&guild, clone_feature(sticker), cx);
+        let allowed = self.community_has(&guild, clone_feature(sticker), cx)
+            && crate::desktop::expression_clone_shortcuts(cx);
         let targets = clone_targets(&self.communities(cx), &guild, allowed);
         let mut items = vec![div()
             .px(px(8.))
@@ -449,31 +512,62 @@ impl Inlet {
         for (ix, target) in targets.into_iter().enumerate() {
             let (source_id, name) = (source_id.clone(), name.clone());
             let id = SharedString::from(format!("item-menu-target-{ix}"));
-            let label = target.name.clone();
+            let full = target.slots_full(sticker);
+            let row = div()
+                .id(id)
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(4.))
+                .flex()
+                .flex_col()
+                .text_size(px(14.))
+                .text_color(theme::text())
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(target.name.clone()),
+                );
+            if full {
+                // A full community cannot take another one; the hint says so.
+                items.push(
+                    row.opacity(0.5)
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(theme::text_muted())
+                                .child(if sticker {
+                                    t!("item-menu-slots-full-sticker")
+                                } else {
+                                    t!("item-menu-slots-full-emoji")
+                                }),
+                        )
+                        .into_any_element(),
+                );
+                continue;
+            }
             items.push(
-                div()
-                    .id(id)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .text_size(px(14.))
-                    .text_color(theme::text())
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
+                row.cursor_pointer()
                     .hover(|s| s.bg(theme::floating_hover()))
-                    .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.close_menu();
-                        this.backend
-                            .send(ComposerCmd::Pickers(Cmd::CloneExpression {
-                                sticker,
-                                guild_id: target.id.clone(),
-                                source_id: source_id.clone(),
-                                name: name.clone(),
-                                target_name: target.name.clone(),
-                            }));
+                        let key = format!("clone:{sticker}:{source_id}:{}", target.id);
+                        if this
+                            .composer
+                            .pickers
+                            .guard
+                            .begin(&key, std::time::Instant::now())
+                        {
+                            this.backend
+                                .send(ComposerCmd::Pickers(Cmd::CloneExpression {
+                                    sticker,
+                                    guild_id: target.id.clone(),
+                                    source_id: source_id.clone(),
+                                    name: name.clone(),
+                                    target_name: target.name.clone(),
+                                }));
+                        }
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -561,6 +655,8 @@ mod tests {
             id: id.into(),
             name: name.into(),
             manage,
+            emojis: 0,
+            stickers: 0,
         }
     }
 
@@ -594,7 +690,7 @@ mod tests {
 
     #[test]
     fn the_clone_list_is_capped() {
-        let all: Vec<Community> = (0..100)
+        let all: Vec<Community> = (0..150)
             .map(|i| community(&i.to_string(), &format!("c{i:03}"), true))
             .collect();
         assert_eq!(clone_targets(&all, "x", true).len(), MAX_TARGETS);
@@ -610,6 +706,46 @@ mod tests {
             clone_feature(true),
             crate::backend::composer::gif::CLONE_STICKER_FEATURE
         );
+    }
+
+    #[test]
+    fn the_slots_of_a_community_can_run_out() {
+        let mut c = community("1", "A", true);
+        assert!(!c.slots_full(false) && !c.slots_full(true));
+        c.emojis = DEFAULT_SLOTS;
+        assert!(c.slots_full(false), "emoji slots full");
+        assert!(!c.slots_full(true), "sticker slots are separate");
+    }
+
+    #[test]
+    fn fifty_rapid_clicks_make_one_request_per_target() {
+        let mut guard = ClickGuard::default();
+        let t0 = std::time::Instant::now();
+        let sent: usize = (0..50)
+            .map(|i| {
+                let at = t0 + std::time::Duration::from_millis(i * 20);
+                usize::from(guard.begin("clone:false:88:300", at))
+            })
+            .sum();
+        assert_eq!(
+            sent, 1,
+            "a reopened menu and a second click are the same copy"
+        );
+        // Another target, or another kind of request, is its own.
+        assert!(guard.begin("clone:false:88:301", t0));
+        assert!(guard.begin("save-gif:5", t0));
+        // After the hold the same click may go again (a failure can be retried).
+        assert!(guard.begin("clone:false:88:300", t0 + HOLD));
+    }
+
+    #[test]
+    fn the_guard_remembers_a_bounded_number_of_keys() {
+        let mut guard = ClickGuard::default();
+        let t0 = std::time::Instant::now();
+        let allowed = (0..500)
+            .filter(|i| guard.begin(&format!("k{i}"), t0))
+            .count();
+        assert_eq!(allowed, MAX_KEYS);
     }
 
     #[test]

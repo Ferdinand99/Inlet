@@ -457,7 +457,21 @@ pub async fn save_tracked(
 ) -> Result<u64, SaveError> {
     use tokio::io::AsyncWriteExt;
 
-    let resp = fetcher.fetch(&url).await.map_err(SaveError::Fetch)?;
+    // A cancel that comes while the server has not answered yet does not wait for the
+    // fetcher's own timeout: the flag is looked at every quarter second.
+    let resp = {
+        let fetching = fetcher.fetch(&url);
+        tokio::pin!(fetching);
+        loop {
+            match tokio::time::timeout(Duration::from_millis(250), &mut fetching).await {
+                Ok(answer) => break answer.map_err(SaveError::Fetch)?,
+                Err(_) if progress.cancel.load(Ordering::Relaxed) => {
+                    return Err(SaveError::Cancelled);
+                }
+                Err(_) => {}
+            }
+        }
+    };
     if resp.content_length.is_some_and(|n| n > max_bytes) {
         return Err(SaveError::TooLarge);
     }
@@ -1292,6 +1306,41 @@ mod tests {
         assert!(matches!(result, Err(SaveError::Cancelled)));
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A server that never answers the request.
+    struct NeverAnswers;
+
+    impl Fetcher for NeverAnswers {
+        fn fetch<'a>(&'a self, _: &'a Url) -> BoxFuture<'a, Result<FetchResponse, FetchError>> {
+            Box::pin(futures::future::pending())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancel_reaches_a_download_that_has_not_been_answered() {
+        let url = Url::parse("https://media.example.org/media/attachments/1/2/a.bin").unwrap();
+        let progress = Arc::new(SaveProgress::default());
+        let flag = progress.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            flag.cancel.store(true, Ordering::Relaxed);
+        });
+        let target = std::env::temp_dir().join(format!("inlet-noanswer-{}", std::process::id()));
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            save_tracked(
+                Arc::new(NeverAnswers),
+                url,
+                target.clone(),
+                save_limit(0),
+                progress,
+            ),
+        )
+        .await
+        .expect("the cancel must end the save");
+        assert!(matches!(result, Err(SaveError::Cancelled)));
+        assert!(!target.exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]

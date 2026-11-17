@@ -207,6 +207,10 @@ INLET_DEMO_THEME=coal scene 67-chat-coal chat-cozy c-general
 # its place, the topic and the status line give way first.
 scene 80-header-search-long-name search-results c-rules
 
+# Media tools: the downloads panel and the `/gif` result list.
+scene 110-downloads-panel downloads-panel c-general
+scene 111-gif-command gif-command c-general
+
 # 12. The scene files of the visual checks. Xvfb's pointer cannot be moved and sits in
 #     the middle of the screen; the demo puts a scene's window in the top left corner,
 #     and the screen is more than twice its size, so the pointer is never over it (no

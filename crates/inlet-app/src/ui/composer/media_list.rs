@@ -146,3 +146,13 @@ impl ComposerView {
         cx.notify();
     }
 }
+
+#[cfg(feature = "demo")]
+impl ComposerView {
+    /// Demo scenes: types `text` into the box as if the person had.
+    pub fn demo_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |e, cx| {
+            let _ = e.insert_text(text, window, cx);
+        });
+    }
+}

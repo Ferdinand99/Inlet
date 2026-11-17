@@ -29,6 +29,9 @@ pub struct DesktopPrefs {
     pub zoom: f32,
     /// Where the window was.
     pub window: WindowMemory,
+    /// Fluxer's experimental "expression clone shortcuts": the picker menu offers "Clone to…".
+    /// Off by default, as in Fluxer.
+    pub expression_clone_shortcuts: bool,
 }
 
 impl Default for DesktopPrefs {
@@ -38,6 +41,7 @@ impl Default for DesktopPrefs {
             start_minimized: false,
             zoom: 1.0,
             window: WindowMemory::default(),
+            expression_clone_shortcuts: false,
         }
     }
 }

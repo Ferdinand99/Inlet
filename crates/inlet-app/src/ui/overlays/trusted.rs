@@ -61,6 +61,15 @@ pub struct TrustedDomains {
 }
 
 impl TrustedDomains {
+    /// What an account's own settings say (nothing, before its READY or with no account).
+    pub fn for_settings(user: Option<&p::UserSettings>) -> Self {
+        let mut trusted = TrustedDomains::default();
+        if let Some(u) = user {
+            trusted.set_user(user_list(u.extra.get("trusted_domains")));
+        }
+        trusted
+    }
+
     pub fn set_instance(&mut self, domains: Vec<String>) {
         self.instance = domains;
     }
@@ -115,6 +124,16 @@ impl TrustedDomains {
         markdown::openable(url)
             .and_then(|u| u.host_str().map(|h| self.is_trusted(h)))
             .unwrap_or(false)
+    }
+
+    /// Whether opening `url` asks first: always, unless a trusted host or a file on the
+    /// instance's own media host (`on_media`) is meant; a deceptive link always asks. Plain
+    /// and masked links are alike, as in Fluxer.
+    pub fn asks_first(&self, url: &str, on_media: bool) -> bool {
+        if crate::ui::markdown::is_deceptive(url) {
+            return true;
+        }
+        !(on_media || self.trusts_url(url))
     }
 
     /// The account's list with `host` added, or `None` when there is nothing to save:
@@ -181,6 +200,18 @@ impl Inlet {
     /// The server did not take the list: the shown one goes back.
     pub(crate) fn trusted_domains_failed(&mut self) {
         self.overlays.trusted.revert();
+    }
+
+    /// Another account is shown (or none): its list of trusted domains, not the last one's,
+    /// decides, and so do its spam marks. What the account's settings do not hold yet
+    /// stays empty until its READY; the instance's own list comes with the next session
+    /// answer.
+    pub(crate) fn links_account_changed(&mut self, cx: &mut Context<Self>) {
+        let settings = self.account.as_ref().map(|a| a.read(cx).settings().clone());
+        self.overlays.trusted =
+            TrustedDomains::for_settings(settings.as_ref().and_then(|s| s.user()));
+        self.pickers_follow_account(cx);
+        self.spam_follow_prefs(cx);
     }
 
     /// "Always trust": adds `host` to the account's list at once and saves it. A failed
@@ -269,6 +300,32 @@ mod tests {
             None,
             "the server caps the list"
         );
+    }
+
+    #[test]
+    fn a_plain_link_to_an_untrusted_host_asks_like_a_masked_one() {
+        let t = lists(&["chat.example.org"], &["docs.test"]);
+        assert!(t.asks_first("https://evil.example/x", false));
+        assert!(!t.asks_first("https://docs.test/x", false));
+        assert!(!t.asks_first("https://chat.example.org/", false));
+        assert!(!t.asks_first("https://media.chat.example/a.png", true));
+        // A deceptive link asks even on the media host or with trust-all.
+        let all = lists(&[], &["*"]);
+        assert!(all.asks_first("https://example.org@evil.test/", true));
+        assert!(!all.asks_first("https://anything.example/", false));
+    }
+
+    #[test]
+    fn a_switch_drops_the_previous_accounts_trust_all() {
+        let a: p::UserSettings = serde_json::from_value(json!({"trusted_domains": ["*"]})).unwrap();
+        let b: p::UserSettings =
+            serde_json::from_value(json!({"trusted_domains": ["b.test"]})).unwrap();
+        assert!(TrustedDomains::for_settings(Some(&a)).trust_all());
+        let after = TrustedDomains::for_settings(Some(&b));
+        assert!(!after.trust_all());
+        assert!(after.is_trusted("b.test") && !after.is_trusted("evil.test"));
+        // No account, or one whose settings have not come yet: nothing is trusted.
+        assert!(!TrustedDomains::for_settings(None).is_trusted("b.test"));
     }
 
     #[test]

@@ -11,4 +11,4 @@ media-list-loading = Searching…
 media-list-failed = The search did not work: { $error }
 media-list-gifs-off = This instance has no GIF service.
 action-translate = Translate
-action-web-search = Search the web
+media-list-type-gif = Type to search for a GIF.

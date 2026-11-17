@@ -29,8 +29,10 @@ use crate::ui::markdown;
 pub const COLLAPSED_LINES: usize = 6;
 /// Lines (or rows) shown expanded, at most (Fluxer's `MAX_EXPANDED_PREVIEW_LINES`).
 pub const EXPANDED_LINES: usize = 100;
-/// Previews kept for the session; the oldest go first.
-const MAX_ENTRIES: usize = 48;
+/// Texts kept; the oldest is let go and loads again on a click.
+const MAX_BODIES: usize = 48;
+/// Files remembered as fetched (their small states), so none is fetched twice on its own.
+const MAX_SEEN: usize = 4096;
 const LINE_H: f32 = 16.;
 const PADDING: f32 = 8.;
 const FOOTER_H: f32 = 26.;
@@ -121,13 +123,24 @@ enum Entry {
     Loading,
     Ready(Arc<Body>),
     Failed(Failed),
+    /// Fetched before, and its text was let go to keep memory down: a click fetches it
+    /// again. It is never fetched again on its own, however often it is drawn.
+    Dropped,
 }
 
 /// The previews of the session, by attachment ID, and which of them are expanded.
+///
+/// Every file is fetched at most once on its own: its ID stays in `entries` (a small
+/// state, at most [`MAX_SEEN`] of them) after its text is let go, so drawing the same
+/// message again and again, or drawing more files than the cache holds, never starts a
+/// fetch. Only [`MAX_BODIES`] texts are kept; the oldest becomes [`Entry::Dropped`].
 #[derive(Default)]
 pub struct Previews {
     entries: std::cell::RefCell<HashMap<String, Entry>>,
-    order: std::cell::RefCell<VecDeque<String>>,
+    /// Every ID in `entries`, oldest first.
+    seen: std::cell::RefCell<VecDeque<String>>,
+    /// The IDs whose text is kept, oldest first.
+    bodies: std::cell::RefCell<VecDeque<String>>,
     expanded: std::cell::RefCell<HashSet<String>>,
 }
 
@@ -143,25 +156,53 @@ impl Previews {
             return false;
         }
         entries.insert(id.to_owned(), Entry::Loading);
-        let mut order = self.order.borrow_mut();
-        order.push_back(id.to_owned());
-        while order.len() > MAX_ENTRIES {
-            if let Some(old) = order.pop_front() {
+        let mut seen = self.seen.borrow_mut();
+        seen.push_back(id.to_owned());
+        while seen.len() > MAX_SEEN {
+            if let Some(old) = seen.pop_front() {
                 entries.remove(&old);
                 self.expanded.borrow_mut().remove(&old);
+                self.bodies.borrow_mut().retain(|b| *b != old);
             }
         }
         true
     }
 
+    /// A click on a dropped preview: it loads again. `false` when it is not dropped.
+    fn restart(&self, id: &str) -> bool {
+        let mut entries = self.entries.borrow_mut();
+        match entries.get_mut(id) {
+            Some(entry @ Entry::Dropped) => {
+                *entry = Entry::Loading;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn finish(&self, id: &str, result: Result<Body, Failed>) {
         let mut entries = self.entries.borrow_mut();
-        // Dropped while it loaded (it went out of the kept ones): nothing to fill.
-        if let Some(entry) = entries.get_mut(id) {
-            *entry = match result {
-                Ok(body) => Entry::Ready(Arc::new(body)),
-                Err(why) => Entry::Failed(why),
-            };
+        // Forgotten while it loaded (past the limit of remembered files): nothing to fill.
+        let Some(entry) = entries.get_mut(id) else {
+            return;
+        };
+        *entry = match result {
+            Ok(body) => {
+                let mut bodies = self.bodies.borrow_mut();
+                bodies.push_back(id.to_owned());
+                Entry::Ready(Arc::new(body))
+            }
+            Err(why) => Entry::Failed(why),
+        };
+        // Past the kept texts, the oldest is let go (and says so with a click to load it).
+        let mut bodies = self.bodies.borrow_mut();
+        while bodies.len() > MAX_BODIES {
+            if let Some(old) = bodies.pop_front() {
+                if let Some(e) = entries.get_mut(&old) {
+                    *e = Entry::Dropped;
+                }
+                self.expanded.borrow_mut().remove(&old);
+            }
         }
     }
 
@@ -179,13 +220,19 @@ impl Previews {
     /// Forgets everything (the session ended).
     pub fn clear(&self) {
         self.entries.borrow_mut().clear();
-        self.order.borrow_mut().clear();
+        self.seen.borrow_mut().clear();
+        self.bodies.borrow_mut().clear();
         self.expanded.borrow_mut().clear();
     }
 
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.borrow().len()
+    }
+
+    #[cfg(test)]
+    fn kept_bodies(&self) -> usize {
+        self.bodies.borrow().len()
     }
 }
 
@@ -209,36 +256,16 @@ impl Inlet {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let setup = self.media.setup.as_ref()?;
-        if a.expired
-            || a.spoiler
-            || !text::previewable(a.content_type.as_deref(), &a.filename, a.size)
-        {
+        // A spoiler file is covered by `file_cover` until it is revealed, so a preview that is
+        // asked for here is for a visible file.
+        if a.expired || !text::previewable(a.content_type.as_deref(), &a.filename, a.size) {
             return None;
         }
         let url = super::requests::attachment_original(&setup.proxy, a)?;
         let csv = text::is_csv(a.content_type.as_deref(), &a.filename);
         let previews = &self.media.texts;
         if previews.start(&a.id) {
-            let (fetcher, runtime) = (setup.fetcher.clone(), setup.runtime.clone());
-            let (id, message_id) = (a.id.clone(), message_id.to_owned());
-            cx.spawn(async move |this, cx| {
-                let result = runtime.spawn(text::fetch_text(fetcher, url)).await;
-                let result = match result {
-                    Ok(Ok(content)) => Ok(Body::of(&content, csv)),
-                    Ok(Err(TextError::TooLarge)) => Err(Failed::TooLarge),
-                    Ok(Err(TextError::Fetch(e))) => {
-                        log::debug!("a text preview could not be fetched: {e}");
-                        Err(Failed::Unavailable)
-                    }
-                    Err(_) => Err(Failed::Unavailable),
-                };
-                let _ = this.update(cx, |this, cx| {
-                    this.media.texts.finish(&id, result);
-                    this.remeasure_message(&message_id);
-                    cx.notify();
-                });
-            })
-            .detach();
+            self.fetch_text_preview(a.id.clone(), message_id.to_owned(), url.clone(), csv, cx);
         }
         let entry = previews.get(&a.id)?;
         let width = self
@@ -267,6 +294,23 @@ impl Inlet {
                 .text_color(theme::text_muted())
                 .child(t!("media-text-loading"))
                 .into_any_element(),
+            Entry::Dropped => {
+                let (id, mid, url) = (a.id.clone(), message_id.to_owned(), url.clone());
+                panel
+                    .h(px(panel_height(None, false, LINE_H)))
+                    .p(px(PADDING))
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .text_color(theme::link())
+                    .child(t!("media-text-show"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.media.texts.restart(&id) {
+                            this.fetch_text_preview(id.clone(), mid.clone(), url.clone(), csv, cx);
+                            cx.notify();
+                        }
+                    }))
+                    .into_any_element()
+            }
             Entry::Failed(why) => panel
                 .p(px(PADDING))
                 .text_size(px(12.))
@@ -333,6 +377,40 @@ impl Inlet {
                     .into_any_element()
             }
         })
+    }
+
+    /// Fetches a file's text from the media proxy in the background; the answer fills its
+    /// entry and the message is measured again.
+    fn fetch_text_preview(
+        &self,
+        id: String,
+        message_id: String,
+        url: url::Url,
+        csv: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(setup) = self.media.setup.as_ref() else {
+            return;
+        };
+        let (fetcher, runtime) = (setup.fetcher.clone(), setup.runtime.clone());
+        cx.spawn(async move |this, cx| {
+            let result = runtime.spawn(text::fetch_text(fetcher, url)).await;
+            let result = match result {
+                Ok(Ok(content)) => Ok(Body::of(&content, csv)),
+                Ok(Err(TextError::TooLarge)) => Err(Failed::TooLarge),
+                Ok(Err(TextError::Fetch(e))) => {
+                    log::debug!("a text preview could not be fetched: {e}");
+                    Err(Failed::Unavailable)
+                }
+                Err(_) => Err(Failed::Unavailable),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.media.texts.finish(&id, result);
+                this.remeasure_message(&message_id);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The message's row is measured again (its preview changed size).
@@ -468,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn a_preview_is_fetched_once_and_the_oldest_are_forgotten() {
+    fn a_preview_is_fetched_once_and_never_again_on_its_own() {
         let p = Previews::default();
         assert!(p.start("a"));
         assert!(!p.start("a"), "asked again: no second fetch");
@@ -476,17 +554,44 @@ mod tests {
         assert!(matches!(p.get("a"), Some(Entry::Ready(_))));
         p.toggle("a");
         assert!(p.is_expanded("a"));
-        for i in 0..MAX_ENTRIES {
-            p.start(&format!("f{i}"));
+        // More files than texts are kept: the oldest text is let go, its entry stays.
+        for i in 0..MAX_BODIES {
+            assert!(p.start(&format!("f{i}")));
+            p.finish(&format!("f{i}"), Ok(Body::of("x", false)));
         }
-        assert_eq!(p.len(), MAX_ENTRIES);
-        assert!(p.get("a").is_none(), "the oldest went");
+        assert_eq!(p.kept_bodies(), MAX_BODIES);
+        assert!(matches!(p.get("a"), Some(Entry::Dropped)));
         assert!(!p.is_expanded("a"));
-        // An answer for one that went is dropped.
-        p.finish("a", Ok(Body::of("late", false)));
-        assert!(p.get("a").is_none());
+        assert!(
+            !p.start("a"),
+            "a dropped preview is not fetched again by drawing it"
+        );
+        // Only a click loads it again, once.
+        assert!(p.restart("a"));
+        assert!(!p.restart("a"));
+        p.finish("a", Ok(Body::of("again", false)));
+        assert!(matches!(p.get("a"), Some(Entry::Ready(_))));
         p.clear();
         assert_eq!(p.len(), 0);
+    }
+
+    /// Drawing more previewable files than the cache keeps, again and again, makes one
+    /// fetch per file and no more.
+    #[test]
+    fn drawing_sixty_files_twice_fetches_each_at_most_once() {
+        let p = Previews::default();
+        let mut fetches = 0;
+        for _frame in 0..2 {
+            for i in 0..60 {
+                let id = format!("file{i}");
+                if p.start(&id) {
+                    fetches += 1;
+                    p.finish(&id, Ok(Body::of("text", false)));
+                }
+            }
+        }
+        assert_eq!(fetches, 60);
+        assert!(p.kept_bodies() <= MAX_BODIES);
     }
 
     #[test]

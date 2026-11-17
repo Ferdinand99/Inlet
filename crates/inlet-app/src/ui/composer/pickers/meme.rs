@@ -36,6 +36,10 @@ pub fn matching<'a>(memes: &'a [p::Meme], query: &str) -> Vec<&'a p::Meme> {
         .filter(|m| {
             q.is_empty()
                 || m.name.to_lowercase().contains(&q)
+                || m.alt_text
+                    .as_deref()
+                    .is_some_and(|a| a.to_lowercase().contains(&q))
+                || m.filename.to_lowercase().contains(&q)
                 || m.tags.iter().any(|t| t.to_lowercase().contains(&q))
         })
         .collect()

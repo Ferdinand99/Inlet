@@ -79,8 +79,6 @@ const TEXTUAL_EXTENSIONS: &[&str] = &[
     "rb",
     "php",
     "rust",
-    "rs",
-    "toml",
     "dockerfile",
     "sql",
     "ini",
@@ -251,7 +249,7 @@ pub fn parse_csv(content: &str) -> Vec<Vec<String>> {
             c => {
                 // A cell keeps only what it can show; the rest of a very long one is dropped
                 // as it is read.
-                if cell.chars().count() <= MAX_CELL_CHARS * 4 {
+                if cell.len() < MAX_CELL_CHARS * 4 {
                     cell.push(c);
                 }
             }
@@ -274,7 +272,7 @@ mod tests {
     fn which_files_get_a_preview() {
         assert!(previewable(Some("text/plain; charset=utf-8"), "a.bin", 10));
         assert!(previewable(Some("application/json"), "a", 10));
-        assert!(previewable(None, "main.RS", 10));
+        assert!(previewable(None, "main.PY", 10));
         assert!(previewable(
             Some("application/octet-stream"),
             "notes.md",
