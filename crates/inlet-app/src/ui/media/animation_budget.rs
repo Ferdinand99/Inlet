@@ -82,6 +82,12 @@ pub struct MotionPrefs {
     pub animate_emoji: bool,
     /// Animated stickers move; off shows their first frame.
     pub animate_stickers: bool,
+    /// Animated stickers that do not move by themselves play while the pointer is over
+    /// them (Fluxer's "animate on interaction"); off shows their first frame.
+    pub stickers_on_hover: bool,
+    /// GIFs and other animated attachments and embeds play by themselves; off shows
+    /// their first frame, and they play while the pointer is over them.
+    pub gif_auto_play: bool,
 }
 
 impl Default for MotionPrefs {
@@ -89,6 +95,8 @@ impl Default for MotionPrefs {
         MotionPrefs {
             animate_emoji: true,
             animate_stickers: true,
+            stickers_on_hover: false,
+            gif_auto_play: true,
         }
     }
 }
@@ -97,9 +105,41 @@ impl MotionPrefs {
     /// Whether animations of this kind may move.
     pub fn allows(&self, motion: Motion) -> bool {
         match motion {
-            Motion::Gif | Motion::Avatar => true,
+            Motion::Avatar => true,
+            Motion::Gif => self.gif_auto_play,
             Motion::Emoji => self.animate_emoji,
             Motion::Sticker => self.animate_stickers,
+        }
+    }
+
+    /// Whether an animation of this kind plays while the pointer is over it, though it
+    /// does not move by itself: GIFs and emoji do, stickers when set to animate on
+    /// interaction.
+    pub fn plays_on_hover(&self, motion: Motion) -> bool {
+        match motion {
+            Motion::Avatar => false,
+            Motion::Gif => !self.gif_auto_play,
+            Motion::Emoji => !self.animate_emoji,
+            Motion::Sticker => !self.animate_stickers && self.stickers_on_hover,
+        }
+    }
+
+    /// Whether the animated version is fetched (it plays, or plays on hover).
+    pub fn fetches_animation(&self, motion: Motion) -> bool {
+        self.allows(motion) || self.plays_on_hover(motion)
+    }
+
+    /// What the account settings say: stickers move (0), or move on interaction (1), or
+    /// not (2). The demo's scene files hold animated emoji on their first frame
+    /// (`INLET_DEMO_ANIMATE_EMOJI=0`) whatever the settings say.
+    pub fn of_settings(v: &crate::ui::settings::sync::Values) -> Self {
+        let demo = cfg!(feature = "demo") && std::env::var_os("INLET_DEMO").is_some();
+        let held = demo && std::env::var("INLET_DEMO_ANIMATE_EMOJI").as_deref() == Ok("0");
+        MotionPrefs {
+            animate_emoji: v.animate_emoji && !held,
+            animate_stickers: v.animate_stickers == 0,
+            stickers_on_hover: v.animate_stickers == 1,
+            gif_auto_play: v.gif_auto_play,
         }
     }
 
@@ -404,17 +444,34 @@ impl AnimationBudget {
     /// first frame, as does everything when the system asks for reduced motion. Under
     /// an open layer an animation keeps the frame it showed. Without focus or input the
     /// clock stands, so every animation keeps its frame.
+    #[cfg(test)]
     pub fn frame_to_draw(
         &mut self,
         id: ImageId,
         motion: Motion,
         delays: impl FnOnce() -> Vec<Duration>,
     ) -> usize {
-        if self.stage.reduce_motion || !self.prefs.allows(motion) {
+        self.frame_to_draw_at(id, motion, false, delays)
+    }
+
+    /// [`frame_to_draw`](Self::frame_to_draw) for an animation the pointer may be over
+    /// (`hovered`): one that does not move by itself plays then, if its kind does.
+    pub fn frame_to_draw_at(
+        &mut self,
+        id: ImageId,
+        motion: Motion,
+        hovered: bool,
+        delays: impl FnOnce() -> Vec<Duration>,
+    ) -> usize {
+        // The image viewer's animation moves even when GIFs do not play by themselves:
+        // the person asked for it by opening it.
+        let reserved = self.reserved == Some(id);
+        let allowed =
+            self.prefs.allows(motion) || reserved || (hovered && self.prefs.plays_on_hover(motion));
+        if self.stage.reduce_motion || !allowed {
             return 0;
         }
         let frame = self.frame;
-        let reserved = self.reserved == Some(id);
         if !reserved {
             if !self.admitted.contains(&id) {
                 return 0;
@@ -515,12 +572,13 @@ pub(crate) fn paint_animated(
     if count == 0 || !window.content_mask().bounds.intersects(&bounds) {
         return;
     }
+    let hovered = bounds.contains(&window.mouse_position());
     let frame = if count == 1 {
         0
     } else {
         budget
             .borrow_mut()
-            .frame_to_draw(image.id, motion, || delays(image))
+            .frame_to_draw_at(image.id, motion, hovered, || delays(image))
             .min(count - 1)
     };
     let image_bounds = fit.get_bounds(bounds, image.size(frame));
@@ -952,6 +1010,14 @@ mod tests {
             assert_eq!(b.wake(), None);
         }
         assert_eq!(b.playing(), 0);
+        // With the pointer over it, it plays.
+        frame(&mut b, LIVE, t0 + ms(1_500), [1]);
+        let first = b.frame_to_draw_at(ImageId(1), Motion::Emoji, true, three);
+        frame(&mut b, LIVE, t0 + ms(1_650), [1]);
+        assert_ne!(
+            b.frame_to_draw_at(ImageId(1), Motion::Emoji, true, three),
+            first
+        );
         // Other kinds still move.
         frame(&mut b, LIVE, t0 + ms(2_000), [2]);
         let before = b.frame_to_draw(ImageId(2), Motion::Gif, three);

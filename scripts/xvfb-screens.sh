@@ -185,6 +185,24 @@ kill $pid; wait $pid 2>/dev/null
 scene 39-members members c-general
 scene 40-profile-popout profile-popout c-general
 
+# 11b. The settings tabs of the account (My profile, Appearance on coal, Messages and
+#      media, Privacy, Advanced, Accounts), and the chat in the light and coal themes.
+settings_tab() {
+  INLET_DEMO=1 INLET_DEMO_LIVE_SECS=3600 INLET_DEMO_GUILD=g1 INLET_DEMO_CHANNEL=c-general INLET_DEMO_SETTINGS="$2" INLET_DEMO_THEME="$3" "$bin" >>"$out/demo.log" 2>&1 &
+  pid=$!
+  sleep 6
+  shot "$1"
+  kill $pid; wait $pid 2>/dev/null
+}
+settings_tab 60-settings-my-profile my-profile dark
+settings_tab 61-settings-appearance-coal appearance coal
+settings_tab 62-settings-messages-media messages-media dark
+settings_tab 63-settings-privacy privacy dark
+settings_tab 64-settings-advanced advanced dark
+settings_tab 65-settings-accounts accounts dark
+INLET_DEMO_THEME=light scene 66-chat-light chat-cozy c-general
+INLET_DEMO_THEME=coal scene 67-chat-coal chat-cozy c-general
+
 # The channel header with the search column open at 1280 px: a long channel name keeps
 # its place, the topic and the status line give way first.
 scene 80-header-search-long-name search-results c-rules

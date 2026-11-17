@@ -24,7 +24,7 @@
 
 pub mod accounts;
 pub mod composer;
-mod gateway;
+pub(crate) mod gateway;
 pub mod media;
 pub mod messages;
 pub mod notifications;
@@ -414,6 +414,8 @@ struct RealActive {
     composer: composer::State,
     /// This account's presence: the status it shows and its settings writes.
     presence: Box<social::presence::Presence>,
+    /// This account's settings writes (its write task and preference base).
+    settings: Box<settings::write::Writer>,
     session: p::Session,
     gateway: p::GatewayHandle,
     forward: AbortHandle,
