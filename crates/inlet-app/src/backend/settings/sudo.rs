@@ -30,6 +30,7 @@ use std::sync::Arc;
 use inlet_protocol as p;
 use serde_json::Value;
 
+use crate::backend::accounts::AccountKey;
 use crate::backend::session::{Failure, FailureKind};
 use crate::backend::{Active, Backend, Internal};
 
@@ -97,6 +98,9 @@ impl Proof {
 pub enum Cmd {
     /// Sends the action. `ticket` names it in the answers (the UI counts up).
     Run {
+        /// The account the action is for. It runs only while this is the active account,
+        /// so a proof typed for one account can never reach another one's session.
+        account: AccountKey,
         ticket: u64,
         request: Arc<Request>,
         proof: Option<Proof>,
@@ -156,6 +160,7 @@ pub enum Ev {
 
 pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
     let Cmd::Run {
+        account,
         ticket,
         request,
         proof,
@@ -169,8 +174,11 @@ pub(in crate::backend) fn handle(backend: &mut Backend, cmd: Cmd) {
         });
         return;
     }
-    let Some(Active::Real(r)) = &backend.active else {
-        // Not signed in, or the command was for an account that is not the active one.
+    let Some(Active::Real(r)) = backend.active.as_ref().filter(|active| {
+        // The account the action was asked for must still be the active one.
+        matches!(active, Active::Real(r) if r.key == account)
+    }) else {
+        // Not signed in, or another account is active now.
         backend.emit(Ev::Failed {
             ticket,
             reason: t!("settings-not-connected"),

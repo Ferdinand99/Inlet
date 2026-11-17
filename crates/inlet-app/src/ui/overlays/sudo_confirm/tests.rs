@@ -21,8 +21,19 @@ fn rig(cx: &mut TestAppContext) -> (Entity<Inlet>, &mut VisualTestContext, Sent)
     let (handle, rx) = BackendHandle::recording();
     let (inlet, cx) =
         cx.add_window_view(move |window, cx| Inlet::new_with(window, cx, move |_| handle));
-    inlet.update(cx, |this, _| this.screen = Screen::Main);
+    inlet.update(cx, |this, _| {
+        this.screen = Screen::Main;
+        this.switcher.active = Some(account());
+    });
     (inlet, cx, rx)
+}
+
+fn account() -> AccountKey {
+    AccountKey::new("https://a.example", "10").unwrap()
+}
+
+fn other_account() -> AccountKey {
+    AccountKey::new("https://b.example", "20").unwrap()
 }
 
 fn request() -> Request {
@@ -75,11 +86,17 @@ fn open(
     rx: &mut Sent,
     m: p::SudoMethods,
 ) -> u64 {
-    let ticket = inlet.update(cx, |this, cx| this.ask_sudo(request(), cx));
+    let ticket = inlet
+        .update(cx, |this, cx| this.ask_sudo(request(), cx))
+        .expect("an account is active");
     match next(rx) {
         Some(Cmd::Run {
-            ticket: t, proof, ..
+            account: a,
+            ticket: t,
+            proof,
+            ..
         }) => {
+            assert_eq!(a, account(), "the action is for the active account");
             assert_eq!(t, ticket);
             assert!(proof.is_none(), "the first try carries no proof");
         }
@@ -119,10 +136,13 @@ fn a_proof_is_sent_once_and_the_field_is_cleared_at_once(cx: &mut TestAppContext
     inlet.update(cx, |this, cx| this.sudo_submit(cx));
     match next(&mut rx) {
         Some(Cmd::Run {
+            account: a,
             ticket: t,
             proof: Some(Proof::Password(secret)),
             request,
         }) => {
+            // The proof is for the account the action was for.
+            assert_eq!(a, account());
             assert_eq!(t, ticket);
             assert_eq!(secret.expose_secret(), "correct-horse");
             assert!(request.path().ends_with("recovery-kit"));
@@ -253,7 +273,9 @@ fn an_account_that_can_only_use_a_passkey_gets_an_explanation_and_no_way_to_send
 #[gpui::test]
 fn an_action_that_goes_through_without_a_proof_opens_nothing(cx: &mut TestAppContext) {
     let (inlet, cx, mut rx) = rig(cx);
-    let ticket = inlet.update(cx, |this, cx| this.ask_sudo(request(), cx));
+    let ticket = inlet
+        .update(cx, |this, cx| this.ask_sudo(request(), cx))
+        .unwrap();
     let _ = next(&mut rx);
     inlet.update_in(cx, |this, window, cx| {
         this.on_sudo_event(
@@ -274,7 +296,9 @@ fn an_action_that_goes_through_without_a_proof_opens_nothing(cx: &mut TestAppCon
 #[gpui::test]
 fn another_failure_before_the_dialog_shows_in_the_error_line(cx: &mut TestAppContext) {
     let (inlet, cx, mut rx) = rig(cx);
-    let ticket = inlet.update(cx, |this, cx| this.ask_sudo(request(), cx));
+    let ticket = inlet
+        .update(cx, |this, cx| this.ask_sudo(request(), cx))
+        .unwrap();
     let _ = next(&mut rx);
     inlet.update_in(cx, |this, window, cx| {
         this.on_sudo_event(
@@ -295,7 +319,9 @@ fn another_failure_before_the_dialog_shows_in_the_error_line(cx: &mut TestAppCon
 #[gpui::test]
 fn an_answer_for_another_action_does_not_open_the_dialog(cx: &mut TestAppContext) {
     let (inlet, cx, mut rx) = rig(cx);
-    let ticket = inlet.update(cx, |this, cx| this.ask_sudo(request(), cx));
+    let ticket = inlet
+        .update(cx, |this, cx| this.ask_sudo(request(), cx))
+        .unwrap();
     let _ = next(&mut rx);
     inlet.update_in(cx, |this, window, cx| {
         this.on_sudo_event(
@@ -316,4 +342,38 @@ fn signing_out_closes_the_dialog(cx: &mut TestAppContext) {
     open(&inlet, cx, &mut rx, methods(true, false));
     inlet.update(cx, |this, _| this.reset_main());
     assert!(!inlet.read_with(cx, |this, _| this.sudo_open()));
+}
+
+#[gpui::test]
+fn a_proof_typed_for_one_account_is_never_sent_for_another(cx: &mut TestAppContext) {
+    let (inlet, cx, mut rx) = rig(cx);
+    open(&inlet, cx, &mut rx, methods(true, false));
+    typed(&inlet, cx, "typed-for-the-first", false);
+    // Another account became the active one while the dialog was open (a notification
+    // was clicked, say). Confirm sends nothing and the dialog closes.
+    inlet.update(cx, |this, _| this.switcher.active = Some(other_account()));
+    inlet.update(cx, |this, cx| this.sudo_submit(cx));
+    assert!(next(&mut rx).is_none(), "nothing was sent");
+    assert!(!inlet.read_with(cx, |this, _| this.sudo_open()));
+}
+
+#[gpui::test]
+fn switching_accounts_closes_the_dialog(cx: &mut TestAppContext) {
+    let (inlet, cx, mut rx) = rig(cx);
+    open(&inlet, cx, &mut rx, methods(true, false));
+    inlet.update(cx, |this, _| this.sudo_reset());
+    assert!(!inlet.read_with(cx, |this, _| this.sudo_open()));
+}
+
+#[gpui::test]
+fn without_an_active_account_the_action_is_not_sent(cx: &mut TestAppContext) {
+    let (inlet, cx, mut rx) = rig(cx);
+    inlet.update(cx, |this, _| this.switcher.active = None);
+    let ticket = inlet.update(cx, |this, cx| this.ask_sudo(request(), cx));
+    assert_eq!(ticket, None);
+    assert!(next(&mut rx).is_none());
+    assert_eq!(
+        inlet.read_with(cx, |this, _| this.chat.error.clone()),
+        Some(t!("settings-not-connected"))
+    );
 }

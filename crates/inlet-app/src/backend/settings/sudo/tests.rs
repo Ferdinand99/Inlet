@@ -239,6 +239,36 @@ fn only_sudo_routes_can_be_asked_for() {
     assert_eq!(r.unwrap().path(), "/users/@me/delete");
 }
 
+/// An action for an account that is not the active one (or when none is) is answered as
+/// failed at once, and the proof never reaches any session.
+#[tokio::test]
+async fn an_action_without_its_account_is_answered_as_failed() {
+    use futures::StreamExt;
+
+    use crate::backend::accounts::{AccountKey, Accounts};
+    use crate::backend::{Backend, Event, Ui};
+    use crate::token_store::MemoryStore;
+
+    let (tx, mut rx) = futures::channel::mpsc::unbounded();
+    let store = Accounts::new(Arc::new(MemoryStore::default()), None, None);
+    let mut backend = Backend::with_store(Ui::new(tx), store);
+    handle(
+        &mut backend,
+        Cmd::Run {
+            account: AccountKey::new("https://a.example", "1").unwrap(),
+            ticket: 4,
+            request: Arc::new(kit()),
+            proof: password("typed-for-another-account"),
+        },
+    );
+    match rx.next().await {
+        Some(Event::Settings(super::super::Ev::Sudo(Ev::Failed { ticket, .. }))) => {
+            assert_eq!(ticket, 4);
+        }
+        _ => panic!("expected Failed"),
+    }
+}
+
 // ---------- the whole dialog flow on the private test instance ----------
 
 /// The dialog's state and the backend's `run`, driven the way the dialog drives them,

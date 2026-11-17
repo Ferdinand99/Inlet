@@ -27,6 +27,7 @@ use inlet_protocol as p;
 
 use super::modal::modal;
 use crate::app::Inlet;
+use crate::backend::accounts::AccountKey;
 use crate::backend::settings::sudo::{Cmd, Ev, Proof, Request};
 use crate::desktop::Layer;
 use crate::text_input::{InputEvent, TextInput};
@@ -46,11 +47,13 @@ pub struct Sudo {
     /// Counts up with every action, so an answer for an old one is ignored.
     seq: u64,
     /// An action sent without a proof, waiting to hear whether one is needed.
-    asked: Option<(u64, Arc<Request>)>,
+    asked: Option<(u64, AccountKey, Arc<Request>)>,
     dialog: Option<Dialog>,
 }
 
 struct Dialog {
+    /// The account the action is for. The proof is sent for this account only.
+    account: AccountKey,
     state: State,
     password: Entity<TextInput>,
     code: Entity<TextInput>,
@@ -103,19 +106,26 @@ impl Inlet {
     /// [`Inlet::on_sudo_event`]).
     // No feature asks yet; the first one that needs sudo mode calls this.
     #[allow(dead_code)]
-    pub(crate) fn ask_sudo(&mut self, request: Request, cx: &mut Context<Self>) -> u64 {
+    pub(crate) fn ask_sudo(&mut self, request: Request, cx: &mut Context<Self>) -> Option<u64> {
+        // The action is for the account that is active now; nothing else.
+        let Some(account) = self.switcher.active.clone() else {
+            self.chat.error = Some(t!("settings-not-connected"));
+            cx.notify();
+            return None;
+        };
         let sudo = &mut self.overlays.sudo;
         sudo.seq += 1;
         let ticket = sudo.seq;
         let request = Arc::new(request);
-        sudo.asked = Some((ticket, request.clone()));
+        sudo.asked = Some((ticket, account.clone(), request.clone()));
         self.backend.send(Cmd::Run {
+            account,
             ticket,
             request,
             proof: None,
         });
         cx.notify();
-        ticket
+        Some(ticket)
     }
 
     /// An answer of the backend's sudo part.
@@ -138,7 +148,7 @@ impl Inlet {
             return;
         }
         // No dialog yet: the answer to the action sent without a proof.
-        let Some((ticket, request)) = self.overlays.sudo.asked.clone() else {
+        let Some((ticket, account, request)) = self.overlays.sudo.asked.clone() else {
             return;
         };
         match ev {
@@ -146,7 +156,7 @@ impl Inlet {
                 ticket: t, methods, ..
             } if t == ticket => {
                 self.overlays.sudo.asked = None;
-                self.open_sudo_dialog(ticket, request, methods, window, cx);
+                self.open_sudo_dialog(ticket, account, request, methods, window, cx);
             }
             Ev::Done { ticket: t, .. } if t == ticket => {
                 // Confirmed already (a token from a moment ago): the action went through.
@@ -166,6 +176,7 @@ impl Inlet {
     fn open_sudo_dialog(
         &mut self,
         ticket: u64,
+        account: AccountKey,
         request: Arc<Request>,
         methods: p::SudoMethods,
         window: &mut Window,
@@ -185,6 +196,7 @@ impl Inlet {
             cx.subscribe(&code, |this, _, _: &InputEvent, cx| this.sudo_submit(cx)),
         ];
         let dialog = Dialog {
+            account,
             state: State::new(ticket, request, methods),
             password,
             code,
@@ -201,6 +213,12 @@ impl Inlet {
         let Some(dialog) = self.overlays.sudo.dialog.as_mut() else {
             return;
         };
+        // Another account became the active one since the dialog opened: the proof was
+        // typed for the first, so nothing is sent and the dialog closes.
+        if self.switcher.active.as_ref() != Some(&dialog.account) {
+            self.sudo_cancel(cx);
+            return;
+        }
         let typed = dialog.input().read(cx).text().trim().to_owned();
         if !dialog.state.can_submit(!typed.is_empty()) || !dialog.state.submit() {
             return;
@@ -210,9 +228,14 @@ impl Inlet {
             Mode::Password => Proof::Password(secret),
             Mode::Code => Proof::Code(secret),
         };
-        let (ticket, request) = (dialog.state.ticket, dialog.state.request.clone());
+        let (account, ticket, request) = (
+            dialog.account.clone(),
+            dialog.state.ticket,
+            dialog.state.request.clone(),
+        );
         dialog.clear(cx);
         self.backend.send(Cmd::Run {
+            account,
             ticket,
             request,
             proof: Some(proof),
@@ -395,7 +418,13 @@ impl Inlet {
             )
         };
         cx.defer_in(window, move |this, window, cx| {
-            this.open_sudo_dialog(1, Arc::new(request), methods, window, cx);
+            let account = this
+                .switcher
+                .active
+                .clone()
+                .or_else(|| AccountKey::new("https://demo.example", "1"));
+            let Some(account) = account else { return };
+            this.open_sudo_dialog(1, account, Arc::new(request), methods, window, cx);
             if let Some(dialog) = this.overlays.sudo.dialog.as_mut() {
                 dialog.state.problem = Some(problem);
             }
