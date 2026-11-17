@@ -187,6 +187,9 @@ async fn a_redirect_to_another_host_is_blocked_before_the_request() {
     );
 }
 
+// WebView2 and WKWebView refuse a script's navigation to a data: URL themselves, without
+// asking the helper; WebKitGTK asks, and the helper blocks it.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a display and the system web engine"]
 async fn a_data_url_is_blocked() {
