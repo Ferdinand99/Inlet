@@ -16,10 +16,11 @@
 # the window's icon), the icons from assets/brand/linux and AppRun. Velopack
 # packs the finished AppDir with its own AppImage runtime and adds its updater.
 #
-# The velopack/ folder holds what the later auto-update work publishes next to the
-# release: the full package (`*-full.nupkg`) and `releases.linux.json`. Adding
-# auto-update only means keeping those files; it does not change how the packages are
-# built.
+# The velopack/ folder holds the update feed of the in-app updater: the full package
+# (`*-full.nupkg`) and `releases.beta-linux.json`. `release.yml` publishes both with the
+# release. The channel (`--channel beta-linux`) must be the one the app asks for
+# (`inlet::update::channel`); each system has its own so that the feed files do not
+# overwrite each other. No delta packages: each release is packed on its own.
 #
 # Needs bash, awk, tar, squashfs-tools (mksquashfs) and a .NET runtime of version 8 or
 # later, which the runner has.
@@ -83,15 +84,24 @@ install -m 644 "$icons/256x256/apps/no.opland.inlet.png" "$appdir/.DirIcon"
   install -m 644 "$icons/$f" "$appdir/usr/share/icons/hicolor/$f"
 done
 
+# The changelog section of this version (empty between releases) is what the in-app
+# updater shows as "What's new".
+notes="$work/release-notes.md"
+"$root/packaging/velopack/release-notes.sh" "$version" > "$notes"
+notes_args=()
+if [ -s "$notes" ]; then notes_args=(--releaseNotes "$notes"); fi
+
 # Velopack packs a folder named *.AppDir as it is, so these files are what ships.
 "$root/packaging/velopack/vpk.sh" pack \
   --packId no.opland.inlet \
   --packVersion "$version" \
+  --channel beta-linux \
   --packTitle Inlet \
   --packAuthors "Inlet contributors" \
   --packDir "$appdir" \
   --mainExe inlet \
-  --outputDir "$feed"
+  --outputDir "$feed" \
+  "${notes_args[@]}"
 
 ls -l "$feed" >&2
 

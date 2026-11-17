@@ -12,10 +12,11 @@
 # Setup.exe installs into %LocalAppData%\no.opland.inlet, adds a Start menu shortcut
 # and an entry in "Apps & features", and starts no admin prompt. Nothing is signed.
 #
-# The velopack/ folder holds what the later auto-update work publishes next to the
-# release: the full package (`*-full.nupkg`) and `releases.win.json`. Velopack builds
-# deltas and the next feed from the previous release's files, so adding auto-update
-# only means keeping those files; it does not change how the packages are built.
+# The velopack/ folder holds the update feed of the in-app updater: the full package
+# (`*-full.nupkg`) and `releases.beta-win.json`. `release.yml` publishes both with the
+# release. The channel (`--channel beta-win`) must be the one the app asks for
+# (`inlet::update::channel`); each system has its own so that the feed files do not
+# overwrite each other. No delta packages: each release is packed on its own.
 #
 # Runs in Git Bash on a Windows runner (and in any bash with .NET 8 or later).
 set -euo pipefail
@@ -69,6 +70,13 @@ cp "$binary" "$stage/inlet.exe"
 cp "$root/LICENSE" "$stage/LICENSE"
 cp "$root/THIRD-PARTY-NOTICES" "$stage/THIRD-PARTY-NOTICES"
 
+# The changelog section of this version (empty between releases) is what the in-app
+# updater shows as "What's new".
+notes="$work/release-notes.md"
+"$root/packaging/velopack/release-notes.sh" "$version" > "$notes"
+notes_args=()
+if [ -s "$notes" ]; then notes_args=(--releaseNotes "$(native "$notes")"); fi
+
 # --runtime: the binary is x86_64 only; without it vpk warns and guesses.
 # --shortcuts: the Start menu only, no desktop shortcut.
 # --aumid: the shortcut carries the same AppUserModelID as the running app (see
@@ -78,6 +86,7 @@ cp "$root/THIRD-PARTY-NOTICES" "$stage/THIRD-PARTY-NOTICES"
 "$root/packaging/velopack/vpk.sh" pack \
   --packId no.opland.inlet \
   --packVersion "$version" \
+  --channel beta-win \
   --packTitle Inlet \
   --packAuthors "Inlet contributors" \
   --packDir "$(native "$stage")" \
@@ -86,7 +95,8 @@ cp "$root/THIRD-PARTY-NOTICES" "$stage/THIRD-PARTY-NOTICES"
   --runtime win-x64 \
   --shortcuts StartMenuRoot \
   --aumid no.opland.inlet \
-  --outputDir "$(native "$feed")"
+  --outputDir "$(native "$feed")" \
+  "${notes_args[@]}"
 
 ls -l "$feed" >&2
 

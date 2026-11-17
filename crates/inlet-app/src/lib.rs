@@ -31,6 +31,8 @@ mod text_input;
 mod theme;
 mod token_store;
 mod ui;
+#[doc(hidden)]
+pub mod update;
 
 use gpui::{App, AppContext};
 
@@ -63,6 +65,13 @@ pub fn run() {
         Ok(None) => return,
         Err(err) => desktop::run_start_error(err),
     };
+    // A downloaded update is installed now, before any window (this ends the process).
+    update::apply_pending_at_start(
+        &std::env::args_os()
+            .skip(1)
+            .filter_map(|a| a.into_string().ok())
+            .collect::<Vec<_>>(),
+    );
     let start = desktop::Start::from_env();
     if start.quit_at_once {
         // The jump list's "Quit Inlet" while Inlet was not running.
@@ -75,6 +84,7 @@ pub fn run() {
         bind_keys(cx);
         assets::load_fonts(cx);
         desktop::init(cx);
+        update::init(cx);
         ui::notifications::alerts::init(cx);
         ui::settings::store::init(cx);
         let options = desktop::window_options(&start, cx);

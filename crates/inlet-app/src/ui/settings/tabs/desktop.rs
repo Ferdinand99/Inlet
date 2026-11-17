@@ -185,6 +185,7 @@ impl SettingsTab for DesktopTab {
                 ),
         );
         col = col.child(note(t!("settings-desktop-zoom-hint")));
+        col = col.child(super::desktop_update::section(cx));
         col.into_any_element()
     }
 }

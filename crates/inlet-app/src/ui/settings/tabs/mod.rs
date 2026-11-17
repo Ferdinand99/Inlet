@@ -6,6 +6,7 @@ mod accounts;
 mod advanced;
 mod appearance;
 mod desktop;
+mod desktop_update;
 mod keybinds;
 mod messages_media;
 mod my_profile;

@@ -113,12 +113,18 @@ jobs:
           mkdir release
           # The Windows and Linux packages carry the version in their names
           # (inlet-<version>-windows-x86_64-setup.exe, ...). Each pattern must match
-          # exactly one file, or the release stops here.
+          # exactly one file, or the release stops here. The last four are the update
+          # feed of the in-app updater: per system the full package and the feed file
+          # (releases.<channel>.json) that lists it with its SHA-256.
           for pattern in \
             "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64-setup.exe" \
             "artifacts/inlet-windows-x86_64-packages/inlet-*-windows-x86_64.zip" \
             "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.AppImage" \
-            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.tar.gz"; do
+            "artifacts/inlet-linux-x86_64/inlet-*-linux-x86_64.tar.gz" \
+            "artifacts/inlet-windows-x86_64-packages/velopack/releases.beta-win.json" \
+            "artifacts/inlet-windows-x86_64-packages/velopack/no.opland.inlet-*-beta-win-full.nupkg" \
+            "artifacts/inlet-linux-x86_64/velopack/releases.beta-linux.json" \
+            "artifacts/inlet-linux-x86_64/velopack/no.opland.inlet-*-beta-linux-full.nupkg"; do
             mapfile -t files < <(compgen -G "$pattern" || true)
             if [ "${#files[@]}" -ne 1 ]; then
               echo "expected exactly one file for $pattern, found ${#files[@]}"
@@ -215,6 +221,8 @@ jobs:
           - Windows (x86_64): `inlet-<version>-windows-x86_64-setup.exe` installs Inlet for your user account (no administrator rights needed). `inlet-<version>-windows-x86_64.zip` is a portable copy. The files are not code-signed, so Windows SmartScreen may warn you. Choose "More info", then "Run anyway".
           - macOS (Apple silicon, macOS 12 or later): `inlet-macos-aarch64.dmg`. Signed with a Developer ID and notarised by Apple. Open the DMG and drag Inlet to Applications.
           - Linux (x86_64): `inlet-<version>-linux-x86_64.AppImage` (make it executable and run it; it needs FUSE 2, so on Ubuntu 24.04 install `libfuse2t64` or start it with `--appimage-extract-and-run`) or `inlet-<version>-linux-x86_64.tar.gz`.
+
+          The `*-full.nupkg` and `releases.*.json` files are the update feed of the app, which updates itself from them; you do not need to download them.
 
           Check the downloads against `SHA256SUMS.txt`. Licence notices for third-party code are in the `THIRD-PARTY-NOTICES` file when it is attached.
           NOTES
