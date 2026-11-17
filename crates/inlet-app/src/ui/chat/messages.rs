@@ -1857,6 +1857,9 @@ impl Inlet {
         // A jump still loading its page would pull the list back.
         self.inbox.jump.cancel();
         self.chat.view.scrolled_away = false;
+        // The reader is at the bottom again: live messages cut the oldest side of the list,
+        // not the newest (the scroll handler would not notice, `scrolled_away` is set here).
+        self.note_reader_position(false, cx);
         self.chat.message_list.scroll_to_end();
         self.chat.message_list.set_follow_mode(FollowMode::Tail);
         cx.notify();

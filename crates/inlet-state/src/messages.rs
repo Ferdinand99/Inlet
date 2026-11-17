@@ -756,6 +756,9 @@ impl MessageWindow {
     /// buffered and applied after the merge, like creates; a window that is
     /// only scrolled back applies it to the messages it holds.
     fn react(&mut self, id: MessageId, op: ReactionOp) -> bool {
+        // A buffered message that is reacted to: the buffers are a cache, drop them (also
+        // while the window waits for a page, when the reaction itself is only kept).
+        self.forget_buffered(id);
         if self.loading || self.stale {
             // A repeat of an idempotent event (the account's own reaction, a
             // clear) adds nothing.

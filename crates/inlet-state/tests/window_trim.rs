@@ -374,3 +374,38 @@ fn a_window_is_cut_even_before_the_app_says_which_channels_are_open() {
     fill(&mut s, GENERAL, 250, 1000);
     assert!(len(&s, GENERAL) <= MAX_MESSAGES_PER_CHANNEL);
 }
+
+#[test]
+fn a_reaction_to_a_buffered_message_while_the_window_loads_drops_the_buffers() {
+    let mut s = state();
+    s.set_open_channel(Some(ch(GENERAL)));
+    fill(&mut s, GENERAL, 250, 1000);
+    assert!(buffered(&s, GENERAL).0 > 0);
+    s.begin_load(ch(GENERAL));
+    s.apply(&d(
+        "MESSAGE_REACTION_ADD",
+        json!({"user_id": OTHER, "channel_id": GENERAL, "message_id": mid(1015, 0).to_string(),
+               "emoji": {"name": "x"}}),
+    ));
+    assert_eq!(buffered(&s, GENERAL), (0, 0));
+}
+
+#[test]
+fn when_the_reader_is_back_at_the_bottom_live_messages_cut_the_oldest_again() {
+    let mut s = state();
+    show_scrolled(&mut s, GENERAL);
+    fill(&mut s, GENERAL, 100, 1000);
+    assert_eq!(len(&s, GENERAL), 150);
+    // "Jump to present" or scrolling down: the app says the reader is at the bottom.
+    s.set_view_scrolled(false);
+    s.apply(&create(mid(3000, 0), GENERAL, OTHER, json!({})));
+    let w = s.messages(ch(GENERAL)).unwrap();
+    assert_eq!(w.len(), MAX_TRUNCATED_VIEW);
+    assert_eq!(
+        w.newest_id(),
+        Some(mid(3000, 0)),
+        "the newest message stays"
+    );
+    assert!(w.has_newest());
+    assert!(w.buffered().0 > 0 && w.buffered().1 == 0);
+}
